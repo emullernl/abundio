@@ -24,6 +24,7 @@ import {
 	applyAgentExit,
 	applySessionEnd,
 	isSessionEnd,
+	noteSessionEnd,
 } from "./agentModeEvents";
 import { agentSessionIdFrom } from "./agentSessionId";
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
@@ -39,7 +40,7 @@ import { openExternal } from "./desktop";
 import { targetPaneId } from "./fleetFocus";
 import { outsideWorkspaceView } from "./hiddenAgentStart";
 import { startUnlessShown } from "./hiddenSpawn";
-import { agentHooks, pty } from "./ipc";
+import { agentHooks, type HookNotice, pty } from "./ipc";
 import { folderMissingReason } from "./missingFolder";
 import {
 	decrstOutcome,
@@ -67,7 +68,7 @@ import { trackPtyResize } from "./projectionResize";
 import { stripControlChars } from "./promptActions";
 import { ShellIntegrationParser } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
-import { isRustStatusAuthority } from "./statusSync";
+import { isRustStatusAuthority, sendStatusOp } from "./statusSync";
 import { installFileLinkProvider } from "./terminalFileLinks";
 import {
 	alternateScreenBefore,
@@ -101,6 +102,21 @@ const ensuredAgentsThisSession = new Set<string>();
 
 /** OpenCode 1.x PTYs whose last turn was cancelled — see `openCodeCancelGate`. */
 const openCodeCancelledPtys = new Set<string>();
+
+/** Per PTY: what to do with a hook Rust applied (`agent-hook-applied`). One
+ *  Window-wide listener, started with the first terminal. */
+const hookNoticeHandlers = new Map<string, (n: HookNotice) => void>();
+let hookNoticesHeard = false;
+function hearHookNotices(): void {
+	if (hookNoticesHeard || !isRustStatusAuthority()) return;
+	hookNoticesHeard = true;
+	void pty.onHookApplied((n) => {
+		if (n.dropped) {
+			console.debug("[abundio:hook] dropped", n.dropped, n.agent, n.ptyId);
+		}
+		hookNoticeHandlers.get(n.ptyId)?.(n);
+	});
+}
 
 /**
  * True when xterm `onData` carries a terminal-reported focus or mouse event
@@ -950,6 +966,9 @@ function scheduleWebglReconcile(): void {
 function resetTitleStatus(managed: ManagedTerminal): void {
 	managed.titleStatus = null;
 	managed.titleStatusSeen = false;
+	if (managed.ptyId) {
+		sendStatusOp({ op: "titleStatusSeen", ptyId: managed.ptyId, seen: false });
+	}
 	managed.titleBusyBeforeBare = null;
 	if (managed.titleTurnEndTimer) {
 		clearTimeout(managed.titleTurnEndTimer);
@@ -1623,6 +1642,21 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 
 	// Register all event listeners and spawn PTY in parallel — each is an async
 	// IPC round-trip, so running them concurrently cuts init time significantly.
+	// What a hook Rust applied leaves for this Window (phase 6d).
+	hearHookNotices();
+	hookNoticeHandlers.set(currentPtyId, (notice) => {
+		if (notice.sessionEnd) noteSessionEnd(currentPtyId);
+		if (!notice.adopted) return;
+		usePtyActivityStore
+			.getState()
+			.noteAgentFromHost(currentPtyId, notice.agent);
+		useWorkspaceStore.getState().stampAgentOnPane(paneId, notice.agent);
+		if (notice.sessionId) {
+			useWorkspaceStore
+				.getState()
+				.stampAgentSessionOnPane(paneId, notice.agent, notice.sessionId);
+		}
+	});
 	const [unlistenOutput, unlistenActivity, unlistenStatus, unlistenHook] =
 		await Promise.all([
 			pty.onOutput(currentPtyId, (data) => {
@@ -1874,6 +1908,9 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			}),
 
 			pty.onHook(currentPtyId, (hookEvent) => {
+				// Rust applies hooks where the PTY runs (phase 6d) and sends
+				// `agent-hook-applied`; only tests and the demo route them here.
+				if (isRustStatusAuthority()) return;
 				console.debug(
 					"[abundio:hook] frontend received",
 					hookEvent.agent,
@@ -2080,7 +2117,10 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		if (reading === null) return;
 		// Until a prefix proves tab status is on, the pane stays on the byte
 		// heuristic — a suffix alone would turn it hook-driven for good.
-		if (reading.live) managed.titleStatusSeen = true;
+		if (reading.live && !managed.titleStatusSeen) {
+			managed.titleStatusSeen = true;
+			sendStatusOp({ op: "titleStatusSeen", ptyId: managed.ptyId, seen: true });
+		}
 		if (!managed.titleStatusSeen) return;
 		const { status } = reading;
 		const step = titleStep(
@@ -2129,6 +2169,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		unlistenActivity();
 		unlistenStatus();
 		unlistenHook();
+		hookNoticeHandlers.delete(currentPtyId);
 		onDataSub.dispose();
 		onTitleSub.dispose();
 		resetTitleStatus(managed);

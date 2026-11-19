@@ -51,6 +51,12 @@ export function applySessionEnd(ptyId: string): void {
 	}
 }
 
+/** A Session end Rust applied (phase 6d): only Turn telemetry's half here,
+ *  its status arrives from Rust. */
+export function noteSessionEnd(ptyId: string): void {
+	void trackSessionEnd(ptyId);
+}
+
 /** Whether a PTY's hook listener takes the Session end path. It must be
  *  checked BEFORE adoption: every other hook puts the PTY into agent mode and
  *  stamps the Agent, and a Session end landing just after the Agent exited must

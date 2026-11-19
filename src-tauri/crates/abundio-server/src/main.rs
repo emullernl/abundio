@@ -119,11 +119,22 @@ impl EventSink for NoClients {
 struct ServerHookHost {
     ptys: Arc<pty_manager::PtyManager>,
     env: Arc<env_vars::EnvVarStore>,
+    status: Arc<status_store::StatusStore>,
 }
 
 impl HookHost for ServerHookHost {
+    /// The status is kept here, Window or not (phase 6d).
     fn hook_event(&self, pty_id: &str, event: AgentHookEvent) {
         log::debug!("hook {} from {} in {pty_id}", event.event, event.agent);
+        abundio_core::hook_apply::apply(
+            &self.status,
+            pty_id,
+            &event.agent,
+            &event.event,
+            &event.payload,
+            abundio_core::hook_apply::now_ms(),
+            &status_machine::StatusConfig::default(),
+        );
     }
     fn ptys(&self) -> Option<&pty_manager::PtyManager> {
         Some(&self.ptys)
@@ -216,7 +227,7 @@ fn run(data_dir: PathBuf) -> Result<(), String> {
     }
     status_store::start_ticker(status.clone(), events);
 
-    let host = Arc::new(ServerHookHost { ptys: ptys.clone(), env });
+    let host = Arc::new(ServerHookHost { ptys: ptys.clone(), env, status: status.clone() });
     let hooks = HookServer::start(host)?;
     log::info!("hook server on 127.0.0.1:{}", hooks.port);
     log::info!(

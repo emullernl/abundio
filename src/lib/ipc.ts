@@ -263,6 +263,15 @@ export const pty = {
 		),
 
 	/** Agent lifecycle hook events relayed in via the loopback hook server. */
+	/** An Agent's hook, applied in Rust (phase 6d): what this Window keeps
+	 *  besides the status, which follows as `status-updates`. */
+	onHookApplied: (
+		callback: (notice: HookNotice) => void,
+	): Promise<UnlistenFn> =>
+		listenToThisWindow<HookNotice>("agent-hook-applied", (event) =>
+			callback(event.payload),
+		),
+
 	onHook: (
 		ptyId: string,
 		callback: (hookEvent: AgentHookEvent) => void,
@@ -1568,6 +1577,19 @@ export interface PaneFacts {
 export interface PaneFactsReport {
 	paneId: string;
 	facts: PaneFacts | null;
+}
+
+/** What a hook Rust applied leaves for the Window (`hook_apply::HookNotice`). */
+export interface HookNotice {
+	ptyId: string;
+	agent: string;
+	/** An Agent runs in the pane: record which, and stamp it (and its
+	 *  session id) on the pane. */
+	adopted: boolean;
+	/** A Session end: Turn telemetry closes the open Turn as one. */
+	sessionEnd: boolean;
+	sessionId: string | null;
+	dropped: string | null;
 }
 
 export const agentControl = {

@@ -52,7 +52,10 @@ export type StatusOp =
 	| { op: "shellCommandRunning"; ptyId: string; running: boolean }
 	| { op: "apply"; ptyId: string; event: StatusEvent }
 	| { op: "touch"; ptyId: string; now: number }
-	| { op: "remove"; ptyId: string };
+	| { op: "remove"; ptyId: string }
+	/** The pane's title showed a Title status (ADR-0047): until it has, Rust
+	 *  drops a Title-status Agent's hooks, as the Window did. */
+	| { op: "titleStatusSeen"; ptyId: string; seen: boolean };
 
 /** Whether Rust is the authority here (not in tests or the browser demo). */
 export function isRustStatusAuthority(): boolean {

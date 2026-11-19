@@ -36,6 +36,8 @@ pub mod gh_commands;
 pub mod git_commands;
 pub use abundio_core::git_libgit2;
 pub use abundio_core::git_scheduler;
+pub use abundio_core::hook_apply;
+pub use abundio_core::hook_route;
 pub use abundio_core::hook_server;
 pub use abundio_core::migrations;
 pub mod orchestrator;

@@ -162,6 +162,9 @@ interface PtyActivityState_Store {
 	subagentStarted: (ptyId: string, agentId: string) => void;
 	subagentStopped: (ptyId: string, agentId: string) => void;
 	setAgentPty: (ptyId: string, agentId?: string) => void;
+	/** `setAgentPty` without its status half: Rust applied that (a hook it
+	 *  routed, phase 6d). Records which Agent runs in the PTY. */
+	noteAgentFromHost: (ptyId: string, agentId: string) => void;
 	clearAgentPty: (ptyId: string) => void;
 	setTitle: (paneId: string, title: string) => void;
 	setRunningCommand: (ptyId: string, text: string | null) => void;
@@ -587,6 +590,19 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 		recordExitSuccess: (ptyId) => {
 			if (!get().activities[ptyId]) return;
 			applyStatusEvent(ptyId, { kind: "recordExitSuccess" });
+		},
+
+		noteAgentFromHost: (ptyId, agentId) => {
+			const s = get();
+			const ids = s.agentPtyIds.has(ptyId)
+				? s.agentPtyIds
+				: new Set(s.agentPtyIds).add(ptyId);
+			if (ids === s.agentPtyIds && s.detectedAgentIds[ptyId] === agentId)
+				return;
+			set({
+				agentPtyIds: ids,
+				detectedAgentIds: { ...s.detectedAgentIds, [ptyId]: agentId },
+			});
 		},
 
 		setAgentPty: (ptyId, agentId) => {

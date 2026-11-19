@@ -796,8 +796,33 @@ impl crate::control_local::Live for AppLive<'_> {
 pub struct AppHookHost(pub AppHandle);
 
 impl crate::hook_server::HookHost for AppHookHost {
+    /// Applied here, where the PTY runs (phase 6d): the owning Window gets
+    /// what it keeps besides the status (`agent-hook-applied`), then the
+    /// status (`status-updates`), in that order, as it did them.
     fn hook_event(&self, pty_id: &str, event: crate::events::AgentHookEvent) {
-        let _ = self.0.emit(&format!("agent-hook-{pty_id}"), event);
+        use crate::event_sink::EventsExt;
+        let status = self.0.state::<std::sync::Arc<crate::status_store::StatusStore>>();
+        let applied = crate::hook_apply::apply(
+            &status,
+            pty_id,
+            &event.agent,
+            &event.event,
+            &event.payload,
+            crate::hook_apply::now_ms(),
+            &crate::status_machine::StatusConfig::default(),
+        );
+        let client = status.owner(pty_id).or_else(|| {
+            self.0
+                .state::<crate::pty_manager::PtyManager>()
+                .owner_window(pty_id)
+                .map(crate::event_sink::ClientId)
+        });
+        let Some(client) = client else { return };
+        let events = self.0.state::<crate::event_sink::Events>();
+        events.to_client(&client, "agent-hook-applied", &applied.notice);
+        if !applied.updates.is_empty() {
+            events.to_client(&client, "status-updates", applied.updates);
+        }
     }
     fn ptys(&self) -> Option<&crate::pty_manager::PtyManager> {
         self.0.try_state::<crate::pty_manager::PtyManager>().map(|s| s.inner())

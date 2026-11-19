@@ -32,6 +32,11 @@ pub struct StatusStore {
     /// Per-PTY update counter, so a Client never applies an older update
     /// over a newer one (command replies and tick events can interleave).
     seqs: DashMap<String, u64>,
+    /// PTYs whose Agent's terminal title has shown a Title status (ADR-0047):
+    /// before it has, a Title-status Agent's hooks are dropped.
+    title_seen: dashmap::DashSet<String>,
+    /// OpenCode 1.x: PTYs whose last turn was cancelled (`openCodeCancelGate`).
+    open_code_cancelled: dashmap::DashSet<String>,
 }
 
 /// What the frontend store keeps of a PTY's status: its entry plus the
@@ -215,6 +220,9 @@ pub enum StatusOp {
     Apply { pty_id: String, event: StatusEvent },
     Touch { pty_id: String, now: i64 },
     Remove { pty_id: String },
+    /// The pane's terminal title showed a Title status (or, `false`, its PTY
+    /// restarted and has not yet).
+    TitleStatusSeen { pty_id: String, seen: bool },
 }
 
 /// The fields of the frontend's `PtyActivityEntry` that decide whether an
@@ -265,7 +273,17 @@ impl StatusStore {
                 self.touch(&pty_id, now);
                 None
             }
+            StatusOp::TitleStatusSeen { pty_id, seen } => {
+                if seen {
+                    self.title_seen.insert(pty_id);
+                } else {
+                    self.title_seen.remove(&pty_id);
+                }
+                None
+            }
             StatusOp::Remove { pty_id } => {
+                self.title_seen.remove(&pty_id);
+                self.open_code_cancelled.remove(&pty_id);
                 let existed = self.by_pty.contains_key(&pty_id);
                 self.remove(&pty_id);
                 let update = existed.then(|| self.update(&pty_id, None));
@@ -306,6 +324,38 @@ impl StatusStore {
             cause: event,
         });
         (before.as_ref() != Some(&after) || change.is_some()).then(|| self.update(pty_id, change))
+    }
+
+    /// Apply an event the Host saw itself (a hook, an exit): what the owning
+    /// Window should take, if anything changed.
+    pub fn apply_from_host(&self, pty_id: &str, event: StatusEvent, config: &StatusConfig) -> Option<StatusUpdate> {
+        self.apply_change(pty_id, event, config)
+    }
+
+    /// Whether the PTY has a status yet (a Window's `initPty`, or an event).
+    pub fn has(&self, pty_id: &str) -> bool {
+        self.by_pty.contains_key(pty_id)
+    }
+
+    /// The Window a PTY's status updates go to.
+    pub fn owner(&self, pty_id: &str) -> Option<crate::event_sink::ClientId> {
+        self.owners.get(pty_id).map(|o| o.clone())
+    }
+
+    pub fn title_status_seen(&self, pty_id: &str) -> bool {
+        self.title_seen.contains(pty_id)
+    }
+
+    pub fn open_code_cancelled(&self, pty_id: &str) -> bool {
+        self.open_code_cancelled.contains(pty_id)
+    }
+
+    pub fn set_open_code_cancelled(&self, pty_id: &str, cancelled: bool) {
+        if cancelled {
+            self.open_code_cancelled.insert(pty_id.to_string());
+        } else {
+            self.open_code_cancelled.remove(pty_id);
+        }
     }
 
     /// The PTY exited (its process ended or was killed), seen by the Host
@@ -732,6 +782,14 @@ mod tests {
         let config = StatusConfig::default();
         assert!(store.exit_update("p", Some(2), &config).is_none());
         assert_eq!(store.view("p").unwrap().state, DotState::Error);
+    }
+
+    #[test]
+    fn reads_the_windows_title_status_op() {
+        let op: StatusOp = serde_json::from_str(r#"{"op":"titleStatusSeen","ptyId":"p","seen":true}"#).unwrap();
+        let store = StatusStore::new();
+        assert!(store.run_op(&crate::event_sink::ClientId::from("w"), op, &StatusConfig::default()).is_none());
+        assert!(store.title_status_seen("p"));
     }
 
     #[test]

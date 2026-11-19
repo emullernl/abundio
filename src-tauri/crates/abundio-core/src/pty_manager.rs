@@ -155,6 +155,11 @@ impl PtyManager {
         Some(screen.modes())
     }
 
+    /// The Window that spawned a PTY (its label).
+    pub fn owner_window(&self, pty_id: &str) -> Option<String> {
+        self.owner_windows.get(pty_id).map(|e| e.clone())
+    }
+
     /// Whether a PTY with this id is running (spawned, not exited or killed).
     pub fn is_live(&self, pty_id: &str) -> bool {
         self.entries
