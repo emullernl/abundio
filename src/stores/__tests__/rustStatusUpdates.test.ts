@@ -117,7 +117,7 @@ describe("applying Rust's status updates", () => {
 		expect(usePtyActivityStore.getState().activities.p.state).toBe("waiting");
 		expect(changes.map((c) => c.next.state)).toEqual(["waiting"]);
 		expect(warn).toHaveBeenCalledWith(
-			"[status] Rust corrected the Window's status",
+			'[status] Rust corrected the Window\'s status (state: "working" → "waiting"; cause hook)',
 			expect.anything(),
 		);
 		warn.mockRestore();
@@ -163,5 +163,55 @@ describe("applying Rust's status updates", () => {
 			now: 50,
 			rule: "idle_backstop",
 		});
+	});
+
+	it("credits the scan, not the Window's own change, when the scan landed in between", () => {
+		workingAgent(1);
+		changes = [];
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const view = __statusViewForTests("p");
+		if (!view) throw new Error("no view");
+		pending.ids.add("p");
+		const tick = {
+			kind: "tick",
+			now: 50,
+			rule: "idle_backstop",
+		} as const;
+		applyRustUpdate(
+			update(
+				"p",
+				{ ...view, state: "ready" },
+				{
+					prev: { state: "working", detectionMode: "agent", hookDriven: true },
+					next: { state: "ready", detectionMode: "agent", hookDriven: true },
+					cause: tick,
+				},
+			),
+			true,
+		);
+		pending.ids.clear();
+		// The answer to the Window's change (a title the Window also applied)
+		// carries a change of its own, and the scan's effect.
+		applyRustUpdate(
+			update(
+				"p",
+				{ ...view, state: "ready", titleHeld: true },
+				{
+					prev: { state: "working", detectionMode: "agent", hookDriven: true },
+					next: { state: "ready", detectionMode: "agent", hookDriven: true },
+					cause: {
+						kind: "title",
+						status: "working",
+						focused: false,
+						now: 49,
+					} as never,
+				},
+			),
+			false,
+		);
+		expect(usePtyActivityStore.getState().activities.p.state).toBe("ready");
+		expect(changes.map((c) => c.cause)).toEqual([tick]);
+		expect(warn).not.toHaveBeenCalled();
+		warn.mockRestore();
 	});
 });

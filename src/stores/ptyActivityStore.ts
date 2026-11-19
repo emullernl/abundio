@@ -878,14 +878,21 @@ export function applyRustUpdate(u: StatusUpdate, fromScan: boolean): void {
 		);
 		return;
 	}
-	const cause = u.change?.cause ?? deferredScanCause.get(u.ptyId) ?? null;
+	// A scan that landed while the Window's own change was in flight is what
+	// the Window could not predict: credit it, not the Window's change.
+	const cause = deferredScanCause.get(u.ptyId) ?? u.change?.cause ?? null;
 	deferredScanCause.delete(u.ptyId);
 	if (!fromScan && cause?.kind !== "tick") {
-		console.warn("[status] Rust corrected the Window's status", {
-			ptyId: u.ptyId,
-			window: local,
-			rust: u.view,
-		});
+		const fields = (Object.keys(u.view) as (keyof StatusView)[])
+			.filter((k) => JSON.stringify(local?.[k]) !== JSON.stringify(u.view?.[k]))
+			.map(
+				(k) =>
+					`${k}: ${JSON.stringify(local?.[k])} → ${JSON.stringify(u.view?.[k])}`,
+			);
+		console.warn(
+			`[status] Rust corrected the Window's status (${fields.join(", ")}; cause ${cause?.kind ?? "none"})`,
+			{ ptyId: u.ptyId, window: local, rust: u.view },
+		);
 	}
 	writeView(u.ptyId, u.view);
 	const nextEntry = usePtyActivityStore.getState().activities[u.ptyId];
