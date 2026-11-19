@@ -422,6 +422,9 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		}
 		case "pty_redraw":
 			return true;
+		case "pty_read_screen":
+			return [];
+		case "pty_set_scrollback":
 		case "pty_resize":
 		case "pty_kill":
 		case "pty_write_snapshot":

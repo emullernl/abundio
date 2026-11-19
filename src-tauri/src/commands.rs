@@ -146,6 +146,26 @@ pub async fn pty_resize(
     pty_mgr.resize(&pty_id, cols, rows)
 }
 
+/// The text of a PTY's screen, from its Rust emulator (ADR-0063). The same
+/// rules as `readBuffer.ts`; see `screen::Screen::read`.
+#[tauri::command]
+pub async fn pty_read_screen(
+    pty_mgr: State<'_, PtyManager>,
+    pty_id: String,
+    visible: bool,
+    lines: Option<usize>,
+) -> Result<Vec<String>, AbundioError> {
+    pty_mgr.read_screen(&pty_id, visible, lines)
+}
+
+/// How many lines of scrollback every PTY's screen keeps: the terminal
+/// setting, pushed by the frontend at start and on every change.
+#[tauri::command]
+pub async fn pty_set_scrollback(pty_mgr: State<'_, PtyManager>, lines: usize) -> Result<(), AbundioError> {
+    pty_mgr.set_scrollback(lines);
+    Ok(())
+}
+
 /// Ask the program in a PTY to redraw at its current size (SIGWINCH to the
 /// foreground process group). `false` where unsupported (Windows).
 #[tauri::command]

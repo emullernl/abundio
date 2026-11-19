@@ -208,6 +208,16 @@ export const pty = {
 
 	kill: (ptyId: string) => invoke<void>("pty_kill", { ptyId }),
 
+	/** The PTY's screen as text, from its Rust emulator (ADR-0063): wrapped
+	 *  rows joined, blank rows at the end dropped, a dim suggestion after the
+	 *  cursor left out. `visible` reads only the screen. */
+	readScreen: (ptyId: string, visible: boolean, lines: number | null) =>
+		invoke<string[]>("pty_read_screen", { ptyId, visible, lines }),
+
+	/** Lines of scrollback every PTY's Rust screen keeps (the setting). */
+	setScrollback: (lines: number) =>
+		invoke<void>("pty_set_scrollback", { lines }),
+
 	/** Every chunk of the PTY's output, in order. Resolves once the listener
 	 *  is in place, so a caller that awaits it before spawning misses nothing. */
 	onOutput: (

@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use std::thread;
 
@@ -52,6 +52,8 @@ struct PtyEntry {
     tx: Sender<PtyCommand>,
     #[allow(dead_code)]
     alive: Arc<AtomicBool>,
+    /// The PTY's screen as text (ADR-0063), fed by its reader thread.
+    screen: Arc<Mutex<crate::screen::Screen>>,
 }
 
 /// A **New task** launch: the Agent's argv (the resolved Task prompt is one
@@ -96,6 +98,8 @@ pub struct PtyManager {
     owner_windows: DashMap<String, String>,
     /// Per-PTY **Agent control** tokens (ADR-0054), issued at spawn.
     control_tokens: Arc<crate::agent_control::ControlTokens>,
+    /// Scrollback lines each PTY's screen keeps: the terminal setting.
+    scrollback: AtomicUsize,
 }
 
 impl PtyManager {
@@ -105,7 +109,37 @@ impl PtyManager {
             spawn_contexts: DashMap::new(),
             owner_windows: DashMap::new(),
             control_tokens: Default::default(),
+            scrollback: AtomicUsize::new(crate::screen::DEFAULT_SCROLLBACK),
         }
+    }
+
+    /// Keep `lines` of scrollback in every PTY's screen, now and from now on.
+    pub fn set_scrollback(&self, lines: usize) {
+        self.scrollback.store(lines, Ordering::Relaxed);
+        for entry in self.entries.iter() {
+            if let Ok(mut screen) = entry.screen.lock() {
+                screen.set_scrollback(lines);
+            }
+        }
+    }
+
+    /// The text of a PTY's screen (`abundio pane read`), read from its Rust
+    /// emulator. See `screen::Screen::read`.
+    pub fn read_screen(
+        &self,
+        pty_id: &str,
+        visible: bool,
+        lines: Option<usize>,
+    ) -> Result<Vec<String>, AbundioError> {
+        let entry = self
+            .entries
+            .get(pty_id)
+            .ok_or_else(|| AbundioError::NotFound(format!("PTY not found: {}", pty_id)))?;
+        let screen = entry
+            .screen
+            .lock()
+            .map_err(|_| AbundioError::Pty("screen lock poisoned".into()))?;
+        Ok(screen.read(visible, lines))
     }
 
     pub fn control_tokens(&self) -> &crate::agent_control::ControlTokens {
@@ -410,12 +444,18 @@ impl PtyManager {
 
         let (tx, rx): (Sender<PtyCommand>, Receiver<PtyCommand>) = crossbeam_channel::unbounded();
         let alive = Arc::new(AtomicBool::new(true));
+        let screen = Arc::new(Mutex::new(crate::screen::Screen::new(
+            cols,
+            rows,
+            self.scrollback.load(Ordering::Relaxed),
+        )));
 
         self.entries.insert(
             pty_id.clone(),
             PtyEntry {
                 tx,
                 alive: alive.clone(),
+                screen: screen.clone(),
             },
         );
         self.owner_windows
@@ -440,7 +480,9 @@ impl PtyManager {
         let tokens = self.control_tokens.clone();
         let events = deps.events;
         thread::spawn(move || {
-            pty_thread(id_clone, master, child, rx, alive, events, log_file, shell_type);
+            pty_thread(
+                id_clone, master, child, rx, alive, events, screen, log_file, shell_type,
+            );
             // The PTY is gone: its token must not outlive it (a background
             // process it left behind still has the token in its environment).
             if let Some(t) = control_token {
@@ -467,6 +509,9 @@ impl PtyManager {
             .entries
             .get(pty_id)
             .ok_or_else(|| AbundioError::NotFound(format!("PTY not found: {}", pty_id)))?;
+        if let Ok(mut screen) = entry.screen.lock() {
+            screen.resize(cols, rows);
+        }
         entry
             .tx
             .send(PtyCommand::Resize(cols, rows))
@@ -1728,6 +1773,7 @@ fn pty_thread(
     rx: Receiver<PtyCommand>,
     alive: Arc<AtomicBool>,
     events: Events,
+    screen: Arc<Mutex<crate::screen::Screen>>,
     log_file: Option<(File, PathBuf)>,
     shell_type: ShellType,
 ) {
@@ -1813,7 +1859,10 @@ fn pty_thread(
                 }
             }
 
-            // Emit the coalesced batch as a single event
+            // Keep the screen, then emit the coalesced batch as one message.
+            if let Ok(mut s) = screen.lock() {
+                s.feed(&accum);
+            }
             read_events.pty_output(&read_pty_id, &accum);
             accum.clear();
         }
@@ -1824,6 +1873,9 @@ fn pty_thread(
             accum.extend_from_slice(&chunk);
         }
         if !accum.is_empty() {
+            if let Ok(mut s) = screen.lock() {
+                s.feed(&accum);
+            }
             read_events.pty_output(&read_pty_id, &accum);
         }
 
@@ -1983,6 +2035,7 @@ mod tests {
             PtyEntry {
                 tx,
                 alive: Arc::new(AtomicBool::new(true)),
+                screen: Arc::new(Mutex::new(crate::screen::Screen::new(80, 24, 100))),
             },
         );
         mgr.owner_windows.insert(id.to_string(), window.to_string());

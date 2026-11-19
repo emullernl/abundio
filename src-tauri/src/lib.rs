@@ -16,6 +16,7 @@ pub mod env_vars;
 pub mod error;
 pub mod change_hub;
 pub mod event_sink;
+pub mod screen;
 pub mod events;
 pub mod file_explorer;
 pub mod file_watcher;
@@ -1508,6 +1509,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::pty_spawn,
             commands::pty_output_subscribe,
+            commands::pty_read_screen,
+            commands::pty_set_scrollback,
             commands::pty_write,
             commands::pty_resize,
             commands::pty_redraw,

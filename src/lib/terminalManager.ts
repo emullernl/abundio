@@ -2352,6 +2352,13 @@ export function setAllTerminalsScrollback(scrollback: number): void {
 	for (const managed of instances.values()) {
 		managed.term.options.scrollback = scrollback;
 	}
+	// Each PTY's Rust screen keeps the same depth, so an Agent reads the
+	// lines the user can scroll to (ADR-0063).
+	// Never let it throw into a settings rehydrate (see CLAUDE.md on
+	// `terminalSettingsBridge`): a failure here only costs Agents history.
+	Promise.resolve()
+		.then(() => pty.setScrollback(scrollback))
+		.catch(() => {});
 }
 
 /**

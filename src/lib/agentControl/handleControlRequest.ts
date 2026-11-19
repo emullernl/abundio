@@ -20,6 +20,7 @@ import {
 	pulseControlActivity,
 	startControlActivity,
 } from "../controlActivity";
+import { isDemoMode } from "../demo";
 import { pasteAndSubmit } from "../firePromptAction";
 import { fleetConsoleShowing } from "../fleetFocus";
 import {
@@ -1209,11 +1210,67 @@ function readPane(
 		lines: request.lines,
 		visible: request.visible,
 	});
+	if (
+		import.meta.env.DEV &&
+		import.meta.env.MODE !== "test" &&
+		pane.node.ptyId
+	) {
+		shadowCompareRead(pane.node.ptyId, request, lines);
+	}
 	return {
 		pane: paneLabel(scope.numbers.get(pane.node.id) ?? 0),
 		lines: lines.length,
 		text: lines.join("\n"),
 	};
+}
+
+/**
+ * Shadow mode (dev builds, docs/plans/remote-hosts.md phase 2): read the same
+ * pane from its Rust screen too and log any difference, before Agent control
+ * moves to Rust and reads only that (phase 5). Trailing spaces are ignored:
+ * xterm.js keeps written ones, Rust cannot tell them from empty cells.
+ */
+function shadowCompareRead(
+	ptyId: string,
+	request: Extract<ControlRequest, { op: "pane.read" }>,
+	xtermLines: string[],
+): void {
+	if (isDemoMode()) return;
+	pty
+		.readScreen(ptyId, request.visible, request.lines)
+		.then((rustLines) => {
+			const diff = compareScreenReads(xtermLines, rustLines);
+			if (diff) {
+				console.warn("[shadow] pane read differs (xterm.js vs Rust)", {
+					ptyId,
+					visible: request.visible,
+					lines: request.lines,
+					...diff,
+				});
+			}
+		})
+		.catch((e) => console.warn("[shadow] Rust screen read failed", e));
+}
+
+/** Where two reads of a pane differ, ignoring trailing spaces; `null` when
+ *  they agree. Pure. */
+export function compareScreenReads(
+	xterm: string[],
+	rust: string[],
+): { firstDifferentLine: number; xterm: string[]; rust: string[] } | null {
+	const a = xterm.map((l) => l.trimEnd());
+	const b = rust.map((l) => l.trimEnd());
+	const n = Math.max(a.length, b.length);
+	for (let i = 0; i < n; i++) {
+		if (a[i] !== b[i]) {
+			return {
+				firstDifferentLine: i,
+				xterm: a.slice(Math.max(0, i - 2), i + 3),
+				rust: b.slice(Math.max(0, i - 2), i + 3),
+			};
+		}
+	}
+	return null;
 }
 
 /** Turn a handler's outcome into the reply Rust expects. */
