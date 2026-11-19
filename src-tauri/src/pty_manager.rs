@@ -97,7 +97,7 @@ pub struct PtyManager {
     /// without this every shell and Agent of a closed Window ran until quit.
     owner_windows: DashMap<String, String>,
     /// Per-PTY **Agent control** tokens (ADR-0054), issued at spawn.
-    control_tokens: Arc<crate::agent_control::ControlTokens>,
+    control_tokens: Arc<crate::control_protocol::ControlTokens>,
     /// Scrollback lines each PTY's screen keeps: the terminal setting.
     scrollback: AtomicUsize,
 }
@@ -156,7 +156,7 @@ impl PtyManager {
             .is_some_and(|e| e.alive.load(Ordering::Relaxed))
     }
 
-    pub fn control_tokens(&self) -> &crate::agent_control::ControlTokens {
+    pub fn control_tokens(&self) -> &crate::control_protocol::ControlTokens {
         &self.control_tokens
     }
 
@@ -336,7 +336,7 @@ impl PtyManager {
         // frontend passes the pane id as `log_id`.
         let control_token = match (workspace_id, log_id) {
             (Some(ws), Some(pane)) => {
-                let token = self.control_tokens.issue(crate::agent_control::Caller {
+                let token = self.control_tokens.issue(crate::control_protocol::Caller {
                     pty_id: pty_id.clone(),
                     pane_id: pane.to_string(),
                     workspace_id: ws.to_string(),

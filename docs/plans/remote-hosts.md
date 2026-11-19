@@ -112,6 +112,8 @@ Done in steps. **5a** Rust answers the reads itself (`control_local.rs`): pane l
 
 #### 6. Crate split and headless server
 
+Done in steps. **6a** untangle in place: the Tauri-free part of each mixed module moves out (`control_protocol.rs`, `git_core.rs`, `db_open.rs`, `env_vars_commands.rs` takes the commands, `tauri_sink.rs` the Tauri sink, the hook server talks to the app through `HookHost`), and `core_boundary.rs` lists the 32 core modules and fails a test if one uses Tauri or a desktop module. **6b** the core modules move into the `abundio-core` crate. **6c** `abundio-server`, a binary with no window: database, stores, PTYs, hook server, Agent control. **6d** the event sources into Rust (titles from the Rust screen, shell integration parsing, hooks straight to the status store, PTY exit), so a Host keeps status with no Window. **6e** the Host's data folder and the env key-file fallback.
+
 - Workspace crates: `abundio-core`, `abundio-desktop` (Tauri), `abundio-server`.
 - Hook server, relay scripts, shell integration, `abundio` CLI and the skill written under the Host's data folder by core.
 - `env_crypto`: key-file fallback when no keyring is usable.

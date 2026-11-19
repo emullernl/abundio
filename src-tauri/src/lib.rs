@@ -26,6 +26,8 @@ pub mod control_protocol;
 pub mod git_core;
 pub mod db_open;
 pub mod env_vars_commands;
+pub mod tauri_sink;
+pub mod core_boundary;
 pub mod status_store;
 pub mod events;
 pub mod file_explorer;
@@ -961,9 +963,9 @@ pub fn run() {
             app.manage(std::sync::Arc::new(layout_store::LayoutStore::new()));
 
             // Where core modules send events (docs/plans/remote-hosts.md).
-            let pty_channels = std::sync::Arc::new(event_sink::PtyChannels::default());
+            let pty_channels = std::sync::Arc::new(tauri_sink::PtyChannels::default());
             app.manage(pty_channels.clone());
-            app.manage::<event_sink::Events>(event_sink::TauriSink::shared(
+            app.manage::<event_sink::Events>(tauri_sink::TauriSink::shared(
                 app.handle(),
                 pty_channels,
             ));
@@ -1007,7 +1009,9 @@ pub fn run() {
 
             // Initialize the agent hook server (loopback HTTP receiver for
             // Agent lifecycle hooks). Non-fatal if it fails to bind.
-            match hook_server::HookServer::start(app.handle().clone()) {
+            match hook_server::HookServer::start(std::sync::Arc::new(
+                agent_control::AppHookHost(app.handle().clone()),
+            )) {
                 Ok(server) => {
                     app.manage(server);
                 }
@@ -1216,7 +1220,7 @@ pub fn run() {
                     fw.release_window(&label);
                 }
                 if let Some(ch) =
-                    app_handle.try_state::<std::sync::Arc<event_sink::PtyChannels>>()
+                    app_handle.try_state::<std::sync::Arc<tauri_sink::PtyChannels>>()
                 {
                     ch.forget(&label);
                 }
@@ -1585,8 +1589,8 @@ pub fn run() {
             agent_control::agent_control_pane_numbers,
             agent_control::agent_control_pane_for_number,
             agent_control::agent_control_pane_closed,
-            agent_names::agent_handle_check,
-            agent_names::agent_handle_default,
+            agent_control::agent_handle_check,
+            agent_control::agent_handle_default,
             agent_skills::agent_skill_provision,
             agent_skills::agent_skill_provision_startup,
             agent_skills::agent_skill_status,

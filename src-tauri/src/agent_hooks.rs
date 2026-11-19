@@ -830,11 +830,11 @@ fn opencode_major() -> OpenCodeMajor {
 fn find_opencode_binary() -> Option<PathBuf> {
     #[cfg(windows)]
     for name in ["opencode.exe", "opencode.cmd", "opencode.bat"] {
-        if let Some(path) = crate::dev_environments::find_in_path(name) {
+        if let Some(path) = crate::shell_env::find_in_path(name) {
             return Some(path);
         }
     }
-    crate::dev_environments::find_in_path("opencode")
+    crate::shell_env::find_in_path("opencode")
 }
 
 /// What the plugin folder says when `--version` could not be read: 1.x if

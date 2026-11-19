@@ -106,7 +106,7 @@ pub async fn pty_spawn(
 #[tauri::command]
 pub fn pty_output_subscribe(
     window: Window,
-    channels: State<'_, std::sync::Arc<crate::event_sink::PtyChannels>>,
+    channels: State<'_, std::sync::Arc<crate::tauri_sink::PtyChannels>>,
     channel: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
 ) {
     channels.set(window.label(), channel);

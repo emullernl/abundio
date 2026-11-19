@@ -13,9 +13,10 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
-use crate::agent_control::{handle_key, normalize_handle};
+use crate::control_protocol::{handle_key, normalize_handle};
 use crate::error::AbundioError;
 use crate::workspace_store::WorkspaceStore;
+
 
 /// How long a handed-out default stays reserved without reaching a layout.
 const RESERVATION: Duration = Duration::from_secs(10);
@@ -25,6 +26,7 @@ const ONES: [&str; 20] = [
     "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen",
     "Nineteen",
 ];
+
 const TENS: [&str; 10] = [
     "", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety",
 ];
@@ -228,29 +230,6 @@ impl HandleReservations {
     }
 }
 
-// ── Commands ──
-
-#[tauri::command]
-pub fn agent_handle_check(
-    store: tauri::State<'_, WorkspaceStore>,
-    reservations: tauri::State<'_, HandleReservations>,
-    workspace_id: String,
-    pane_id: String,
-    handle: String,
-) -> Result<HandleCheck, AbundioError> {
-    reservations.check(&store, &workspace_id, &pane_id, &handle)
-}
-
-#[tauri::command]
-pub fn agent_handle_default(
-    store: tauri::State<'_, WorkspaceStore>,
-    reservations: tauri::State<'_, HandleReservations>,
-    workspace_id: String,
-    pane_id: String,
-) -> Result<String, AbundioError> {
-    reservations.take_default(&store, &workspace_id, &pane_id)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,7 +309,7 @@ mod tests {
         assert_eq!(default_handle(2), "Agent Two");
         // Every default handle is a valid handle.
         for n in 1..300 {
-            assert!(crate::agent_control::valid_handle(&default_handle(n)), "{n}");
+            assert!(crate::control_protocol::valid_handle(&default_handle(n)), "{n}");
         }
     }
 

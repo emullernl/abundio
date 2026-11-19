@@ -339,7 +339,7 @@ fn where_command(exe: &str) -> Option<String> {
 /// Today's callers (`lib.rs` setup, `list_installed_agent_commands`,
 /// `detect_all`) are off the UI hot path — keep them there, or warm
 /// `shell_path()` ahead of time if this ever moves onto a UI-blocking path.
-pub(crate) fn find_in_path(name: &str) -> Option<std::path::PathBuf> {
+pub fn find_in_path(name: &str) -> Option<std::path::PathBuf> {
     let path_var = crate::shell_env::shell_path();
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut dirs: Vec<std::path::PathBuf> = std::env::split_paths(path_var).collect();

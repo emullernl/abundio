@@ -2,8 +2,9 @@
 //!
 //! Each Agent (Claude Code, Copilot, etc.) is provisioned with a hook that runs
 //! the `abundio-hook` relay script; the relay POSTs the hook payload here. This
-//! server validates a per-launch token, then re-emits the event as a Tauri
-//! event `agent-hook-{ptyId}` so the frontend can drive the status indicator.
+//! server validates a per-launch token, then hands the event to its
+//! [`HookHost`] (in the app: the `agent-hook-{ptyId}` event the Window drives
+//! the status indicator from).
 //!
 //! Bound to `127.0.0.1` only. The relay correlates events to a PTY via the
 //! `ABUNDIO_PTY_ID` env var injected at PTY spawn.
@@ -13,9 +14,26 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::thread;
 use std::time::Duration;
 
-use tauri::{AppHandle, Emitter, Manager};
+use std::sync::Arc;
 
 use crate::events::AgentHookEvent;
+
+/// What the hook server needs from the app around it. The desktop app gives
+/// it its managed state (`agent_control::AppHookHost`); the headless server
+/// will give its own (docs/plans/remote-hosts.md phase 6).
+pub trait HookHost: Send + Sync + 'static {
+    /// An Agent's hook fired in a PTY.
+    fn hook_event(&self, pty_id: &str, event: AgentHookEvent);
+    fn ptys(&self) -> Option<&crate::pty_manager::PtyManager>;
+    fn env_store(&self) -> Option<&crate::env_vars::EnvVarStore>;
+    /// An Agent control call (`/control`): answer an unknown token at once
+    /// (returning `None`), or hand back the request to serve.
+    fn control_refuse_unknown(&self, request: tiny_http::Request) -> Option<tiny_http::Request>;
+    /// Serve one Agent control call; runs on its own thread.
+    fn control_serve(&self, request: tiny_http::Request);
+}
+
+pub type Host = Arc<dyn HookHost>;
 
 /// Managed Tauri state. Holds the live port + token so `pty_manager` can inject
 /// them into every spawned PTY's environment.
@@ -33,7 +51,7 @@ impl HookServer {
     /// invalidates the listener's accept syscall), we rebind to the **same**
     /// port and resume. The port must stay stable because it's captured in
     /// every running PTY's `ABUNDIO_HOOK_PORT` env var at spawn time.
-    pub fn start(app: AppHandle) -> Result<HookServer, String> {
+    pub fn start(app: Host) -> Result<HookServer, String> {
         let server = tiny_http::Server::http("127.0.0.1:0").map_err(|e| e.to_string())?;
         let port = server
             .server_addr()
@@ -55,7 +73,7 @@ impl HookServer {
 /// rebind on the same port before continuing. Runs for the lifetime of the
 /// process — Tauri shuts the thread down when the app exits.
 fn run_accept_loop(
-    app: AppHandle,
+    app: Host,
     token: String,
     initial_server: tiny_http::Server,
     port: u16,
@@ -212,18 +230,18 @@ fn slim_hook_payload(raw: &str) -> (String, String) {
     }
 }
 
-fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request) {
+fn handle_request(app: &Host, token: &str, mut request: tiny_http::Request) {
     // Agent control (ADR-0054) carries its own per-pane token, not the shared
     // hook token, and runs on its own thread: this loop is sequential and a
     // wait can last 30 minutes.
     if request.url() == "/control" {
         // An unknown token is answered here, before a thread or its body.
-        let Some(request) = crate::agent_control::refuse_unknown(app, request) else {
+        let Some(request) = app.control_refuse_unknown(request) else {
             return;
         };
         let app = app.clone();
         std::thread::spawn(move || {
-            if catch_unwind(AssertUnwindSafe(|| crate::agent_control::serve(app, request))).is_err() {
+            if catch_unwind(AssertUnwindSafe(|| app.control_serve(request))).is_err() {
                 eprintln!(
                     "[{}] [abundio:control] handler panicked",
                     chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z")
@@ -319,8 +337,8 @@ fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request)
         eprintln!("[{ts}] [abundio:hook] dropped — empty pty or event");
         return;
     }
-    let _ = app.emit(
-        &format!("agent-hook-{}", pty),
+    app.hook_event(
+        &pty,
         AgentHookEvent {
             agent,
             event,
@@ -343,7 +361,7 @@ fn handle_request(app: &AppHandle, token: &str, mut request: tiny_http::Request)
 /// property is "a process running as you can read any Workspace's on-demand
 /// bundles", which is inside the threat model in ADR-0024. What the token does
 /// buy is that a process *outside* an Abundio terminal cannot read anything.
-fn handle_env_request(app: &AppHandle, path: &str, mut request: tiny_http::Request) {
+fn handle_env_request(app: &Host, path: &str, mut request: tiny_http::Request) {
     // Bounded: an authenticated caller should not be able to make the server
     // buffer an arbitrary amount. These bodies are two short JSON fields.
     const MAX_ENV_REQUEST_BODY: u64 = 64 * 1024;
@@ -365,18 +383,13 @@ fn handle_env_request(app: &AppHandle, path: &str, mut request: tiny_http::Reque
 
     let ts = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z");
 
-    let Some(ctx) = app
-        .try_state::<crate::pty_manager::PtyManager>()
-        .and_then(|mgr: tauri::State<crate::pty_manager::PtyManager>| {
-            mgr.spawn_context(pty_id)
-        })
-    else {
+    let Some(ctx) = app.ptys().and_then(|mgr| mgr.spawn_context(pty_id)) else {
         eprintln!("[{ts}] [abundio:env] 404 — unknown pty {pty_id:?}");
         let _ = request.respond(tiny_http::Response::empty(404));
         return;
     };
 
-    let Some(store) = app.try_state::<crate::env_vars::EnvVarStore>() else {
+    let Some(store) = app.env_store() else {
         let _ = request.respond(tiny_http::Response::empty(503));
         return;
     };

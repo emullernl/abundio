@@ -16,12 +16,13 @@ use crossbeam_channel::Receiver;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::agent_control::{handle_key, Caller, Request, Target, Until};
+use crate::control_protocol::{handle_key, Caller, Request, Target, Until};
 use crate::error::AbundioError;
 use crate::pane_facts::PaneFacts;
 use crate::status_machine::{DotState, Mode};
 use crate::status_store::StoreView;
 use crate::workspace_store::{Tab, WorkspaceWithTabs};
+
 
 /// An answer the Agent sees as an error (`ControlError` in the Window).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -898,7 +899,7 @@ pub fn run(
                             return Err(err(code, message))
                         }
                         crate::agent_names::HandleCheck::Ok { .. } => {
-                            crate::agent_control::normalize_handle(h).unwrap_or_else(|| h.clone())
+                            crate::control_protocol::normalize_handle(h).unwrap_or_else(|| h.clone())
                         }
                     },
                     // Every Agent has a handle: clearing one hands out a default.
@@ -952,82 +953,6 @@ pub fn run(
         }
         _ => return Ok(Err(err("internal", "not a call Rust answers"))),
     }))
-}
-
-// ── The app's live state ──
-
-pub struct AppLive<'a> {
-    pub app: &'a tauri::AppHandle,
-    pub store: &'a crate::workspace_store::WorkspaceStore,
-    pub ptys: &'a crate::pty_manager::PtyManager,
-    pub status: &'a crate::status_store::StatusStore,
-    pub facts: &'a crate::pane_facts::PaneFactsStore,
-}
-
-impl Live for AppLive<'_> {
-    fn workspaces(&self, caller_workspace: &str) -> Result<Vec<WorkspaceWithTabs>, AbundioError> {
-        let Some(profile) = self.store.profile_of(caller_workspace)? else {
-            return Ok(Vec::new());
-        };
-        self.store.list(&profile)
-    }
-    fn pane_numbers(&self, workspace_id: &str, pane_ids: &[String]) -> Result<Vec<(String, u32)>, AbundioError> {
-        self.store.pane_numbers(workspace_id, pane_ids)
-    }
-    fn view(&self, pty_id: &str) -> Option<StoreView> {
-        self.status.view(pty_id)
-    }
-    fn is_live(&self, pty_id: &str) -> bool {
-        self.ptys.is_live(pty_id)
-    }
-    fn facts(&self, pane_id: &str) -> PaneFacts {
-        self.facts.get(pane_id)
-    }
-    fn read_screen(&self, pty_id: &str, visible: bool, lines: Option<usize>) -> Result<Vec<String>, AbundioError> {
-        self.ptys.read_screen(pty_id, visible, lines)
-    }
-    fn input_modes(&self, pty_id: &str) -> Option<crate::screen::InputModes> {
-        self.ptys.input_modes(pty_id)
-    }
-    fn write(&self, pty_id: &str, bytes: &[u8]) -> Result<(), AbundioError> {
-        self.ptys.write(pty_id, bytes.to_vec())
-    }
-    fn check_handle(&self, workspace_id: &str, pane_id: &str, handle: &str) -> Result<crate::agent_names::HandleCheck, AbundioError> {
-        use tauri::Manager;
-        let r = self.app.state::<crate::agent_names::HandleReservations>();
-        r.check(self.store, workspace_id, pane_id, handle)
-    }
-    fn take_default_handle(&self, workspace_id: &str, pane_id: &str) -> Result<String, AbundioError> {
-        use tauri::Manager;
-        let r = self.app.state::<crate::agent_names::HandleReservations>();
-        r.take_default(self.store, workspace_id, pane_id)
-    }
-    fn patch_pane(&self, tab_id: &str, pane_id: &str, set: serde_json::Map<String, Value>) -> Result<(), AbundioError> {
-        let op = crate::layout_ops::LayoutOp::Patch { id: pane_id.to_string(), set, unset: vec![] };
-        let state = crate::layout_store::apply_from_rust(self.app, tab_id, &[op])?;
-        if !state.applied {
-            return Err(AbundioError::NotFound(state.reason.unwrap_or_else(|| "that pane closed".into())));
-        }
-        Ok(())
-    }
-    fn rename_tab(&self, workspace_id: &str, tab_id: &str, name: &str) -> Result<(), AbundioError> {
-        use tauri::Manager;
-        self.store.update_tab(
-            tab_id,
-            crate::workspace_store::TabUpdate { name: Some(name.to_string()), ..Default::default() },
-        )?;
-        if let Some(profile) = self.store.profile_of(workspace_id)? {
-            crate::commands::send_tabs_changed(
-                self.store,
-                &self.app.state::<crate::profile_store::ActiveProfileState>(),
-                &self.app.state::<crate::event_sink::Events>(),
-                None,
-                workspace_id,
-                &profile,
-            );
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -1474,7 +1399,7 @@ mod tests {
     fn maps_every_key_rust_accepts_following_cursor_mode() {
         for k in ["enter", "esc", "tab", "shift+tab", "backspace", "delete", "space", "up", "down", "left",
                   "right", "home", "end", "pageup", "pagedown", "ctrl+a", "ctrl+z"] {
-            assert!(crate::agent_control::valid_key(k));
+            assert!(crate::control_protocol::valid_key(k));
             assert!(key_bytes(k, false).is_some(), "{k}");
         }
         assert_eq!(key_bytes("up", false).unwrap(), "\x1b[A");

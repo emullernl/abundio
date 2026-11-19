@@ -22,6 +22,11 @@ use tauri::{AppHandle, Emitter, Manager};
 
 pub use crate::control_protocol::*;
 
+use crate::error::AbundioError;
+use crate::pane_facts::PaneFacts;
+use crate::status_store::StoreView;
+use crate::workspace_store::WorkspaceWithTabs;
+
 
 /// Where `workspace close <name>` goes. Never the caller's own Workspace,
 /// and never opened for the call: a Workspace with no live PTY is routed to
@@ -216,7 +221,7 @@ fn resolve_in_rust(app: &AppHandle, caller: &Caller, scope: &Scope, target: &Tar
     let ptys = app.state::<crate::pty_manager::PtyManager>();
     let status = app.state::<std::sync::Arc<crate::status_store::StatusStore>>();
     let facts = app.state::<crate::pane_facts::PaneFactsStore>();
-    let live = crate::control_local::AppLive { app, store: &store, ptys: &ptys, status: &status, facts: &facts };
+    let live = AppLive { app, store: &store, ptys: &ptys, status: &status, facts: &facts };
     crate::control_local::resolve(&live, caller, &scope.workspace_id, target).map_err(ctl_error_answer)
 }
 
@@ -269,7 +274,7 @@ fn handle_in_rust(app: &AppHandle, caller: &Caller, scope: &Scope, request: &Req
     let ptys = app.state::<crate::pty_manager::PtyManager>();
     let status = app.state::<std::sync::Arc<crate::status_store::StatusStore>>();
     let facts = app.state::<crate::pane_facts::PaneFactsStore>();
-    let live = crate::control_local::AppLive { app, store: &store, ptys: &ptys, status: &status, facts: &facts };
+    let live = AppLive { app, store: &store, ptys: &ptys, status: &status, facts: &facts };
     let effects = WindowEffects { app, window_label: &scope.window_label };
     let outcome = crate::control_local::run(&live, &effects, caller, &scope.workspace_id, request, &cancel, limit);
     if let Some(client) = &scope.client_id {
@@ -684,3 +689,152 @@ pub fn agent_control_pane_for_number(
 ) -> Result<Option<String>, crate::error::AbundioError> {
     store.pane_for_number(&workspace_id, number)
 }
+
+// ── What Agent control reads and writes in the app (control_local.rs) ──
+
+/// A Tab's layout edit Rust makes itself (Agent control): applied, saved,
+/// and sent to every Window of the Profile, the owning one included.
+pub fn apply_from_rust(
+    app: &tauri::AppHandle,
+    tab_id: &str,
+    ops: &[crate::layout_ops::LayoutOp],
+) -> Result<crate::layout_store::LayoutState, crate::error::AbundioError> {
+    use crate::event_sink::EventsExt;
+    use tauri::Manager;
+    let layouts = app.state::<std::sync::Arc<crate::layout_store::LayoutStore>>();
+    let db = app.state::<crate::workspace_store::WorkspaceStore>();
+    let ptys = app.state::<crate::pty_manager::PtyManager>();
+    let applied = layouts.apply(&db, tab_id, ops, &|id| ptys.is_live(id))?;
+    if applied.changed {
+        let events = app.state::<crate::event_sink::Events>();
+        let profiles = app.state::<crate::profile_store::ActiveProfileState>();
+        for client in crate::layout_store::broadcast_targets(&profiles.snapshot(), &applied.profile_id, &crate::event_sink::ClientId(String::new())) {
+            events.to_client(&client, "layout-changed", &applied.state);
+        }
+    }
+    Ok(applied.state)
+}
+
+
+// ── The app's live state ──
+
+pub struct AppLive<'a> {
+    pub app: &'a tauri::AppHandle,
+    pub store: &'a crate::workspace_store::WorkspaceStore,
+    pub ptys: &'a crate::pty_manager::PtyManager,
+    pub status: &'a crate::status_store::StatusStore,
+    pub facts: &'a crate::pane_facts::PaneFactsStore,
+}
+
+impl crate::control_local::Live for AppLive<'_> {
+    fn workspaces(&self, caller_workspace: &str) -> Result<Vec<WorkspaceWithTabs>, AbundioError> {
+        let Some(profile) = self.store.profile_of(caller_workspace)? else {
+            return Ok(Vec::new());
+        };
+        self.store.list(&profile)
+    }
+    fn pane_numbers(&self, workspace_id: &str, pane_ids: &[String]) -> Result<Vec<(String, u32)>, AbundioError> {
+        self.store.pane_numbers(workspace_id, pane_ids)
+    }
+    fn view(&self, pty_id: &str) -> Option<StoreView> {
+        self.status.view(pty_id)
+    }
+    fn is_live(&self, pty_id: &str) -> bool {
+        self.ptys.is_live(pty_id)
+    }
+    fn facts(&self, pane_id: &str) -> PaneFacts {
+        self.facts.get(pane_id)
+    }
+    fn read_screen(&self, pty_id: &str, visible: bool, lines: Option<usize>) -> Result<Vec<String>, AbundioError> {
+        self.ptys.read_screen(pty_id, visible, lines)
+    }
+    fn input_modes(&self, pty_id: &str) -> Option<crate::screen::InputModes> {
+        self.ptys.input_modes(pty_id)
+    }
+    fn write(&self, pty_id: &str, bytes: &[u8]) -> Result<(), AbundioError> {
+        self.ptys.write(pty_id, bytes.to_vec())
+    }
+    fn check_handle(&self, workspace_id: &str, pane_id: &str, handle: &str) -> Result<crate::agent_names::HandleCheck, AbundioError> {
+        use tauri::Manager;
+        let r = self.app.state::<crate::agent_names::HandleReservations>();
+        r.check(self.store, workspace_id, pane_id, handle)
+    }
+    fn take_default_handle(&self, workspace_id: &str, pane_id: &str) -> Result<String, AbundioError> {
+        use tauri::Manager;
+        let r = self.app.state::<crate::agent_names::HandleReservations>();
+        r.take_default(self.store, workspace_id, pane_id)
+    }
+    fn patch_pane(&self, tab_id: &str, pane_id: &str, set: serde_json::Map<String, Value>) -> Result<(), AbundioError> {
+        let op = crate::layout_ops::LayoutOp::Patch { id: pane_id.to_string(), set, unset: vec![] };
+        let state = apply_from_rust(self.app, tab_id, &[op])?;
+        if !state.applied {
+            return Err(AbundioError::NotFound(state.reason.unwrap_or_else(|| "that pane closed".into())));
+        }
+        Ok(())
+    }
+    fn rename_tab(&self, workspace_id: &str, tab_id: &str, name: &str) -> Result<(), AbundioError> {
+        use tauri::Manager;
+        self.store.update_tab(
+            tab_id,
+            crate::workspace_store::TabUpdate { name: Some(name.to_string()), ..Default::default() },
+        )?;
+        if let Some(profile) = self.store.profile_of(workspace_id)? {
+            crate::commands::send_tabs_changed(
+                self.store,
+                &self.app.state::<crate::profile_store::ActiveProfileState>(),
+                &self.app.state::<crate::event_sink::Events>(),
+                None,
+                workspace_id,
+                &profile,
+            );
+        }
+        Ok(())
+    }
+}
+
+/// The hook server's view of the desktop app (`hook_server::HookHost`).
+pub struct AppHookHost(pub AppHandle);
+
+impl crate::hook_server::HookHost for AppHookHost {
+    fn hook_event(&self, pty_id: &str, event: crate::events::AgentHookEvent) {
+        let _ = self.0.emit(&format!("agent-hook-{pty_id}"), event);
+    }
+    fn ptys(&self) -> Option<&crate::pty_manager::PtyManager> {
+        self.0.try_state::<crate::pty_manager::PtyManager>().map(|s| s.inner())
+    }
+    fn env_store(&self) -> Option<&crate::env_vars::EnvVarStore> {
+        self.0.try_state::<crate::env_vars::EnvVarStore>().map(|s| s.inner())
+    }
+    fn control_refuse_unknown(&self, request: tiny_http::Request) -> Option<tiny_http::Request> {
+        refuse_unknown(&self.0, request)
+    }
+    fn control_serve(&self, request: tiny_http::Request) {
+        serve(self.0.clone(), request)
+    }
+}
+
+// ── Agent handle commands (agent_names.rs) ──
+
+// ── Commands ──
+
+#[tauri::command]
+pub fn agent_handle_check(
+    store: tauri::State<'_, crate::workspace_store::WorkspaceStore>,
+    reservations: tauri::State<'_, crate::agent_names::HandleReservations>,
+    workspace_id: String,
+    pane_id: String,
+    handle: String,
+) -> Result<crate::agent_names::HandleCheck, AbundioError> {
+    reservations.check(&store, &workspace_id, &pane_id, &handle)
+}
+
+#[tauri::command]
+pub fn agent_handle_default(
+    store: tauri::State<'_, crate::workspace_store::WorkspaceStore>,
+    reservations: tauri::State<'_, crate::agent_names::HandleReservations>,
+    workspace_id: String,
+    pane_id: String,
+) -> Result<String, AbundioError> {
+    reservations.take_default(&store, &workspace_id, &pane_id)
+}
+
