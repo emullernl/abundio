@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	shortcutLabelFor,
@@ -9,6 +8,7 @@ import { useWorkWorkspaces } from "../hooks/useWorkWorkspaces";
 import { isAgentPane } from "../lib/firePromptAction";
 import { toggleFleetSpotlight, useTargetPaneId } from "../lib/fleetFocus";
 import { fuzzyMatch } from "../lib/fuzzyMatch";
+import { settingsWindow } from "../lib/ipc";
 import { type KeyAction, triggerAction } from "../lib/keybindings";
 import { fileWindowTargetForPane } from "../lib/openFileWindow";
 import { isOrchestratorPane } from "../lib/orchestrator";
@@ -119,7 +119,7 @@ export function CommandPalette({
 			category: "Profiles",
 			action: () => {
 				// Open the singleton Settings window deep-linked to Profiles.
-				invoke("open_settings_window", { section: "profiles" }).catch(() => {});
+				settingsWindow.open("profiles").catch(() => {});
 			},
 		});
 

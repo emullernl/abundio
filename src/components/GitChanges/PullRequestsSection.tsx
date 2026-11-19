@@ -1,6 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { pr } from "../../lib/ipc";
+import { pr, settingsWindow } from "../../lib/ipc";
 import type { GhStatus } from "../../lib/types";
 import {
 	MY_PRS_VIEWS,
@@ -224,7 +223,7 @@ export function PullRequestsSection() {
 }
 
 function openGithubSettings() {
-	invoke("open_settings_window", { section: "github" }).catch(() => {});
+	settingsWindow.open("github").catch(() => {});
 }
 
 interface PrSubPanelProps<V extends PrView> {

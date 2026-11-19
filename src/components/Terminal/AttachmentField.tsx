@@ -21,6 +21,7 @@
 
 import { ClipboardPaste, ImagePlus, Paperclip, X } from "lucide-react";
 import { useState } from "react";
+import { openDialog } from "../../lib/desktop";
 import { promptAttachments } from "../../lib/ipc";
 import type { ParamValue } from "../../lib/promptActions";
 import { secondaryButtonClass } from "../PromptActions/fieldStyles";
@@ -73,7 +74,6 @@ export function AttachmentField({
 			// Dynamic import, matching NewWorkspaceDialog and EnvImportDialog: the
 			// plugin has no Tauri to reach in `pnpm demo:web`, so it must not be
 			// pulled in until a click actually asks for a picker.
-			const { open: openDialog } = await import("@tauri-apps/plugin-dialog");
 			const picked = await openDialog({ multiple, directory: false });
 			if (!picked) return;
 			add(Array.isArray(picked) ? picked : [picked]);

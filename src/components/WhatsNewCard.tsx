@@ -1,6 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { AnimatePresence, motion } from "framer-motion";
 import { Sparkles, X } from "lucide-react";
+import { settingsWindow } from "../lib/ipc";
 import type { MissingNotesReason } from "../lib/releaseNotes";
 import { useUpdateStore } from "../stores/updateStore";
 import { ReleaseNotesMarkdown } from "./Settings/ReleaseNotesMarkdown";
@@ -153,9 +153,7 @@ export function WhatsNewCard() {
 						<button
 							type="button"
 							onClick={() => {
-								invoke("open_settings_window", {
-									section: "updates",
-								}).catch(() => {});
+								settingsWindow.open("updates").catch(() => {});
 								dismiss();
 							}}
 							className="rounded-md transition-colors font-medium"

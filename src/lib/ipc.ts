@@ -1,5 +1,9 @@
 import { invoke as realInvoke } from "@tauri-apps/api/core";
-import { listen as realListen, type UnlistenFn } from "@tauri-apps/api/event";
+import {
+	emit as realEmit,
+	listen as realListen,
+	type UnlistenFn,
+} from "@tauri-apps/api/event";
 import { appWebview } from "./appWindow";
 import { decodeBase64 } from "./base64";
 import { isDemoMode } from "./demo";
@@ -58,6 +62,22 @@ export function listen<T>(
 		? mockListen<T>(event, cb)
 		: (realListen<T>(event, cb) as Promise<UnlistenFn>);
 }
+
+/** Broadcast an app event to every Window (the Settings window's store
+ *  sync). A no-op in the browser demo, which has one window only. */
+export function emit(event: string, payload?: unknown): Promise<void> {
+	return isDemoMode() ? Promise.resolve() : realEmit(event, payload);
+}
+
+/** The Settings window: its own OS window, never a modal (CLAUDE.md). */
+export const settingsWindow = {
+	/** Open it, or focus it, optionally at one section. */
+	open: (section?: string): Promise<void> =>
+		invoke<void>(
+			"open_settings_window",
+			section === undefined ? undefined : { section },
+		),
+};
 
 /** Subscribe to an event Rust aims at *this* Window with `emit_to(label, …)`.
  *

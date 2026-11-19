@@ -1,5 +1,6 @@
 import { Download } from "lucide-react";
 import { isDemoMode } from "../../lib/demo";
+import { saveDialog } from "../../lib/desktop";
 import { type AgentTurnRecord, fs } from "../../lib/ipc";
 import { SectionTitle } from "./StatsActivityChart";
 import { agentLabel, formatDuration, turnsToCsv } from "./statsCompute";
@@ -47,8 +48,7 @@ async function exportTurnsCsv(turns: AgentTurnRecord[], filename: string) {
 		downloadViaBlob(csv, filename);
 		return;
 	}
-	const { save } = await import("@tauri-apps/plugin-dialog");
-	const path = await save({
+	const path = await saveDialog({
 		defaultPath: filename,
 		filters: [{ name: "CSV", extensions: ["csv"] }],
 	});

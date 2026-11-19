@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppLoader } from "./components/AppLoader";
 import { CommandPalette } from "./components/CommandPalette";
@@ -72,6 +71,7 @@ import {
 	appMenu,
 	listen,
 	listenToThisWindow,
+	settingsWindow,
 	updates,
 	windowSession,
 } from "./lib/ipc";
@@ -1070,7 +1070,7 @@ export function App() {
 			// Settings is now a singleton OS window (ADR-0007). The Rust
 			// command opens or focuses it; the panel renders inside that
 			// dedicated window, not as a modal here.
-			invoke("open_settings_window").catch(() => {});
+			settingsWindow.open().catch(() => {});
 		});
 		registerAction("search-in-terminal", () => {
 			// A file's Orchestrator tab, when that is where focus is: find in

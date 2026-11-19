@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { AlertTriangle, Download } from "lucide-react";
 import { useState } from "react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
+import { saveDialog } from "../../lib/desktop";
 import {
 	primaryButtonClass,
 	secondaryButtonClass,
@@ -47,11 +48,10 @@ export function EnvExportDialog({
 		setFailed(null);
 		let path: string | null = null;
 		try {
-			const { save } = await import("@tauri-apps/plugin-dialog");
 			// `<folder>/<bundle>.env` rather than a bare `.env`: it is a file
 			// people expect to see, and it will not silently replace the
 			// project's own `.env` on a careless Enter.
-			path = await save({
+			path = await saveDialog({
 				defaultPath: `${workspaceFolder}/${bundle}.env`,
 				title: `Export ${bundle} as .env`,
 			});

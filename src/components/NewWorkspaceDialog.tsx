@@ -6,6 +6,7 @@ import {
 	getAgentIconComponent,
 	TerminalBrandIcon,
 } from "../lib/agentIcons";
+import { openDialog } from "../lib/desktop";
 import { type FolderCheck, workspaces as workspacesApi } from "../lib/ipc";
 import type { CodingAgent } from "../lib/types";
 import { folderVerdict } from "../lib/workspaceFolder";
@@ -116,7 +117,6 @@ export function NewWorkspaceDialog({
 	};
 
 	const pickFolder = async () => {
-		const { open: openDialog } = await import("@tauri-apps/plugin-dialog");
 		const folder = await openDialog({ directory: true, multiple: false });
 		if (!folder) return;
 		const path = typeof folder === "string" ? folder : folder[0];

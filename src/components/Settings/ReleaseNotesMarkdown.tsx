@@ -1,9 +1,9 @@
 import MarkdownPreview from "@uiw/react-markdown-preview";
 import "@uiw/react-markdown-preview/markdown.css";
 import "../../styles/markdown.css";
-import { open } from "@tauri-apps/plugin-shell";
 import { useMemo } from "react";
 import rehypeSanitize from "rehype-sanitize";
+import { openExternal } from "../../lib/desktop";
 import { markdownSanitizeSchema } from "../../lib/markdownSanitizeSchema";
 import { rehypePrRefs } from "../../lib/rehypePrRefs";
 import { getTheme } from "../../lib/themes";
@@ -86,7 +86,7 @@ export function ReleaseNotesMarkdown({ body }: ReleaseNotesMarkdownProps) {
 				// rather than launched — see the component doc.
 				const intercept = (e: React.MouseEvent) => {
 					e.preventDefault();
-					if (isExternalHref(href)) open(href).catch(() => {});
+					if (isExternalHref(href)) openExternal(href).catch(() => {});
 				};
 				return (
 					<a

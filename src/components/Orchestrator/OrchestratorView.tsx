@@ -13,6 +13,7 @@ import { createPortal } from "react-dom";
 import { useAgentHandle } from "../../hooks/useAgentHandle";
 import { useAgentPanes } from "../../hooks/useAgentPanes";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
+import { openDialog } from "../../lib/desktop";
 import type { OrchestratorFileTab } from "../../lib/ipc";
 import { orchestratorPane, pickerAgents } from "../../lib/orchestrator";
 import { closePeek } from "../../lib/orchestratorActions";
@@ -817,8 +818,7 @@ function MissingFolderCard() {
 	const folder = useOrchestratorStore((s) => s.missingFolder);
 	const error = useOrchestratorStore((s) => s.error);
 	const choose = async () => {
-		const { open } = await import("@tauri-apps/plugin-dialog");
-		const picked = await open({
+		const picked = await openDialog({
 			directory: true,
 			multiple: false,
 			title: "Choose an empty folder for the Orchestrator",

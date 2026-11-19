@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { listen } from "../lib/ipc";
 import {
 	initialSection,
 	normalizeSection,
@@ -95,12 +96,10 @@ export function SettingsPanel({ onClose }: Props) {
 	// The other half of the deep link: Rust emits `settings-set-section` instead
 	// of rebuilding the URL when the Settings window is already open.
 	useEffect(() => {
-		const unlisten = import("@tauri-apps/api/event").then(({ listen }) =>
-			listen<string>("settings-set-section", (event) => {
-				const next = normalizeSection(event.payload);
-				if (next) setSection(next);
-			}),
-		);
+		const unlisten = listen<string>("settings-set-section", (event) => {
+			const next = normalizeSection(event.payload);
+			if (next) setSection(next);
+		});
 		return () => {
 			unlisten.then((fn) => fn()).catch(() => {});
 		};

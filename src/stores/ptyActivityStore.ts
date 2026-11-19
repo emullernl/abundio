@@ -1,6 +1,6 @@
-import { sendNotification } from "@tauri-apps/plugin-notification";
 import { create } from "zustand";
 import type { TitleStatus } from "../lib/agentTitleMap";
+import { sendNotification } from "../lib/desktop";
 import { findPaneLocation, isPaneVisible } from "../lib/notificationRouter";
 import { parseTabLayout } from "../lib/paneTree";
 import {

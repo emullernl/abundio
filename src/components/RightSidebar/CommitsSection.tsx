@@ -1,4 +1,3 @@
-import { open } from "@tauri-apps/plugin-shell";
 import { useEffect, useRef, useState } from "react";
 import { writeClipboardText } from "../../lib/clipboard";
 import {
@@ -10,6 +9,7 @@ import {
 	initials,
 	relativeTime,
 } from "../../lib/commitHistory";
+import { openExternal } from "../../lib/desktop";
 import { gitRowMenuEntries } from "../../lib/gitRowMenu";
 import { fs as fsApi, git } from "../../lib/ipc";
 import {
@@ -373,7 +373,8 @@ function CommitsBody() {
 			},
 			"open-on-github": () => {
 				close();
-				if (slug) open(githubCommitUrl(slug, commit.oid)).catch(console.error);
+				if (slug)
+					openExternal(githubCommitUrl(slug, commit.oid)).catch(console.error);
 			},
 		};
 		return commitMenuEntries(commit, slug).map((entry) => ({

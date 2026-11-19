@@ -1,9 +1,8 @@
-import { emit } from "@tauri-apps/api/event";
 import { useEffect } from "react";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Titlebar } from "./components/Titlebar";
 import { appWindow, currentWindowLabel } from "./lib/appWindow";
-import { listen, profiles as profilesApi, updates } from "./lib/ipc";
+import { emit, listen, profiles as profilesApi, updates } from "./lib/ipc";
 import { broadcastSliceOf } from "./lib/settingsBroadcast";
 import { useProfileStore } from "./stores/profileStore";
 import {

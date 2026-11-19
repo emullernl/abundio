@@ -2,7 +2,6 @@
 // **Attention flag** (`notify`) and the **Progress line** (`progress`), and
 // when each ends.
 
-import { sendNotification } from "@tauri-apps/plugin-notification";
 import { useAgentSignalsStore } from "../../stores/agentSignalsStore";
 import { useOrchestratorStore } from "../../stores/orchestratorStore";
 import { currentNotificationTitle } from "../../stores/profileStore";
@@ -12,6 +11,7 @@ import {
 } from "../../stores/ptyActivityStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { sendNotification } from "../desktop";
 import { targetPaneId } from "../fleetFocus";
 import { isPaneVisible } from "../notificationRouter";
 import { onPaneInput } from "../paneInput";

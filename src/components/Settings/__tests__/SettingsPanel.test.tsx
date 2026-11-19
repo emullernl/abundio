@@ -19,11 +19,10 @@ vi.mock("../../../lib/ipc", () => ({
 		status: () => Promise.resolve({ staged: null, available: null }),
 		releaseNotes: () => Promise.resolve([]),
 		markVersionSeen: () => Promise.resolve(),
+		appVersion: () => Promise.resolve("0.0.0"),
 	},
 	pr: {},
-}));
-vi.mock("@tauri-apps/api/app", () => ({
-	getVersion: () => Promise.resolve("0.0.0"),
+	listen: () => Promise.resolve(() => {}),
 }));
 vi.mock("@tauri-apps/plugin-shell", () => ({ open: () => Promise.resolve() }));
 vi.mock("@tauri-apps/api/event", () => ({

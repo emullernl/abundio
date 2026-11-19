@@ -1,4 +1,3 @@
-import { open } from "@tauri-apps/plugin-shell";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
@@ -46,6 +45,7 @@ import {
 } from "./agentTitleMap";
 import { currentWindowLabel } from "./appWindow";
 import { writeClipboardText } from "./clipboard";
+import { openExternal } from "./desktop";
 import { targetPaneId } from "./fleetFocus";
 import { outsideWorkspaceView } from "./hiddenAgentStart";
 import { startUnlessShown } from "./hiddenSpawn";
@@ -1167,7 +1167,7 @@ export async function createTerminal(
 	const openExternalUrl = (event: MouseEvent, url: string) => {
 		const forceOpen = isMac ? event.metaKey : event.ctrlKey;
 		if (term.modes.mouseTrackingMode !== "none" && !forceOpen) return;
-		open(url);
+		openExternal(url);
 	};
 
 	// Route OSC 8 hyperlinks (emitted by CLIs like GitHub Copilot) through the

@@ -15,11 +15,11 @@ import { createPortal } from "react-dom";
  * them is consciously kept narrow.
  */
 
-import { invoke } from "@tauri-apps/api/core";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowUpRight } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
+import { settingsWindow } from "../../lib/ipc";
 import {
 	type ActionScope,
 	deriveParams,
@@ -345,9 +345,7 @@ function PromptActionPopoverBody({
 								opacity: 0.8,
 							}}
 							onClick={() => {
-								invoke("open_settings_window", {
-									section: "prompt-actions",
-								}).catch(() => {});
+								settingsWindow.open("prompt-actions").catch(() => {});
 								onClose();
 							}}
 						>
