@@ -1,4 +1,4 @@
-import { invoke as realInvoke } from "@tauri-apps/api/core";
+import { Channel, invoke as realInvoke } from "@tauri-apps/api/core";
 import {
 	emit as realEmit,
 	listen as realListen,
@@ -125,6 +125,70 @@ export interface PtySpawnOptions {
 	};
 }
 
+/** Read one PTY output message off the Window's channel: a byte with the pty
+ *  id's length, the id (ASCII), then the output. Mirrors Rust's
+ *  `event_sink::frame_pty_output`. `null` for a malformed frame. */
+export function parsePtyOutputFrame(
+	frame: ArrayBuffer | Uint8Array,
+): { ptyId: string; data: Uint8Array } | null {
+	const bytes = frame instanceof Uint8Array ? frame : new Uint8Array(frame);
+	if (bytes.length < 1) return null;
+	const idLen = bytes[0];
+	if (bytes.length < 1 + idLen) return null;
+	let ptyId = "";
+	for (let i = 1; i <= idLen; i++) ptyId += String.fromCharCode(bytes[i]);
+	return { ptyId, data: bytes.subarray(1 + idLen) };
+}
+
+/** The Window's one PTY output channel, opened on first use and shared by
+ *  every listener; each frame goes to the listeners of its pty id. */
+const ptyOutputHub = (() => {
+	const listeners = new Map<string, Set<(data: Uint8Array) => void>>();
+	let opened: Promise<void> | null = null;
+	const open = () => {
+		if (!opened) {
+			const channel = new Channel<ArrayBuffer>();
+			channel.onmessage = (message) => {
+				const frame = parsePtyOutputFrame(message);
+				if (!frame) return;
+				const set = listeners.get(frame.ptyId);
+				if (!set) return;
+				for (const cb of [...set]) cb(frame.data);
+			};
+			opened = invoke<void>("pty_output_subscribe", { channel }).catch((e) => {
+				opened = null;
+				throw e;
+			});
+		}
+		return opened;
+	};
+	return {
+		async listen(
+			ptyId: string,
+			cb: (data: Uint8Array) => void,
+		): Promise<UnlistenFn> {
+			let set = listeners.get(ptyId);
+			if (!set) {
+				set = new Set();
+				listeners.set(ptyId, set);
+			}
+			set.add(cb);
+			try {
+				await open();
+			} catch (e) {
+				set.delete(cb);
+				throw e;
+			}
+			return () => {
+				const current = listeners.get(ptyId);
+				if (!current) return;
+				current.delete(cb);
+				if (current.size === 0) listeners.delete(ptyId);
+			};
+		},
+	};
+})();
+
 export const pty = {
 	/** Spawn a PTY. Takes an options object rather than positional arguments —
 	 *  there are eleven of them and almost all are optional. */
@@ -144,22 +208,19 @@ export const pty = {
 
 	kill: (ptyId: string) => invoke<void>("pty_kill", { ptyId }),
 
+	/** Every chunk of the PTY's output, in order. Resolves once the listener
+	 *  is in place, so a caller that awaits it before spawning misses nothing. */
 	onOutput: (
 		ptyId: string,
 		callback: (data: Uint8Array) => void,
-	): Promise<UnlistenFn> =>
-		listen<{ data: string }>(`pty-output-${ptyId}`, (event) => {
-			callback(decodeBase64(event.payload.data));
-		}),
-
-	/** Like onOutput but passes the raw base64 string (no decode). */
-	onOutputRaw: (
-		ptyId: string,
-		callback: (base64Data: string) => void,
-	): Promise<UnlistenFn> =>
-		listen<{ data: string }>(`pty-output-${ptyId}`, (event) => {
-			callback(event.payload.data);
-		}),
+	): Promise<UnlistenFn> => {
+		if (isDemoMode()) {
+			return mockListen<{ data: string }>(`pty-output-${ptyId}`, (event) => {
+				callback(decodeBase64(event.payload.data));
+			});
+		}
+		return ptyOutputHub.listen(ptyId, callback);
+	},
 
 	onStatus: (
 		ptyId: string,

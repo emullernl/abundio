@@ -753,9 +753,8 @@ async function startBackgroundTracking(ptyId: string) {
 	let bgBytesSinceIdle = 0;
 	let bgThresholdHitTimes: number[] = [];
 	let bgLastOutputChunkAt = 0;
-	// Use onOutputRaw to skip base64 decode — background trackers only need
-	// approximate byte counts for activity thresholds, not decoded content.
-	const unlistenOutput = await pty.onOutputRaw(ptyId, (base64Data) => {
+	// Background trackers only need byte counts for activity thresholds.
+	const unlistenOutput = await pty.onOutput(ptyId, (data) => {
 		// Only run byte accumulation for agent-mode PTYs
 		const entry = usePtyActivityStore.getState().activities[ptyId];
 		if (entry?.detectionMode !== "agent") return;
@@ -769,8 +768,7 @@ async function startBackgroundTracking(ptyId: string) {
 			// window, not by the byte-counter's inactivity gap.
 		}
 		bgLastOutputChunkAt = now;
-		// Estimate decoded byte count from base64 string length
-		bgBytesSinceIdle += Math.floor(base64Data.length * 0.75);
+		bgBytesSinceIdle += data.length;
 
 		if (entry?.state === "active") {
 			touchLastOutput(ptyId, now);

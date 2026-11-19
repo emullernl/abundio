@@ -49,6 +49,9 @@ const DESKTOP = [
 	"list_dev_environments",
 	"list_system_fonts",
 	"plugin:app|version",
+	// The Window's PTY output channel. For a remote Workspace the desktop
+	// forwards the Host's stream into it.
+	"pty_output_subscribe",
 	// Reads the desktop clipboard; for a remote Workspace the saved file must
 	// then be sent to the Host (phase 7).
 	"prompt_attachment_from_clipboard",

@@ -26,7 +26,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 
 ### Rust Backend (`src-tauri/src/`)
 
-- `pty_manager.rs` — Per-PTY dedicated OS threads with crossbeam channels. PTY types never cross async boundaries. Output is base64-encoded and emitted via Tauri events.
+- `pty_manager.rs` — Per-PTY dedicated OS threads with crossbeam channels. PTY types never cross async boundaries. Output goes to the `EventSink` (`event_sink.rs`), which sends it raw on each Window's PTY output channel.
 - `app_paths.rs` — Every on-disk path, split into **shared** (`<data>/abundio/`: hook relay scripts, shims) and **epoch-versioned** (`<data>/abundio/v2/`: database, pty-logs, shell-integration, windows.json). Also does the one-time import of the previous epoch's database. See ADR-0025.
 - `workspace_store.rs` — SQLite CRUD for workspaces, layouts, tabs. DB at `~/Library/Application Support/abundio/v2/abundio.db`.
 - `workspace_folders.rs` — Which folder a Workspace may have: never one another Workspace of its Profile has, never an Orchestrator folder (another Profile's may share it; the New Workspace dialog says so). `folder_key` compares real paths. Enforced in `workspace_create` and a folder change in `workspace_update`; `workspace_folder_check` for the dialog.
@@ -39,7 +39,8 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 - `orchestrator.rs` — The **Orchestrator workspace** (ADR-0057): its **Orchestrator folder** (ADR-0059: by default `shared_root()/orchestrator/<Profile name>`, fixed when made; Profiles from before keep `orchestrator/<id>/Orchestrator`; or an empty folder the user chose in Settings ▸ Profiles, `components/Settings/OrchestratorFolderRow.tsx`; a `.abundio-orchestrator` marker; a default one is deleted with its Profile), the instructions it rewrites on every start (`AGENTS.md`, `CLAUDE.md`, never the user's `my-instructions.md`), and the `orchestrator_*` commands (ensure, Agent choice, **Orchestrator tabs**). `orchestrator_ensure` also seeds the Orchestrator-scoped Prompt actions, once.
 - `commands.rs` — All `#[tauri::command]` handlers. All return `Result<T, AbundioError>`.
 - `error.rs` — `AbundioError` enum (variants: `Pty`, `Db`, `Io`, `NotFound`, `Channel`) using thiserror + Serialize.
-- `events.rs` — Event structs for PTY output (`PtyOutput` with base64 data) and status (`PtyStatus`: Running/Exited).
+- `events.rs` — Event structs for PTY status (`PtyStatus`: Running/Exited) and activity.
+- `event_sink.rs` — `EventSink`: where core modules send events instead of holding an `AppHandle` (`TauriSink` in the app, `RecordingSink` in tests); `ClientId`; `PtyChannels`, each Window's raw PTY output channel (`pty_output_subscribe`), framed by `frame_pty_output`. `change_hub.rs` tells the git scheduler of file-watcher changes inside the backend.
 - `config.rs` — `AppConfig` struct (fontFamily, fontSize, theme). Defaults: "JetBrains Mono", 14pt, "default".
 - `shell_env.rs` — `default_shell()`: reads `$SHELL` env var, falls back to `/bin/zsh`.
 - `migrations.rs` — Auto-runs SQL migrations on startup, tracks applied in `_migrations` table.
@@ -182,7 +183,7 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 
 ```
 Terminal input → pty.write() IPC → crossbeam channel → OS thread → PTY stdin
-PTY stdout → OS thread reads → base64 encode → Tauri event → xterm.write()
+PTY stdout → OS thread reads → EventSink → Window's Tauri Channel (raw, framed by pty id) → xterm.write()
 ```
 
 ### Pane Layout
@@ -236,7 +237,8 @@ git push --follow-tags         # triggers CI build for all platforms
 ## Key Conventions
 
 - Rust errors use `AbundioError` enum (thiserror + Serialize). Never return `Result<T, String>`.
-- PTY data is binary — base64 over IPC, `Uint8Array` in frontend. Never treat as UTF-8 strings.
+- PTY data is binary — raw bytes on the Window's PTY output channel (`ipc.ts` `ptyOutputHub`, `parsePtyOutputFrame`), `Uint8Array` in frontend. Never treat as UTF-8 strings. Invoke results that carry bytes (`pty_read_log`) are still base64, and so is the demo's mock bus.
+- **Every Tauri import lives in a seam module** (`ipc.ts`, `desktop.ts`, `appWindow.ts`, `clipboard.ts`, `platform.ts`; `seamImports.test.ts`), and **every command has a scope** in `lib/commandScope.ts` (host or desktop; `commandScope.test.ts`). A new command must pick one. See `docs/plans/remote-hosts.md`.
 - Resize events are debounced (100ms). Layout persists to DB only on mouseup, not during drag.
 - Empty `ptyId` in a layout node means "spawn PTY on first render". TerminalPane handles this and writes the real ID back into the layout.
 - Stale `ptyId`s are cleared on workspace load (those processes died with the previous app instance).

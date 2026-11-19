@@ -100,6 +100,18 @@ pub async fn pty_spawn(
     Ok(pty_id)
 }
 
+/// Give this Window's channel for every PTY's output (raw bytes, framed by
+/// `event_sink::frame_pty_output`). Replaces an earlier one from the same
+/// Window (a reload).
+#[tauri::command]
+pub fn pty_output_subscribe(
+    window: Window,
+    channels: State<'_, std::sync::Arc<crate::event_sink::PtyChannels>>,
+    channel: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
+) {
+    channels.set(window.label(), channel);
+}
+
 #[tauri::command]
 pub async fn list_available_shells() -> Result<Vec<shell_env::AvailableShell>, AbundioError> {
     Ok(shell_env::list_available_shells())

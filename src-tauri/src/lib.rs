@@ -943,7 +943,12 @@ pub fn run() {
             app.manage(pty_mgr);
 
             // Where core modules send events (docs/plans/remote-hosts.md).
-            app.manage::<event_sink::Events>(event_sink::TauriSink::shared(app.handle()));
+            let pty_channels = std::sync::Arc::new(event_sink::PtyChannels::default());
+            app.manage(pty_channels.clone());
+            app.manage::<event_sink::Events>(event_sink::TauriSink::shared(
+                app.handle(),
+                pty_channels,
+            ));
 
             // Initialize file watcher; it tells the git scheduler of changes
             // through the hub.
@@ -1187,6 +1192,11 @@ pub fn run() {
                 }
                 if let Some(fw) = app_handle.try_state::<file_watcher::FileWatcher>() {
                     fw.release_window(&label);
+                }
+                if let Some(ch) =
+                    app_handle.try_state::<std::sync::Arc<event_sink::PtyChannels>>()
+                {
+                    ch.forget(&label);
                 }
                 // And its PTYs. Snapshots were saved before the window was
                 // destroyed, and the logs stay, so nothing is lost; a Profile
@@ -1497,6 +1507,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::pty_spawn,
+            commands::pty_output_subscribe,
             commands::pty_write,
             commands::pty_resize,
             commands::pty_redraw,
