@@ -1,3 +1,5 @@
+import { hasTitleStatus } from "./agentTitleMap";
+
 // Maps an Agent's lifecycle hook event to a status-indicator transition.
 //
 // Hooks are authoritative ground truth for Agent status — see
@@ -601,4 +603,135 @@ export function mapOpenCodeV2Event(
 		default:
 			return null;
 	}
+}
+
+// ── The whole route, one step after another ──
+
+/** One step a hook event drives, in order (`routeHookEvent`). A transition
+ *  and a Subagent step also prove an Agent runs in the pane (it is adopted);
+ *  a Session end never does. */
+export type HookStep =
+	| { kind: "transition"; transition: HookTransition; turnStart: boolean }
+	| { kind: "subagentStarted"; id: string }
+	| { kind: "subagentStopped"; id: string }
+	| { kind: "sessionEnd" };
+
+/** What a pane knows that routing reads. */
+export interface HookRouteState {
+	/** The pane's live Subagents. */
+	hasSubagent: (id: string) => boolean;
+	/** The Agent's terminal title has shown a Title status (ADR-0047). */
+	titleStatusSeen: boolean;
+	/** OpenCode 1.x: the last turn was cancelled (`openCodeCancelGate`). */
+	openCodeCancelled: boolean;
+}
+
+export interface HookRoute {
+	steps: HookStep[];
+	/** The new OpenCode 1.x cancel flag. */
+	openCodeCancelled: boolean;
+	/** Why nothing happens, when nothing does (for the debug log). */
+	dropped?: string;
+}
+
+function hookPayloadString(payload: unknown, key: string): string | undefined {
+	const v = (payload as Record<string, unknown> | undefined)?.[key];
+	return typeof v === "string" ? v : undefined;
+}
+
+function transitionSteps(
+	transition: HookTransition,
+	turnStart: boolean,
+): HookStep[] {
+	return transition === "sessionReset"
+		? [{ kind: "sessionEnd" }]
+		: [{ kind: "transition", transition, turnStart }];
+}
+
+function subagentSteps(s: SubagentSignal): HookStep[] {
+	switch (s.action) {
+		case "ignored":
+			return [];
+		case "resume":
+			return transitionSteps("resume", false);
+		case "started":
+			return [{ kind: "subagentStarted", id: s.id }];
+		case "stopped":
+			return [{ kind: "subagentStopped", id: s.id }];
+	}
+}
+
+/**
+ * Every rule between an Agent's hook arriving and the pane's status, in the
+ * order they apply: OpenCode 2.x, Subagents, a Title-status Agent's hooks
+ * before its title is live, OpenCode 1.x's compound keys and cancel gate,
+ * then the per-Agent table. Pure: `status_store`'s Rust twin (`hook_route.rs`)
+ * is held to it by `fixtures/hookRoute.json`.
+ */
+export function routeHookEvent(
+	agentId: string,
+	eventName: string,
+	payload: unknown,
+	state: HookRouteState,
+): HookRoute {
+	const keep = state.openCodeCancelled;
+	if (agentId === "opencode" && isOpenCodeV2Payload(payload)) {
+		const action = mapOpenCodeV2Event(eventName, payload);
+		if (!action)
+			return { steps: [], openCodeCancelled: keep, dropped: "unmapped" };
+		if (action.kind === "subagent") {
+			return { steps: subagentSteps(action.signal), openCodeCancelled: keep };
+		}
+		if (action.kind === "transition") {
+			return {
+				steps: transitionSteps(action.transition, action.turnStart),
+				openCodeCancelled: keep,
+			};
+		}
+		// A different session on screen: close out the old one, then pick up
+		// the new one where it is.
+		const steps: HookStep[] = [{ kind: "sessionEnd" }];
+		if (action.running) steps.push(...transitionSteps("active", false));
+		if (action.waiting) steps.push(...transitionSteps("waiting", false));
+		return { steps, openCodeCancelled: keep };
+	}
+	const subagent = mapSubagentHookEvent(
+		agentId,
+		eventName,
+		payload,
+		state.hasSubagent,
+	);
+	if (subagent)
+		return { steps: subagentSteps(subagent), openCodeCancelled: keep };
+	if (hasTitleStatus(agentId) && !state.titleStatusSeen) {
+		return { steps: [], openCodeCancelled: keep, dropped: "no_title_status" };
+	}
+	const eventKey =
+		agentId === "opencode" ? openCodeEventKey(eventName, payload) : eventName;
+	const transition = mapHookEvent(
+		agentId,
+		eventKey,
+		hookPayloadString(payload, "toolName"),
+		hookPayloadString(payload, "reason"),
+		hookPayloadString(payload, "permissionMode"),
+		hookPayloadString(payload, "notificationType"),
+		hookPayloadString(payload, "message"),
+	);
+	if (!transition)
+		return { steps: [], openCodeCancelled: keep, dropped: "unmapped" };
+	let cancelled = keep;
+	if (agentId === "opencode") {
+		const gate = openCodeCancelGate(keep, eventKey);
+		cancelled = gate.cancelled;
+		if (gate.skip)
+			return {
+				steps: [],
+				openCodeCancelled: cancelled,
+				dropped: "cancel_gate",
+			};
+	}
+	return {
+		steps: transitionSteps(transition, isTurnStartEvent(agentId, eventKey)),
+		openCodeCancelled: cancelled,
+	};
 }

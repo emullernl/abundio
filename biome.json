@@ -9,7 +9,8 @@
 			"*.js",
 			"!src/lib/__tests__/fixtures/statusParity.json",
 			"!src/lib/__tests__/fixtures/statusShadowStore.json",
-			"!src/lib/__tests__/fixtures/layoutOps.json"
+			"!src/lib/__tests__/fixtures/layoutOps.json",
+			"!src/lib/__tests__/fixtures/hookRoute.json"
 		]
 	},
 	"assist": { "actions": { "source": { "organizeImports": "on" } } },

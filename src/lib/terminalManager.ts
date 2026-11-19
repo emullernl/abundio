@@ -18,17 +18,7 @@ import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { classifyShellExit, recordThresholdHit } from "./activityGate";
 import { setShellIntegrationSeen } from "./agentControl/integrationSeen";
-import {
-	type HookTransition,
-	isOpenCodeV2Payload,
-	isTurnStartEvent,
-	mapHookEvent,
-	mapOpenCodeV2Event,
-	mapSubagentHookEvent,
-	openCodeCancelGate,
-	openCodeEventKey,
-	type SubagentSignal,
-} from "./agentHookMap";
+import { type HookTransition, routeHookEvent } from "./agentHookMap";
 import {
 	activityAction,
 	applyAgentExit,
@@ -38,7 +28,6 @@ import {
 import { agentSessionIdFrom } from "./agentSessionId";
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
 import {
-	hasTitleStatus,
 	readTitle,
 	TITLE_TURN_END_GRACE_MS,
 	type TitleStatus,
@@ -1901,39 +1890,6 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				} catch {
 					// payload is not JSON — leave undefined
 				}
-				const toolName =
-					typeof (payload as { toolName?: unknown })?.toolName === "string"
-						? ((payload as { toolName: string }).toolName as string)
-						: undefined;
-				// Grok's Stop payload discriminates how the turn ended
-				// (end_turn / cancelled / error) — mapHookEvent branches on it.
-				const stopReason =
-					typeof (payload as { reason?: unknown })?.reason === "string"
-						? ((payload as { reason: string }).reason as string)
-						: undefined;
-				// Grok's envelope stamps the session permission mode and its
-				// Notification payload carries the notification type — together they
-				// tell a self-resolving auto-mode permission_prompt apart from a
-				// prompt that genuinely blocks on the user (mapHookEvent branches).
-				const permissionMode =
-					typeof (payload as { permissionMode?: unknown })?.permissionMode ===
-					"string"
-						? (payload as { permissionMode: string }).permissionMode
-						: undefined;
-				const notificationType =
-					typeof (payload as { notificationType?: unknown })
-						?.notificationType === "string"
-						? (payload as { notificationType: string }).notificationType
-						: undefined;
-				// Grok's Notification message text is the only field separating a
-				// dialog actually shown on screen (plan approval, diff review —
-				// always blocks) from the gate-entry prompt that fires before the
-				// permission resolves (mapHookEvent branches).
-				const message =
-					typeof (payload as { message?: unknown })?.message === "string"
-						? (payload as { message: string }).message
-						: undefined;
-
 				// A hook event proves an agent runs in this PTY — adopt agent mode
 				// even if title-based detection missed it, and persist the agent
 				// identity so a hook-detected agent re-runs after a restart.
@@ -1975,106 +1931,55 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						.getState()
 						.applyHookEvent(currentPtyId, transition, turnStart);
 				};
-				// Subagent lifecycle events drive the pane's Subagent set — which
-				// holds the Ready flip while delegated work still runs (ADR-0022,
-				// docs/plans/subagent-aware-status.md).
-				const applySubagent = (subagent: SubagentSignal) => {
-					if (subagent.action === "ignored") return;
-					if (subagent.action === "resume") {
-						applyTransition("resume", false);
-						return;
-					}
-					// A subagent hook proves an agent runs here as much as any hook.
-					adoptAgent();
-					const actStore = usePtyActivityStore.getState();
-					if (subagent.action === "started") {
-						actStore.subagentStarted(currentPtyId, subagent.id);
-					} else {
-						actStore.subagentStopped(currentPtyId, subagent.id);
-					}
-				};
-
-				// OpenCode 2.x: its TUI plugin has already sorted the event into the
-				// on-screen session, a Subagent, or a session switch (ADR-0045).
-				if (hookEvent.agent === "opencode" && isOpenCodeV2Payload(payload)) {
-					const action = mapOpenCodeV2Event(hookEvent.event, payload);
-					if (!action) return;
-					if (action.kind === "subagent") applySubagent(action.signal);
-					else if (action.kind === "transition") {
-						applyTransition(action.transition, action.turnStart);
-					} else {
-						// A different session on screen: close out the old one (the
-						// Turn tracker records this as a Session end, deliberately —
-						// the Turn on screen did end for this pane), then pick up the
-						// new one where it is, including a prompt it is already on.
-						applySessionEnd(currentPtyId);
-						if (action.running) applyTransition("active", false);
-						if (action.waiting) applyTransition("waiting", false);
-					}
-					return;
-				}
-
-				// Subagent lifecycle events bypass mapHookEvent: they carry an id,
-				// not a transition.
-				const subagent = mapSubagentHookEvent(
+				// Every routing rule, in order (agentHookMap.ts routeHookEvent,
+				// mirrored in Rust's hook_route.rs).
+				const route = routeHookEvent(
 					hookEvent.agent,
 					hookEvent.event,
 					payload,
-					(id) => hasActiveSubagent(currentPtyId, id),
+					{
+						hasSubagent: (id) => hasActiveSubagent(currentPtyId, id),
+						titleStatusSeen: managed.titleStatusSeen,
+						openCodeCancelled: openCodeCancelledPtys.has(currentPtyId),
+					},
 				);
-				if (subagent) {
-					applySubagent(subagent);
-					return;
-				}
-
-				// A Title-status Agent's turn-finished hook means nothing until its
-				// title has proved live: with tab status off, Working comes from the
-				// byte heuristic, which a hook would silence for good (ADR-0047).
-				if (hasTitleStatus(hookEvent.agent) && !managed.titleStatusSeen) {
+				if (route.openCodeCancelled) openCodeCancelledPtys.add(currentPtyId);
+				else openCodeCancelledPtys.delete(currentPtyId);
+				if (route.dropped) {
 					console.debug(
-						"[abundio:hook] no Title status yet, dropping",
+						"[abundio:hook] dropped",
+						route.dropped,
 						hookEvent.agent,
 						hookEvent.event,
 					);
-					return;
 				}
-
-				// OpenCode 1.x folds its payload discriminators into the event name
-				// — after the Subagent check above, which keys on raw names.
-				const eventKey =
-					hookEvent.agent === "opencode"
-						? openCodeEventKey(hookEvent.event, payload)
-						: hookEvent.event;
-				const transition = mapHookEvent(
-					hookEvent.agent,
-					eventKey,
-					toolName,
-					stopReason,
-					permissionMode,
-					notificationType,
-					message,
-				);
-				if (!transition) {
-					console.debug(
-						"[abundio:hook] no status mapping for",
-						hookEvent.agent,
-						eventKey,
-					);
-					return;
+				for (const step of route.steps) {
+					switch (step.kind) {
+						case "sessionEnd":
+							// A Session end (`/clear`, or a real exit — Copilot's
+							// payload cannot tell them apart): it must never put an
+							// exited Agent's PTY back into agent mode.
+							applySessionEnd(currentPtyId);
+							break;
+						case "transition":
+							applyTransition(step.transition, step.turnStart);
+							break;
+						case "subagentStarted":
+						case "subagentStopped": {
+							// A subagent hook proves an agent runs here as much as
+							// any hook. Its set holds the Ready flip while delegated
+							// work runs (ADR-0022).
+							adoptAgent();
+							const actStore = usePtyActivityStore.getState();
+							if (step.kind === "subagentStarted") {
+								actStore.subagentStarted(currentPtyId, step.id);
+							} else {
+								actStore.subagentStopped(currentPtyId, step.id);
+							}
+							break;
+						}
+					}
 				}
-				if (hookEvent.agent === "opencode") {
-					const gate = openCodeCancelGate(
-						openCodeCancelledPtys.has(currentPtyId),
-						eventKey,
-					);
-					if (gate.cancelled) openCodeCancelledPtys.add(currentPtyId);
-					else openCodeCancelledPtys.delete(currentPtyId);
-					if (gate.skip) return;
-				}
-				applyTransition(
-					transition,
-					isTurnStartEvent(hookEvent.agent, eventKey),
-				);
 			}),
 
 			// Spawn PTY concurrently with listener registration — listeners use
