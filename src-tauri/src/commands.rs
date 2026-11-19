@@ -176,10 +176,20 @@ pub fn status_apply(
     ops: Vec<crate::status_store::StatusOp>,
 ) -> Vec<crate::status_store::StatusUpdate> {
     let client = crate::event_sink::ClientId::from(window.label());
-    let config = crate::status_machine::StatusConfig::default();
+    let config = store.config();
     ops.into_iter()
         .filter_map(|op| store.run_op(&client, op, &config))
         .collect()
+}
+
+/// The **Activity byte threshold** setting, for the output heuristic Rust
+/// runs (phase 6d-5). Every Window sends it on a change.
+#[tauri::command]
+pub fn status_byte_threshold_set(
+    store: State<'_, std::sync::Arc<crate::status_store::StatusStore>>,
+    bytes: i64,
+) {
+    store.set_byte_threshold(bytes);
 }
 
 /// The Agents a command typed at a prompt is matched against (the user's

@@ -195,6 +195,9 @@ const ptyOutputHub = (() => {
 /** The Rust status store, the authority for pane status (`lib/statusSync.ts`). */
 export const statusApi = {
 	apply: (ops: StatusOp[]) => invoke<StatusUpdate[]>("status_apply", { ops }),
+	/** The **Activity byte threshold** setting, for Rust's output heuristic. */
+	setByteThreshold: (bytes: number) =>
+		invoke<void>("status_byte_threshold_set", { bytes }),
 };
 
 /** The Agents a command typed at a prompt can start, for Rust's shell

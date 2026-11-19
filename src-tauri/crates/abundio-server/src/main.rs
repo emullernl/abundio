@@ -225,6 +225,7 @@ fn run(data_dir: PathBuf) -> Result<(), String> {
             let _ = status.exit_update(pty, code, &status_machine::StatusConfig::default());
         }));
     }
+    status_store::listen_activity(&ptys, status.clone(), events.clone());
     abundio_core::shell_integration::listen(
         &ptys,
         status.clone(),

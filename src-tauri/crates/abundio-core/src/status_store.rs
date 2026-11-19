@@ -49,6 +49,20 @@ pub struct StatusStore {
     /// prompt, the first one too, with the exit code of whatever ran last
     /// (its startup files, the command before an empty Enter).
     shell_started: dashmap::DashSet<String>,
+    /// Each PTY's output heuristic (phase 6d-5): what `reduce_output` keeps
+    /// between reads (bytes since idle, threshold crossings, the last read
+    /// and the last input). Only output carries it into the reducer.
+    gates: DashMap<String, OutputGate>,
+    /// The **Activity byte threshold** setting; 0 means the default.
+    byte_threshold: std::sync::atomic::AtomicI64,
+}
+
+#[derive(Debug, Clone, Default)]
+struct OutputGate {
+    bytes_since_idle: i64,
+    threshold_hit_times: Vec<i64>,
+    last_input_at: i64,
+    last_output_chunk_at: Option<i64>,
 }
 
 #[derive(Default)]
@@ -167,8 +181,28 @@ impl StatusStore {
     /// Idle shell, as the frontend's `hydrate(undefined)` does.
     pub fn apply(&self, pty_id: &str, event: &StatusEvent, config: &StatusConfig) -> StoreView {
         let touched = self.touched.remove(pty_id).map(|(_, t)| t);
-        let before = hydrate(self.by_pty.get(pty_id).map(|s| s.clone()), touched);
+        let mut before = hydrate(self.by_pty.get(pty_id).map(|s| s.clone()), touched);
+        let output = matches!(event, StatusEvent::Output { .. });
+        if output {
+            if let Some(g) = self.gates.get(pty_id) {
+                before.bytes_since_idle = g.bytes_since_idle;
+                before.threshold_hit_times = g.threshold_hit_times.clone();
+                before.last_input_at = g.last_input_at;
+                before.last_output_chunk_at = g.last_output_chunk_at;
+            }
+        }
         let after = reduce(before, event, config);
+        if output {
+            self.gates.insert(
+                pty_id.to_string(),
+                OutputGate {
+                    bytes_since_idle: after.bytes_since_idle,
+                    threshold_hit_times: after.threshold_hit_times.clone(),
+                    last_input_at: after.last_input_at,
+                    last_output_chunk_at: after.last_output_chunk_at,
+                },
+            );
+        }
         let view = StoreView::from(&after);
         self.by_pty.insert(pty_id.to_string(), after);
         view
@@ -333,6 +367,7 @@ impl StatusStore {
                 self.titles.remove(&pty_id);
                 self.host.remove(&pty_id);
                 self.shell_started.remove(&pty_id);
+                self.gates.remove(&pty_id);
                 self.open_code_cancelled.remove(&pty_id);
                 let existed = self.by_pty.contains_key(&pty_id);
                 self.remove(&pty_id);
@@ -482,6 +517,44 @@ impl StatusStore {
         out
     }
 
+    /// Set the **Activity byte threshold** (the Window's setting).
+    pub fn set_byte_threshold(&self, bytes: i64) {
+        self.byte_threshold.store(bytes.max(1), std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The status config, with the byte threshold the user set.
+    pub fn config(&self) -> StatusConfig {
+        match self.byte_threshold.load(std::sync::atomic::Ordering::Relaxed) {
+            0 => StatusConfig::default(),
+            n => StatusConfig { activity_byte_threshold: n },
+        }
+    }
+
+    /// Input reached the PTY (a keystroke, a paste, a mouse report, an
+    /// Agent control prompt; not a focus report, which is no input): output
+    /// right after it is its echo, not the Agent at work (the input gate).
+    pub fn input(&self, pty_id: &str, data: &[u8], now: i64) {
+        if data == b"\x1b[I" || data == b"\x1b[O" {
+            return;
+        }
+        let mut g = self.gates.entry(pty_id.to_string()).or_default();
+        g.last_input_at = now;
+        g.bytes_since_idle = 0;
+    }
+
+    /// One read of the PTY's output (`bytes` long), for the output heuristic
+    /// of an agent-mode pane with no hooks (`reduce_output`; a hook-driven
+    /// one only keeps its activity time). Only a change is worth telling a
+    /// Window: the activity time alone moves with every read.
+    pub fn output(&self, pty_id: &str, bytes: usize, now: i64) -> Option<StatusUpdate> {
+        if !self.view(pty_id).is_some_and(|v| v.mode == Mode::Agent) {
+            return None;
+        }
+        let event = StatusEvent::Output { bytes: bytes as i64, now };
+        let update = self.apply_change(pty_id, event, &self.config())?;
+        update.change.is_some().then_some(update).and_then(|u| self.by_host(Some(u)))
+    }
+
     /// `setShellCommandRunning` seen by the Host: an update when the view
     /// changed.
     fn shell_flag(&self, pty_id: &str, running: bool) -> Option<StatusUpdate> {
@@ -626,6 +699,27 @@ pub fn start_ticker(store: std::sync::Arc<StatusStore>, events: crate::event_sin
     });
 }
 
+/// Run the output heuristic on every PTY's output and input (phase 6d-5),
+/// telling each PTY's owning Window (if any) what changed.
+pub fn listen_activity(
+    ptys: &crate::pty_manager::PtyManager,
+    store: std::sync::Arc<StatusStore>,
+    events: crate::event_sink::Events,
+) {
+    use crate::event_sink::EventsExt;
+    let input = store.clone();
+    ptys.on_input(std::sync::Arc::new(move |pty: &str, data: &[u8]| {
+        input.input(pty, data, crate::hook_apply::now_ms());
+    }));
+    ptys.on_output(std::sync::Arc::new(move |pty: &str, data: &[u8]| {
+        if let Some(update) = store.output(pty, data.len(), crate::hook_apply::now_ms()) {
+            if let Some(owner) = store.owner(pty) {
+                events.to_client(&owner, "status-updates", vec![update]);
+            }
+        }
+    }));
+}
+
 /// One mirrored operation in shadow mode, with the frontend's result.
 #[cfg(test)]
 #[derive(Debug, Clone, Deserialize)]
@@ -761,19 +855,17 @@ mod tests {
     }
 
     #[test]
-    fn the_heuristic_fields_do_not_survive_between_events() {
+    fn only_output_keeps_the_heuristic_between_events() {
         let store = StatusStore::new();
         store.init("p", Some(Mode::Agent));
         let c = StatusConfig::default();
-        // The hit history starts empty on every event, so output sent through
-        // the store never trips the byte heuristic: terminalManager runs that
-        // itself and sends `recordOutput` (as in the frontend store).
+        // Output carries its counters from one read to the next (phase
+        // 6d-5); any other event starts them empty, as the frontend store's
+        // `hydrate` does, so a keystroke event is no input here (`input` is).
         store.apply("p", &StatusEvent::Keystroke { key: crate::status_machine::Key::Other, esc_required: 2, now: 10_000 }, &c);
         for i in 0..5 {
             store.apply("p", &StatusEvent::Output { bytes: 2000, now: 10_001 + i }, &c);
         }
-        assert_eq!(store.view("p").unwrap().state, DotState::Idle);
-        store.apply("p", &StatusEvent::RecordOutput { now: 10_010 }, &c);
         assert_eq!(store.view("p").unwrap().state, DotState::Working);
     }
 
@@ -976,6 +1068,59 @@ mod tests {
         let w = crate::event_sink::ClientId::from("w");
         store.run_op(&w, StatusOp::Init { pty_id: "p".into(), mode: Some(Mode::Shell) }, &StatusConfig::default());
         store
+    }
+
+    fn agent_pane() -> StatusStore {
+        let store = StatusStore::new();
+        let w = crate::event_sink::ClientId::from("w");
+        store.run_op(&w, StatusOp::Init { pty_id: "p".into(), mode: Some(Mode::Agent) }, &StatusConfig::default());
+        store
+    }
+
+    #[test]
+    fn sustained_output_makes_an_agent_with_no_hooks_work() {
+        let store = agent_pane();
+        // Five crossings of the threshold within five seconds.
+        for t in 0..4 {
+            assert!(store.output("p", 2000, 10_000 + t * 500).is_none());
+        }
+        let u = store.output("p", 2000, 12_000).unwrap();
+        assert!(matches!(u.change.unwrap().cause, StatusEvent::Output { .. }));
+        assert_eq!(store.view("p").unwrap().state, DotState::Working);
+        // More output only keeps the activity time: nothing to tell.
+        assert!(store.output("p", 2000, 12_100).is_none());
+        assert_eq!(store.view("p").unwrap().last_activity_at, Some(12_100));
+    }
+
+    #[test]
+    fn output_right_after_input_is_its_echo() {
+        let store = agent_pane();
+        for t in 0..10 {
+            store.input("p", b"x", 10_000 + t * 200);
+            assert!(store.output("p", 5000, 10_000 + t * 200 + 50).is_none());
+        }
+        assert_eq!(store.view("p").unwrap().state, DotState::Idle);
+        // A focus report is not input.
+        store.input("p", b"\x1b[I", 20_000);
+        for t in 0..5 {
+            store.output("p", 2000, 20_100 + t * 100);
+        }
+        assert_eq!(store.view("p").unwrap().state, DotState::Working);
+    }
+
+    #[test]
+    fn the_byte_threshold_follows_the_setting() {
+        let store = agent_pane();
+        store.set_byte_threshold(100_000);
+        for t in 0..5 {
+            store.output("p", 2000, 10_000 + t * 100);
+        }
+        assert_eq!(store.view("p").unwrap().state, DotState::Idle);
+        // A shell's output is never activity.
+        let shell = shell_pane();
+        for t in 0..5 {
+            assert!(shell.output("p", 2000, 10_000 + t * 100).is_none());
+        }
     }
 
     #[test]

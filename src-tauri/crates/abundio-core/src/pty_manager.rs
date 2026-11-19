@@ -98,12 +98,18 @@ pub type TitleListener = Arc<dyn Fn(&str, &str) + Send + Sync>;
 /// Told what a PTY's shell reported on the shell-integration channel.
 pub type ShellListener = Arc<dyn Fn(&str, Vec<crate::shell_integration::ShellCommand>) + Send + Sync>;
 
-/// What hears a PTY's output besides its Windows (see `on_title`,
-/// `on_shell`). Set once, at startup.
+/// Told of each read of a PTY's output (its length), or of input written
+/// to it (the bytes).
+pub type BytesListener = Arc<dyn Fn(&str, &[u8]) + Send + Sync>;
+
+/// What hears a PTY's output and input besides its Windows (see
+/// `on_title`, `on_shell`, `on_output`, `on_input`). Set once, at startup.
 #[derive(Default)]
 struct OutputListeners {
     title: std::sync::OnceLock<TitleListener>,
     shell: std::sync::OnceLock<ShellListener>,
+    output: std::sync::OnceLock<BytesListener>,
+    input: std::sync::OnceLock<BytesListener>,
 }
 
 pub struct PtyManager {
@@ -543,6 +549,9 @@ impl PtyManager {
             .entries
             .get(pty_id)
             .ok_or_else(|| AbundioError::NotFound(format!("PTY not found: {}", pty_id)))?;
+        if let Some(listener) = self.output_listeners.input.get() {
+            listener(pty_id, &data);
+        }
         entry
             .tx
             .send(PtyCommand::Write(data))
@@ -617,6 +626,18 @@ impl PtyManager {
     /// the same output. Set once, at startup.
     pub fn on_shell(&self, listener: ShellListener) {
         let _ = self.output_listeners.shell.set(listener);
+    }
+
+    /// Be told of each read of each PTY's output, before the shell's
+    /// reports and titles in it. Set once, at startup.
+    pub fn on_output(&self, listener: BytesListener) {
+        let _ = self.output_listeners.output.set(listener);
+    }
+
+    /// Be told of every write to a PTY (`write`), before it is sent. Set
+    /// once, at startup.
+    pub fn on_input(&self, listener: BytesListener) {
+        let _ = self.output_listeners.input.set(listener);
     }
 
     /// Kill every PTY (the server shutting down).
@@ -1838,8 +1859,8 @@ fn write_abundio_env_helper(dir: &Path) {
     let _ = fs::write(dir.join("abundio-env.ps1"), ABUNDIO_ENV_PS1);
 }
 
-/// Tell the listeners what one read of output said: the shell's reports,
-/// then the titles.
+/// Tell the listeners what one read of output said: that it came, the
+/// shell's reports, then the titles.
 fn tell_listeners(
     listeners: &OutputListeners,
     shell: &mut crate::shell_integration::Parser,
@@ -1847,6 +1868,9 @@ fn tell_listeners(
     bytes: &[u8],
     titles: Vec<String>,
 ) {
+    if let Some(listener) = listeners.output.get() {
+        listener(pty_id, bytes);
+    }
     if let Some(listener) = listeners.shell.get() {
         let commands = shell.parse(bytes);
         if !commands.is_empty() {

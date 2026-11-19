@@ -41,7 +41,7 @@ import { openExternal } from "./desktop";
 import { targetPaneId } from "./fleetFocus";
 import { outsideWorkspaceView } from "./hiddenAgentStart";
 import { startUnlessShown } from "./hiddenSpawn";
-import { agentHooks, type HookNotice, pty } from "./ipc";
+import { agentHooks, type HookNotice, pty, statusApi } from "./ipc";
 import { folderMissingReason } from "./missingFolder";
 import {
 	decrstOutcome,
@@ -730,6 +730,14 @@ export function getActivityByteThreshold(): number {
 
 export function setActivityByteThreshold(n: number): void {
 	ACTIVITY_BYTE_THRESHOLD = Math.max(1, Math.round(n));
+	// Rust runs the heuristic where it is the authority (phase 6d-5).
+	if (isRustStatusAuthority()) {
+		statusApi
+			.setByteThreshold(ACTIVITY_BYTE_THRESHOLD)
+			.catch((e) =>
+				console.warn("[status] Rust did not take the threshold", e),
+			);
+	}
 }
 // Output is ignored for INPUT_GATE_MS after the last keystroke to suppress
 // echoed characters and prompt redraws. If no output arrives for
@@ -755,34 +763,38 @@ async function startBackgroundTracking(ptyId: string) {
 	let bgBytesSinceIdle = 0;
 	let bgThresholdHitTimes: number[] = [];
 	let bgLastOutputChunkAt = 0;
-	// Background trackers only need byte counts for activity thresholds.
-	const unlistenOutput = await pty.onOutput(ptyId, (data) => {
-		// Only run byte accumulation for agent-mode PTYs
-		const entry = usePtyActivityStore.getState().activities[ptyId];
-		if (entry?.detectionMode !== "agent") return;
-		const now = Date.now();
-		if (
-			bgLastOutputChunkAt &&
-			now - bgLastOutputChunkAt > INACTIVITY_RESET_MS
-		) {
-			bgBytesSinceIdle = 0;
-			// See foreground path: hit history is pruned by its own sliding
-			// window, not by the byte-counter's inactivity gap.
-		}
-		bgLastOutputChunkAt = now;
-		bgBytesSinceIdle += data.length;
+	// Background trackers only need byte counts for activity thresholds, and
+	// where Rust is the authority it counts them itself (phase 6d-5): no need
+	// to hear the output at all.
+	const unlistenOutput = isRustStatusAuthority()
+		? () => {}
+		: await pty.onOutput(ptyId, (data) => {
+				// Only run byte accumulation for agent-mode PTYs
+				const entry = usePtyActivityStore.getState().activities[ptyId];
+				if (entry?.detectionMode !== "agent") return;
+				const now = Date.now();
+				if (
+					bgLastOutputChunkAt &&
+					now - bgLastOutputChunkAt > INACTIVITY_RESET_MS
+				) {
+					bgBytesSinceIdle = 0;
+					// See foreground path: hit history is pruned by its own sliding
+					// window, not by the byte-counter's inactivity gap.
+				}
+				bgLastOutputChunkAt = now;
+				bgBytesSinceIdle += data.length;
 
-		if (entry?.state === "active") {
-			touchLastOutput(ptyId, now);
-		} else if (bgBytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
-			bgBytesSinceIdle = 0;
-			const result = recordThresholdHit(bgThresholdHitTimes, now);
-			bgThresholdHitTimes = result.hitTimes;
-			if (result.fire) {
-				usePtyActivityStore.getState().recordOutput(ptyId);
-			}
-		}
-	});
+				if (entry?.state === "active") {
+					touchLastOutput(ptyId, now);
+				} else if (bgBytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
+					bgBytesSinceIdle = 0;
+					const result = recordThresholdHit(bgThresholdHitTimes, now);
+					bgThresholdHitTimes = result.hitTimes;
+					if (result.fire) {
+						usePtyActivityStore.getState().recordOutput(ptyId);
+					}
+				}
+			});
 	const unlistenStatus = await pty.onStatus(ptyId, (status) => {
 		// Rust sees the exit first and its status arrives as `status-updates`
 		// (phase 6d); only tests and the demo record it here.
@@ -1816,14 +1828,16 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					}
 				}
 
-				// Agent mode: activity tracking
+				// Agent mode: activity tracking. Where Rust is the authority it
+				// runs this on the PTY's output itself (phase 6d-5); the counters
+				// here then only feed the debug activity meter.
 				if (isAgentMode) {
 					const now = Date.now();
 					if (entry?.hookDriven) {
 						// Hook-driven PTYs trust hook events for state transitions.
 						// Just keep lastOutput fresh so the idle-scanner backstop
 						// only fires on a genuinely stuck agent (a dropped Stop).
-						touchLastOutput(currentPtyId, now);
+						if (!statusFromRust) touchLastOutput(currentPtyId, now);
 					} else if (
 						!managed.suppressActivity &&
 						now - managed.lastInputAt > INPUT_GATE_MS
@@ -1844,12 +1858,12 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						managed.bytesSinceIdle += cleaned.length;
 
 						if (entry?.state === "active") {
-							touchLastOutput(currentPtyId, now);
+							if (!statusFromRust) touchLastOutput(currentPtyId, now);
 						} else if (managed.bytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
 							managed.bytesSinceIdle = 0;
 							const result = recordThresholdHit(managed.thresholdHitTimes, now);
 							managed.thresholdHitTimes = result.hitTimes;
-							if (result.fire) {
+							if (result.fire && !statusFromRust) {
 								usePtyActivityStore.getState().recordOutput(currentPtyId);
 							}
 						}

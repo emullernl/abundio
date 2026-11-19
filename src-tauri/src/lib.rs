@@ -985,6 +985,13 @@ pub fn run() {
                     }
                 }));
             }
+            // Output and input: the output heuristic for an Agent with no
+            // hooks (phase 6d-5).
+            status_store::listen_activity(
+                &app.state::<PtyManager>(),
+                status_store.clone(),
+                app.state::<event_sink::Events>().inner().clone(),
+            );
             // And the shell's reports: a command's Working and Error, a typed
             // Agent entering and leaving agent mode (phase 6d-4).
             {
@@ -1578,6 +1585,7 @@ pub fn run() {
             commands::pty_set_scrollback,
             commands::status_apply,
             commands::agent_commands_set,
+            commands::status_byte_threshold_set,
             commands::layout_apply,
             commands::pane_facts_report,
             commands::pty_write,
