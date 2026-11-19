@@ -713,8 +713,8 @@ mod tests {
     }
 }
 
-pub fn open_db() -> Result<Connection, crate::db_startup::DbOpenError> {
-    use crate::db_startup::{DbOpenError, DbOpenStage};
+pub fn open_db() -> Result<Connection, crate::db_open::DbOpenError> {
+    use crate::db_open::{DbOpenError, DbOpenStage};
 
     // On first run of this data epoch, seed it from the previous version's
     // database (a copy, so older builds keep working — see app_paths.rs).

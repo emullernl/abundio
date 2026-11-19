@@ -23,6 +23,9 @@ pub mod layout_store;
 pub mod pane_facts;
 pub mod control_local;
 pub mod control_protocol;
+pub mod git_core;
+pub mod db_open;
+pub mod env_vars_commands;
 pub mod status_store;
 pub mod events;
 pub mod file_explorer;
@@ -1667,20 +1670,20 @@ pub fn run() {
             prompt_actions::prompt_action_update,
             prompt_actions::prompt_action_delete,
             prompt_actions::prompt_actions_reorder,
-            env_vars::env_list,
-            env_vars::env_bundle_create,
-            env_vars::env_bundle_rename,
-            env_vars::env_bundle_set_injected,
-            env_vars::env_bundle_clear_injected,
-            env_vars::env_injected_summary,
-            env_vars::env_bundle_delete,
-            env_vars::env_vars_upsert,
-            env_vars::env_vars_upsert_many,
-            env_vars::env_export_to_path,
-            env_vars::env_vars_delete,
-            env_vars::env_vars_reveal,
-            env_vars::env_vars_reorder,
-            env_vars::env_retry_key,
+            env_vars_commands::env_list,
+            env_vars_commands::env_bundle_create,
+            env_vars_commands::env_bundle_rename,
+            env_vars_commands::env_bundle_set_injected,
+            env_vars_commands::env_bundle_clear_injected,
+            env_vars_commands::env_injected_summary,
+            env_vars_commands::env_bundle_delete,
+            env_vars_commands::env_vars_upsert,
+            env_vars_commands::env_vars_upsert_many,
+            env_vars_commands::env_export_to_path,
+            env_vars_commands::env_vars_delete,
+            env_vars_commands::env_vars_reveal,
+            env_vars_commands::env_vars_reorder,
+            env_vars_commands::env_retry_key,
             agent_registry::list_installed_agent_commands,
             agent_registry::agents_claim_seeding,
             agent_registry::agents_path_is_resolved,

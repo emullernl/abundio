@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
 use crate::error::AbundioError;
-use crate::file_windows::MarkdownView;
 
 /// The name of a new Workspace's first Tab. Same literal as `FIRST_TAB_NAME`
 /// in `src/lib/tabName.ts`; change both together.
@@ -1578,6 +1577,33 @@ pub const AGENT_SEEDING_KEY: &str = "agents_seeded";
 /// seeded yet. Its absence on a database that already existed is what
 /// identifies the upgrade path.
 pub const AGENT_SEEDING_PENDING_KEY: &str = "agents_seeding_pending";
+
+
+/// Which of its two views a markdown File window shows. Other kinds ignore it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MarkdownView {
+    Rendered,
+    Source,
+}
+
+impl MarkdownView {
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            MarkdownView::Rendered => "rendered",
+            MarkdownView::Source => "source",
+        }
+    }
+
+    /// Unknown values read as `Rendered`: a row written by a newer build should
+    /// still open, in the safe read-only view.
+    pub(crate) fn from_str(s: &str) -> Self {
+        match s {
+            "source" => MarkdownView::Source,
+            _ => MarkdownView::Rendered,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

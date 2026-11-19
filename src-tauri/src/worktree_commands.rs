@@ -2,28 +2,11 @@
 //! `git_libgit2`; these wrappers run it on `spawn_blocking` so the tokio
 //! runtime is never blocked, mirroring `git_commands.rs`. See ADR-0017.
 
-use serde::Serialize;
 
 use crate::error::AbundioError;
 use crate::git_libgit2;
+pub use crate::git_libgit2::WorktreeEntry;
 
-/// One worktree of a repository, as surfaced to the frontend for grouping,
-/// expansion-on-create, and the Add/Remove flows.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorktreeEntry {
-    /// Canonicalized worktree root folder.
-    pub path: String,
-    /// Checked-out branch shorthand, or None if detached/unborn/missing.
-    pub branch: Option<String>,
-    /// True for the repository's main worktree (the Primary worktree).
-    pub is_primary: bool,
-    /// Whether the worktree's folder still exists on disk. A git-tracked
-    /// worktree whose folder is gone (`exists: false`) is "prunable" — present
-    /// here so the frontend can distinguish a stale folder (keep, render stale)
-    /// from a git-confirmed removal (entry absent entirely → safe to delete).
-    pub exists: bool,
-}
 
 /// List every worktree of the repository that `cwd` belongs to (primary first).
 #[tauri::command]

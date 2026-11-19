@@ -25,7 +25,7 @@ use crate::change_hub::ChangeHub;
 use crate::event_sink::{Events, EventsExt};
 
 use crate::error::AbundioError;
-use crate::git_commands::{
+use crate::git_core::{
     compute_branch_info_sync, compute_changed_files_sync, compute_status_fingerprint_sync,
     GitFetchBundle,
 };

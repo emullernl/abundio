@@ -26,11 +26,10 @@ use git2::{
 };
 
 use crate::error::AbundioError;
-use crate::git_commands::{
+use crate::git_core::{
     HistoryCommit, CommitHistory, BranchInfo, CommitFile, GitChangedFile, GitConflictFile,
     TreeDiffStats,
 };
-use crate::worktree_commands::WorktreeEntry;
 
 const MAX_UNTRACKED: usize = 500;
 
@@ -1149,6 +1148,25 @@ fn parse_github_slug(url: &str) -> Option<String> {
     let owner = parts.next().filter(|s| !s.is_empty())?;
     let name = parts.next().filter(|s| !s.is_empty())?;
     Some(format!("{}/{}", owner, name))
+}
+
+
+/// One worktree of a repository, as surfaced to the frontend for grouping,
+/// expansion-on-create, and the Add/Remove flows.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeEntry {
+    /// Canonicalized worktree root folder.
+    pub path: String,
+    /// Checked-out branch shorthand, or None if detached/unborn/missing.
+    pub branch: Option<String>,
+    /// True for the repository's main worktree (the Primary worktree).
+    pub is_primary: bool,
+    /// Whether the worktree's folder still exists on disk. A git-tracked
+    /// worktree whose folder is gone (`exists: false`) is "prunable" — present
+    /// here so the frontend can distinguish a stale folder (keep, render stale)
+    /// from a git-confirmed removal (entry absent entirely → safe to delete).
+    pub exists: bool,
 }
 
 #[cfg(test)]
