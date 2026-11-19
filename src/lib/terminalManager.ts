@@ -17,6 +17,7 @@ import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { classifyShellExit, recordThresholdHit } from "./activityGate";
+import { setShellIntegrationSeen } from "./agentControl/integrationSeen";
 import {
 	type HookTransition,
 	isOpenCodeV2Payload,
@@ -1029,6 +1030,92 @@ function computeWebglBudget(): Set<string> {
 	});
 }
 
+/**
+ * What a deliberate keystroke into a pane does besides reaching its PTY:
+ * the input clock (it gates the output heuristic), the Attention flag, and
+ * the status moves a key makes (an answer to a Waiting Agent, ESC cancelling
+ * a turn, any key acknowledging an Error). The terminal's own input and an
+ * Agent control prompt Rust typed (`noteControlInput`) both come here.
+ */
+function noteInput(
+	managed: Pick<ManagedTerminal, "lastInputAt" | "bytesSinceIdle"> | null,
+	paneId: string,
+	ptyId: string,
+	data: string,
+): void {
+	if (managed) {
+		managed.lastInputAt = Date.now();
+		managed.bytesSinceIdle = 0;
+	}
+	notePaneInput(paneId);
+	const actStore = usePtyActivityStore.getState();
+	let entry = actStore.activities[ptyId];
+	// A **Mid-turn failure** painted this pane red while the Agent kept
+	// working (ADR-0026). Acknowledge it up front and re-read, so the
+	// branches below see what the pane was actually doing and the keystroke
+	// means what it would have meant without the failure — answering a
+	// permission prompt still answers it, ESC still cancels the turn.
+	// Without this the pane is in `error`, every branch below is skipped, and
+	// the fallthrough drops it to Idle for the rest of the turn.
+	if (entry?.state === "error" && peekPreErrorState(ptyId) !== null) {
+		actStore.clearError(ptyId);
+		entry = usePtyActivityStore.getState().activities[ptyId];
+	}
+	if (entry?.state === "waiting" && entry.detectionMode === "agent") {
+		// A waiting agent is cleared ONLY by genuine keyboard input — the
+		// user answering its prompt (ADR-0015). Focus/mouse report
+		// sequences already returned above, so anything reaching here is
+		// real input. Agent-mode panes only — terminal-mode panes keep the
+		// normal behaviour.
+		if (data === "\x1b") {
+			// Bare ESC dismisses the prompt without a choice — the agent
+			// goes back to idle, not busy.
+			actStore.clearWaiting(ptyId);
+		} else if (data === "\r" || data === "\n" || /^[0-9]$/.test(data)) {
+			// Enter or a 0-9 choice answers the prompt — the agent resumes
+			// working, so show it as busy right away. Any other key (typing
+			// a rejection reason, navigation, etc.) leaves the dot waiting.
+			actStore.applyHookEvent(ptyId, "active");
+		}
+	} else if (entry?.state === "active" && entry.detectionMode === "agent") {
+		// ESC is the user's cancel keystroke for an in-flight agent task.
+		// Claude/Gemini/Qwen interrupt on a single press; the others
+		// (Copilot, Codex, OpenCode, custom agents) require a deliberate double-ESC
+		// within ESC_DOUBLE_PRESS_WINDOW_MS. Any other key resets the
+		// double-ESC tracker so "ESC, x, ESC" can't fire it by accident.
+		// Multi-byte ESC-prefixed sequences (arrows, focus reports) are
+		// longer than one byte and naturally bypass this branch.
+		if (data === "\x1b") {
+			const agentId = actStore.detectedAgentIds[ptyId];
+			const required = escPressesToCancelAgent(agentId);
+			const now = Date.now();
+			const lastEsc = escPressTimestamps.get(ptyId);
+			const isFollowUp =
+				lastEsc !== undefined && now - lastEsc <= ESC_DOUBLE_PRESS_WINDOW_MS;
+			if (required === 1 || isFollowUp) {
+				actStore.clearActive(ptyId);
+				escPressTimestamps.delete(ptyId);
+			} else {
+				escPressTimestamps.set(ptyId, now);
+			}
+		} else {
+			escPressTimestamps.delete(ptyId);
+		}
+	} else {
+		actStore.clearError(ptyId);
+		actStore.markIdle(ptyId);
+	}
+}
+
+/** Bytes Rust typed into a pane for Agent control (`agent prompt`), kept
+ *  as the keystrokes they stand for (`agent-control-effect` `input`). */
+export function noteControlInput(paneId: string, data: string): void {
+	const managed = getTerminal(paneId) ?? null;
+	const ptyId =
+		managed?.ptyId || usePtyActivityStore.getState().panePtyMap[paneId];
+	if (!ptyId) return;
+	noteInput(managed, paneId, ptyId, data);
+}
 export function getTerminal(paneId: string): ManagedTerminal | undefined {
 	return instances.get(paneId);
 }
@@ -1533,66 +1620,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			pty.write(currentPtyId, data);
 			return;
 		}
-		managed.lastInputAt = Date.now();
-		managed.bytesSinceIdle = 0;
-		notePaneInput(paneId);
-		const actStore = usePtyActivityStore.getState();
-		let entry = actStore.activities[currentPtyId];
-		// A **Mid-turn failure** painted this pane red while the Agent kept
-		// working (ADR-0026). Acknowledge it up front and re-read, so the
-		// branches below see what the pane was actually doing and the keystroke
-		// means what it would have meant without the failure — answering a
-		// permission prompt still answers it, ESC still cancels the turn.
-		// Without this the pane is in `error`, every branch below is skipped, and
-		// the fallthrough drops it to Idle for the rest of the turn.
-		if (entry?.state === "error" && peekPreErrorState(currentPtyId) !== null) {
-			actStore.clearError(currentPtyId);
-			entry = usePtyActivityStore.getState().activities[currentPtyId];
-		}
-		if (entry?.state === "waiting" && entry.detectionMode === "agent") {
-			// A waiting agent is cleared ONLY by genuine keyboard input — the
-			// user answering its prompt (ADR-0015). Focus/mouse report
-			// sequences already returned above, so anything reaching here is
-			// real input. Agent-mode panes only — terminal-mode panes keep the
-			// normal behaviour.
-			if (data === "\x1b") {
-				// Bare ESC dismisses the prompt without a choice — the agent
-				// goes back to idle, not busy.
-				actStore.clearWaiting(currentPtyId);
-			} else if (data === "\r" || data === "\n" || /^[0-9]$/.test(data)) {
-				// Enter or a 0-9 choice answers the prompt — the agent resumes
-				// working, so show it as busy right away. Any other key (typing
-				// a rejection reason, navigation, etc.) leaves the dot waiting.
-				actStore.applyHookEvent(currentPtyId, "active");
-			}
-		} else if (entry?.state === "active" && entry.detectionMode === "agent") {
-			// ESC is the user's cancel keystroke for an in-flight agent task.
-			// Claude/Gemini/Qwen interrupt on a single press; the others
-			// (Copilot, Codex, OpenCode, custom agents) require a deliberate double-ESC
-			// within ESC_DOUBLE_PRESS_WINDOW_MS. Any other key resets the
-			// double-ESC tracker so "ESC, x, ESC" can't fire it by accident.
-			// Multi-byte ESC-prefixed sequences (arrows, focus reports) are
-			// longer than one byte and naturally bypass this branch.
-			if (data === "\x1b") {
-				const agentId = actStore.detectedAgentIds[currentPtyId];
-				const required = escPressesToCancelAgent(agentId);
-				const now = Date.now();
-				const lastEsc = escPressTimestamps.get(currentPtyId);
-				const isFollowUp =
-					lastEsc !== undefined && now - lastEsc <= ESC_DOUBLE_PRESS_WINDOW_MS;
-				if (required === 1 || isFollowUp) {
-					actStore.clearActive(currentPtyId);
-					escPressTimestamps.delete(currentPtyId);
-				} else {
-					escPressTimestamps.set(currentPtyId, now);
-				}
-			} else {
-				escPressTimestamps.delete(currentPtyId);
-			}
-		} else {
-			actStore.clearError(currentPtyId);
-			actStore.markIdle(currentPtyId);
-		}
+		noteInput(managed, paneId, currentPtyId, data);
 		pty.write(currentPtyId, data);
 	});
 
@@ -1609,7 +1637,10 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				// Always parse and strip shell integration sequences in both modes,
 				// so command_end is detected even while in agent mode.
 				const { cleaned, commands } = shellIntegration.parse(data);
-				if (commands.length > 0) managed.shellIntegrationSeen = true;
+				if (commands.length > 0 && !managed.shellIntegrationSeen) {
+					managed.shellIntegrationSeen = true;
+					setShellIntegrationSeen(paneId, true);
+				}
 
 				// Cache store state once per chunk to avoid repeated getState() calls
 				const actState = usePtyActivityStore.getState();
@@ -2638,6 +2669,7 @@ export async function restartPanePty(
 	managed.awaitingTaskStart = false;
 	managed.awaitingTypedAgentStart = false;
 	managed.shellIntegrationSeen = false;
+	setShellIntegrationSeen(managed.paneId, false);
 	// `settled` deliberately stays true: the pane is already projected and
 	// painted, and clearing it would make the flush wait for the safety timeout.
 

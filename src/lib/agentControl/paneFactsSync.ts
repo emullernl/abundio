@@ -4,6 +4,10 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import type { PaneFacts, PaneFactsReport } from "../ipc";
 import { isRustStatusAuthority } from "../statusSync";
 import type { WorkspaceWithTabs } from "../types";
+import {
+	onShellIntegrationSeen,
+	shellIntegrationSeenPanes,
+} from "./integrationSeen";
 import { workspacePanes } from "./resolveTarget";
 
 /**
@@ -22,6 +26,8 @@ interface Sources {
 	runningCommands: Readonly<Record<string, string>>;
 	detectedAgentIds: Readonly<Record<string, string>>;
 	progress: Readonly<Record<string, string>>;
+	/** Panes whose shell integration has reported in. */
+	integrationSeen: ReadonlySet<string>;
 }
 
 /** Every terminal pane's facts. Pure. */
@@ -38,7 +44,7 @@ export function collectPaneFacts(src: Sources): Map<string, PaneFacts> {
 				command: at(src.runningCommands),
 				detectedAgentId: at(src.detectedAgentIds),
 				progress: src.progress[node.id] ?? null,
-				shellIntegrationSeen: false,
+				shellIntegrationSeen: src.integrationSeen.has(node.id),
 			});
 		}
 	}
@@ -89,6 +95,7 @@ export function startPaneFactsSync(): () => void {
 			runningCommands: act.runningCommands,
 			detectedAgentIds: act.detectedAgentIds,
 			progress: useAgentSignalsStore.getState().progress,
+			integrationSeen: shellIntegrationSeenPanes(),
 		});
 		const reports = diffPaneFacts(sent, now);
 		sent = now;
@@ -106,8 +113,10 @@ export function startPaneFactsSync(): () => void {
 		useWorkspaceStore.subscribe(schedule),
 		useAgentSignalsStore.subscribe(schedule),
 	];
+	onShellIntegrationSeen(schedule);
 	schedule();
 	return () => {
+		onShellIntegrationSeen(null);
 		for (const u of unsubs) u();
 		if (timer !== null) clearTimeout(timer);
 	};

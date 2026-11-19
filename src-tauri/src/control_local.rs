@@ -49,6 +49,8 @@ pub trait Live {
     fn is_live(&self, pty_id: &str) -> bool;
     fn facts(&self, pane_id: &str) -> PaneFacts;
     fn read_screen(&self, pty_id: &str, visible: bool, lines: Option<usize>) -> Result<Vec<String>, AbundioError>;
+    fn input_modes(&self, pty_id: &str) -> Option<crate::screen::InputModes>;
+    fn write(&self, pty_id: &str, bytes: &[u8]) -> Result<(), AbundioError>;
 }
 
 /// What the user sees of a call, drawn by the owning Window.
@@ -58,6 +60,10 @@ pub trait Effects {
     /// is `read` or `act`). Returns an id for [`Effects::end`].
     fn begin(&self, caller_pane: &str, target_pane: &str, by: &str, kind: &str) -> String;
     fn end(&self, id: &str);
+    /// Bytes are about to be typed into `pane` as if from its keyboard: the
+    /// Window keeps the bookkeeping a keystroke does (status, the input
+    /// clock, the Attention flag), as it did when it typed them itself.
+    fn input(&self, pane_id: &str, data: &str);
 }
 
 // ── The Workspace's panes (resolveTarget.ts) ──
@@ -447,8 +453,23 @@ pub fn wait_for_pane(
     cancel: &Receiver<Value>,
     limit: Option<Duration>,
 ) -> Result<Result<(WaitEnd, Duration), CtlError>, WaitStop> {
-    let started = Instant::now();
-    let mut progress = WaitProgress::default();
+    wait_from(live, caller, workspace_id, pane_id, goal, cancel, limit, Instant::now(), WaitProgress::default())
+}
+
+/// [`wait_for_pane`], from a start already made: a prompted wait records the
+/// state it starts from before the prompt goes out.
+#[allow(clippy::too_many_arguments)]
+fn wait_from(
+    live: &dyn Live,
+    caller: &Caller,
+    workspace_id: &str,
+    pane_id: &str,
+    goal: WaitGoal,
+    cancel: &Receiver<Value>,
+    limit: Option<Duration>,
+    started: Instant,
+    mut progress: WaitProgress,
+) -> Result<Result<(WaitEnd, Duration), CtlError>, WaitStop> {
     loop {
         progress = wait_step(goal, progress, snap(live, caller, workspace_id, pane_id));
         let waited = started.elapsed();
@@ -488,7 +509,126 @@ pub fn handles(request: &Request) -> bool {
             | Request::AgentList
             | Request::PaneRead { .. }
             | Request::AgentWait { .. }
+            | Request::AgentPrompt { .. }
+            | Request::AgentSendKeys { .. }
+            | Request::PaneRun { .. }
     )
+}
+
+// ── Typing into a pane (keys.ts, promptText.ts, typedLine.ts, spawn.ts) ──
+
+/// The bytes a terminal sends for one logical key, or `None` if unknown.
+/// Arrows, Home and End follow application cursor mode, as a real key does.
+pub fn key_bytes(name: &str, app_cursor: bool) -> Option<String> {
+    let fixed = match name {
+        "enter" => Some("\r"),
+        "esc" => Some("\x1b"),
+        "tab" => Some("\t"),
+        "shift+tab" => Some("\x1b[Z"),
+        "backspace" => Some("\x7f"),
+        "delete" => Some("\x1b[3~"),
+        "space" => Some(" "),
+        "pageup" => Some("\x1b[5~"),
+        "pagedown" => Some("\x1b[6~"),
+        _ => None,
+    };
+    if let Some(f) = fixed {
+        return Some(f.to_string());
+    }
+    let cursor = match name {
+        "up" => Some('A'),
+        "down" => Some('B'),
+        "right" => Some('C'),
+        "left" => Some('D'),
+        "home" => Some('H'),
+        "end" => Some('F'),
+        _ => None,
+    };
+    if let Some(c) = cursor {
+        return Some(format!("{}{c}", if app_cursor { "\x1bO" } else { "\x1b[" }));
+    }
+    let rest = name.strip_prefix("ctrl+")?;
+    let b = *rest.as_bytes().first()?;
+    (rest.len() == 1 && b.is_ascii_lowercase()).then(|| ((b - 96) as char).to_string())
+}
+
+/// All the keys' bytes, or the first unknown name: nothing is sent unless
+/// every name maps, so a typo never sends half a sequence.
+pub fn keys_to_bytes(names: &[String], app_cursor: bool) -> Result<String, String> {
+    let mut out = String::new();
+    for n in names {
+        out.push_str(&key_bytes(n, app_cursor).ok_or_else(|| n.clone())?);
+    }
+    Ok(out)
+}
+
+fn is_c0_or_c1(c: char) -> bool {
+    (c as u32) < 0x20 || (0x7f..=0x9f).contains(&(c as u32))
+}
+
+/// A prompt from another Agent, made safe to paste: control characters go
+/// (an embedded `ESC[201~` cannot end the paste early), newlines and tabs
+/// stay, line ends become `\n`.
+pub fn clean_prompt_text(text: &str) -> String {
+    text.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .chars()
+        .filter(|&c| c == '\n' || c == '\t' || !is_c0_or_c1(c))
+        .collect()
+}
+
+/// Text typed as one line: control characters become spaces, so it cannot
+/// carry its own Enter or escape sequences.
+pub fn one_line(text: &str) -> String {
+    text.chars()
+        .map(|c| if is_c0_or_c1(c) { ' ' } else { c })
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/// A paste as xterm.js sends it: line ends as CR, bracketed when the
+/// program asked for it.
+pub fn paste_bytes(text: &str, bracketed: bool) -> String {
+    let t = text.replace("\r\n", "\r").replace('\n', "\r");
+    if bracketed {
+        format!("\x1b[200~{t}\x1b[201~")
+    } else {
+        t
+    }
+}
+
+/// Why `pane run` may not type into this pane now.
+pub fn run_refusal(f: &LiveFacts, shell_command_running: bool) -> Option<CtlError> {
+    if f.exited {
+        return Some(err("not_found", "that pane's shell has exited"));
+    }
+    if f.mode == Some(Mode::Agent) {
+        return Some(err("busy", "an Agent is running in that pane; use `abundio agent prompt`"));
+    }
+    if !f.facts.shell_integration_seen {
+        return Some(err(
+            "state_unknown",
+            "cannot tell whether that shell is at its prompt (no shell integration seen yet), so nothing was typed",
+        ));
+    }
+    if shell_command_running {
+        return Some(err("busy", "a command is still running in that pane; wait for it or read the pane"));
+    }
+    None
+}
+
+fn not_loaded() -> CtlError {
+    err("state_unknown", "that pane's terminal is not loaded yet; try again in a moment")
+}
+
+/// The pane's running PTY, or `state_unknown`.
+fn running_pty<'a>(live: &dyn Live, pane: &'a Pane) -> Result<&'a str, CtlError> {
+    pane.pty_id().filter(|p| live.is_live(p)).ok_or_else(not_loaded)
+}
+
+fn write(live: &dyn Live, pty: &str, bytes: &str) -> Result<(), CtlError> {
+    live.write(pty, bytes.as_bytes()).map_err(|_| not_loaded())
 }
 
 fn require_agent(f: &LiveFacts) -> Result<(), CtlError> {
@@ -616,6 +756,106 @@ pub fn run(
             v["waitedMs"] = json!(waited.as_millis() as u64);
             v
         }
+        Request::AgentSendKeys { target, keys } => {
+            let pane = match resolve_target(target, &scope.panes, &scope.numbers) {
+                Ok(p) => p,
+                Err(e) => return Ok(Err(e)),
+            };
+            let sent = with_effects(effects, &scope, pane, "act", || {
+                let pty = running_pty(live, pane)?;
+                let app_cursor = live.input_modes(pty).is_some_and(|m| m.app_cursor);
+                let bytes = keys_to_bytes(keys, app_cursor)
+                    .map_err(|k| err("internal", format!("unknown key \"{k}\"; nothing was sent")))?;
+                write(live, pty, &bytes)
+            });
+            if let Err(e) = sent {
+                return Ok(Err(e));
+            }
+            json!({ "pane": pane_label(scope.numbers.get(pane.id()).copied().unwrap_or(0)), "sent": keys.len() })
+        }
+        Request::PaneRun { target, command } => {
+            let pane = match resolve_target(target, &scope.panes, &scope.numbers) {
+                Ok(p) => p,
+                Err(e) => return Ok(Err(e)),
+            };
+            let sent = with_effects(effects, &scope, pane, "act", || {
+                let f = live_facts(live, pane);
+                let running = pane
+                    .pty_id()
+                    .and_then(|p| live.view(p))
+                    .is_some_and(|v| v.shell_command_running);
+                if let Some(refusal) = run_refusal(&f, running) {
+                    return Err(refusal);
+                }
+                let pty = running_pty(live, pane)?;
+                let line = one_line(command);
+                if line.is_empty() {
+                    return Err(err("empty_prompt", "the command is empty"));
+                }
+                write(live, pty, &format!("{line}\r"))
+            });
+            if let Err(e) = sent {
+                return Ok(Err(e));
+            }
+            json!({ "pane": pane_label(scope.numbers.get(pane.id()).copied().unwrap_or(0)), "sent": true })
+        }
+        Request::AgentPrompt { target, text, wait, .. } => {
+            let pane = match resolve_target(target, &scope.panes, &scope.numbers) {
+                Ok(p) => p,
+                Err(e) => return Ok(Err(e)),
+            };
+            let label = pane_label(scope.numbers.get(pane.id()).copied().unwrap_or(0));
+            let outcome = with_effects(effects, &scope, pane, "act", || {
+                let pty = running_pty(live, pane)?;
+                let f = live_facts(live, pane);
+                require_agent(&f)?;
+                if f.state == Some(DotState::Waiting) {
+                    return Err(err(
+                        "busy",
+                        "that Agent is Waiting for an answer (a permission prompt, say); read the pane, answer it with `agent send-keys` (or ask the user, if it needs their judgment), then prompt again",
+                    ));
+                }
+                let text = clean_prompt_text(text);
+                if text.trim().is_empty() {
+                    return Err(err(
+                        "empty_prompt",
+                        "nothing is left of the prompt once control characters are removed",
+                    ));
+                }
+                // Look first, so a fast Agent's Working cannot happen before we do.
+                let goal = WaitGoal { until: Until::Settled, need_working: true };
+                let started = Instant::now();
+                let first = wait_step(goal, WaitProgress::default(), snap(live, caller, workspace_id, pane.id()));
+                let bracketed = live.input_modes(pty).is_some_and(|m| m.bracketed_paste);
+                let paste = paste_bytes(&text, bracketed);
+                effects.input(pane.id(), &paste);
+                write(live, pty, &paste)?;
+                effects.input(pane.id(), "\r");
+                write(live, pty, "\r")?;
+                if !*wait {
+                    return Ok(None);
+                }
+                Ok(Some(wait_from(live, caller, workspace_id, pane.id(), goal, cancel, limit, started, first)))
+            });
+            match outcome {
+                Err(e) => return Ok(Err(e)),
+                Ok(None) => json!({ "pane": label, "sent": true }),
+                Ok(Some(Err(stop))) => return Err(stop),
+                Ok(Some(Ok(Err(e)))) => return Ok(Err(e)),
+                Ok(Some(Ok(Ok((end, waited))))) => {
+                    let after = match load_scope(live, caller, workspace_id) {
+                        Ok(s) => s,
+                        Err(e) => return Ok(Err(e)),
+                    };
+                    let now = after.panes.iter().find(|p| p.id() == pane.id()).unwrap_or(pane);
+                    let mut v = describe_agent(&describe_pane(&after, now, &live_facts(live, now)));
+                    v["status"] = json!(end.status());
+                    v["waitedMs"] = json!(waited.as_millis() as u64);
+                    v["sent"] = json!(true);
+                    v
+                }
+            }
+        }
         _ => return Ok(Err(err("internal", "not a call Rust answers"))),
     }))
 }
@@ -651,6 +891,12 @@ impl Live for AppLive<'_> {
     fn read_screen(&self, pty_id: &str, visible: bool, lines: Option<usize>) -> Result<Vec<String>, AbundioError> {
         self.ptys.read_screen(pty_id, visible, lines)
     }
+    fn input_modes(&self, pty_id: &str) -> Option<crate::screen::InputModes> {
+        self.ptys.input_modes(pty_id)
+    }
+    fn write(&self, pty_id: &str, bytes: &[u8]) -> Result<(), AbundioError> {
+        self.ptys.write(pty_id, bytes.to_vec())
+    }
 }
 
 #[cfg(test)]
@@ -669,6 +915,11 @@ mod tests {
         live: Mutex<HashSet<String>>,
         facts: HashMap<String, PaneFacts>,
         screens: HashMap<String, Vec<String>>,
+        modes: HashMap<String, crate::screen::InputModes>,
+        written: Mutex<Vec<(String, String)>>,
+        /// What a PTY's status turns to once something is written to it
+        /// (an Agent starting its turn).
+        on_write: Option<(&'static str, DotState)>,
     }
 
     impl Live for Fake {
@@ -696,6 +947,18 @@ mod tests {
                 None => all,
             })
         }
+        fn input_modes(&self, pty: &str) -> Option<crate::screen::InputModes> {
+            Some(self.modes.get(pty).copied().unwrap_or_default())
+        }
+        fn write(&self, pty: &str, bytes: &[u8]) -> Result<(), AbundioError> {
+            self.written.lock().unwrap().push((pty.to_string(), String::from_utf8_lossy(bytes).into()));
+            if let Some((p, state)) = self.on_write {
+                if p == pty {
+                    self.views.lock().unwrap().insert(p.into(), view(state, Mode::Agent));
+                }
+            }
+            Ok(())
+        }
     }
 
     #[derive(Default)]
@@ -707,6 +970,9 @@ mod tests {
         }
         fn end(&self, id: &str) {
             self.0.lock().unwrap().push(format!("end {id}"));
+        }
+        fn input(&self, pane: &str, data: &str) {
+            self.0.lock().unwrap().push(format!("input {pane} {data:?}"));
         }
     }
 
@@ -1051,4 +1317,123 @@ mod tests {
         let e = run(&fake, &Recorded::default(), &caller, &ws, &req, &never(), None).unwrap().unwrap_err();
         assert_eq!(e.code, "not_an_agent");
     }
+
+    // ── typing into a pane ──
+
+    #[test]
+    fn maps_every_key_rust_accepts_following_cursor_mode() {
+        for k in ["enter", "esc", "tab", "shift+tab", "backspace", "delete", "space", "up", "down", "left",
+                  "right", "home", "end", "pageup", "pagedown", "ctrl+a", "ctrl+z"] {
+            assert!(crate::agent_control::valid_key(k));
+            assert!(key_bytes(k, false).is_some(), "{k}");
+        }
+        assert_eq!(key_bytes("up", false).unwrap(), "\x1b[A");
+        assert_eq!(key_bytes("up", true).unwrap(), "\x1bOA");
+        assert_eq!(key_bytes("ctrl+c", false).unwrap(), "\x03");
+        assert_eq!(keys_to_bytes(&["enter".into(), "nope".into()], false), Err("nope".into()));
+    }
+
+    #[test]
+    fn cleans_a_prompt_and_a_typed_line() {
+        assert_eq!(clean_prompt_text("a\tb\r\nc\rd"), "a\tb\nc\nd");
+        assert_eq!(clean_prompt_text("x\x1b[201~y\u{9b}z"), "x[201~yz");
+        assert_eq!(one_line("  ls\n-la\x1b "), "ls -la");
+        assert_eq!(one_line("ls -la\n rm -rf /\x1b[201~"), "ls -la  rm -rf / [201~");
+        assert_eq!(one_line("  \r "), "");
+        assert_eq!(paste_bytes("a\nb", true), "\x1b[200~a\rb\x1b[201~");
+        assert_eq!(paste_bytes("a\nb", false), "a\rb");
+    }
+
+    #[test]
+    fn prompts_an_agent_as_a_paste_then_enter_marked_as_input() {
+        let (mut fake, ws, caller) = world();
+        fake.modes.insert("pty-ag".into(), crate::screen::InputModes { bracketed_paste: true, app_cursor: false });
+        let effects = Recorded::default();
+        let req = Request::AgentPrompt { target: Target::Pane(2), text: "fix it\x1b".into(), wait: false, timeout_ms: None };
+        let v = ok(run(&fake, &effects, &caller, &ws, &req, &never(), None));
+        assert_eq!(v, json!({ "pane": "p2", "sent": true }));
+        assert_eq!(
+            *fake.written.lock().unwrap(),
+            vec![("pty-ag".to_string(), "\x1b[200~fix it\x1b[201~".to_string()), ("pty-ag".to_string(), "\r".to_string())]
+        );
+        let e = effects.0.lock().unwrap();
+        assert_eq!(e[0], "begin sh->ag by p1 (act)");
+        assert_eq!(e[1], "input ag \"\\u{1b}[200~fix it\\u{1b}[201~\"");
+        assert_eq!(e[2], "input ag \"\\r\"");
+    }
+
+    #[test]
+    fn refuses_a_waiting_agent_a_shell_and_an_empty_prompt_sending_nothing() {
+        let (fake, ws, caller) = world();
+        let prompt = |t: u32, text: &str| Request::AgentPrompt { target: Target::Pane(t), text: text.into(), wait: false, timeout_ms: None };
+        fake.views.lock().unwrap().insert("pty-ag".into(), view(DotState::Waiting, Mode::Agent));
+        let code = |r: &Request| run(&fake, &Recorded::default(), &caller, &ws, r, &never(), None).unwrap().unwrap_err().code;
+        assert_eq!(code(&prompt(2, "go")), "busy");
+        assert_eq!(code(&prompt(1, "go")), "not_an_agent");
+        fake.views.lock().unwrap().insert("pty-ag".into(), view(DotState::Ready, Mode::Agent));
+        assert_eq!(code(&prompt(2, "\x1b\x07")), "empty_prompt");
+        assert!(fake.written.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_prompted_wait_counts_only_what_follows_working() {
+        // Ready from the last turn; the prompt starts Working, which settles.
+        let (mut fake, ws, caller) = world();
+        fake.on_write = Some(("pty-ag", DotState::Working));
+        let req = Request::AgentPrompt { target: Target::Pane(2), text: "go".into(), wait: true, timeout_ms: None };
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                std::thread::sleep(Duration::from_millis(250));
+                fake.views.lock().unwrap().insert("pty-ag".into(), view(DotState::Ready, Mode::Agent));
+            });
+            let v = ok(run(&fake, &Recorded::default(), &caller, &ws, &req, &never(), None));
+            assert_eq!(v["status"], "ready");
+            assert_eq!(v["sent"], true);
+            assert!(v["waitedMs"].as_u64().unwrap() >= 200);
+        });
+    }
+
+    #[test]
+    fn a_prompted_wait_stalls_when_the_agent_never_starts() {
+        let (fake, ws, caller) = world();
+        let req = Request::AgentPrompt { target: Target::Pane(2), text: "go".into(), wait: true, timeout_ms: None };
+        let e = run(&fake, &Recorded::default(), &caller, &ws, &req, &never(), None).unwrap().unwrap_err();
+        assert_eq!(e.code, "stalled");
+    }
+
+    #[test]
+    fn sends_keys_in_one_write_following_cursor_mode_or_nothing() {
+        let (mut fake, ws, caller) = world();
+        fake.modes.insert("pty-ag".into(), crate::screen::InputModes { bracketed_paste: false, app_cursor: true });
+        let req = Request::AgentSendKeys { target: Target::Pane(2), keys: vec!["down".into(), "enter".into()] };
+        let v = ok(run(&fake, &Recorded::default(), &caller, &ws, &req, &never(), None));
+        assert_eq!(v, json!({ "pane": "p2", "sent": 2 }));
+        assert_eq!(fake.written.lock().unwrap()[0].1, "\x1bOB\r");
+        let bad = Request::AgentSendKeys { target: Target::Pane(2), keys: vec!["enter".into(), "f13".into()] };
+        let e = run(&fake, &Recorded::default(), &caller, &ws, &bad, &never(), None).unwrap().unwrap_err();
+        assert!(e.message.contains("f13"));
+        assert_eq!(fake.written.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn runs_a_command_only_in_a_shell_at_its_prompt() {
+        let (mut fake, ws, caller) = world();
+        let run_in = |fake: &Fake, t: u32| {
+            let req = Request::PaneRun { target: Target::Pane(t), command: "ls\n-la".into() };
+            run(fake, &Recorded::default(), &caller, &ws, &req, &never(), None).unwrap()
+        };
+        assert_eq!(run_in(&fake, 1).unwrap_err().code, "state_unknown");
+        fake.facts.insert("sh".into(), PaneFacts { shell_integration_seen: true, ..Default::default() });
+        assert_eq!(run_in(&fake, 2).unwrap_err().code, "busy");
+        let mut busy = view(DotState::Working, Mode::Shell);
+        busy.shell_command_running = true;
+        fake.views.lock().unwrap().insert("pty-sh".into(), busy);
+        assert_eq!(run_in(&fake, 1).unwrap_err().code, "busy");
+        fake.views.lock().unwrap().insert("pty-sh".into(), view(DotState::Idle, Mode::Shell));
+        assert_eq!(run_in(&fake, 1).unwrap(), json!({ "pane": "p1", "sent": true }));
+        assert_eq!(fake.written.lock().unwrap()[0], ("pty-sh".to_string(), "ls -la\r".to_string()));
+        fake.live.lock().unwrap().remove("pty-sh");
+        assert_eq!(run_in(&fake, 1).unwrap_err().code, "not_found");
+    }
+
 }

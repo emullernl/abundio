@@ -40,6 +40,15 @@ impl Dimensions for Size {
     }
 }
 
+/// See [`Screen::modes`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct InputModes {
+    /// DECSET 2004: wrap a paste in `ESC[200~` … `ESC[201~`.
+    pub bracketed_paste: bool,
+    /// DECCKM: arrows, Home and End as `ESC O x`.
+    pub app_cursor: bool,
+}
+
 pub struct Screen {
     term: Term<VoidListener>,
     parser: Processor,
@@ -83,6 +92,17 @@ impl Screen {
 
     /// The text as drawn, for `abundio pane read`. `visible` limits it to the
     /// screen; `lines` keeps only the last N lines after joining.
+    /// The input modes a program has turned on, which decide the bytes a
+    /// key or a paste must be sent as.
+    pub fn modes(&self) -> InputModes {
+        use alacritty_terminal::term::TermMode;
+        let m = self.term.mode();
+        InputModes {
+            bracketed_paste: m.contains(TermMode::BRACKETED_PASTE),
+            app_cursor: m.contains(TermMode::APP_CURSOR),
+        }
+    }
+
     pub fn read(&self, visible: bool, lines: Option<usize>) -> Vec<String> {
         let grid = self.term.grid();
         let columns = grid.columns();
@@ -299,4 +319,15 @@ mod tests {
         let s = screen(10, 3, "old\x1b[2J\x1b[H");
         assert_eq!(s.read(true, None), Vec::<String>::new());
     }
+
+    #[test]
+    fn reports_the_input_modes_a_program_turns_on() {
+        let mut s = Screen::new(20, 5, 100);
+        assert_eq!(s.modes(), InputModes::default());
+        s.feed(b"\x1b[?2004h\x1b[?1h");
+        assert_eq!(s.modes(), InputModes { bracketed_paste: true, app_cursor: true });
+        s.feed(b"\x1b[?2004l");
+        assert!(!s.modes().bracketed_paste);
+    }
+
 }

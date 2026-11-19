@@ -3,10 +3,8 @@ import { clearSpawnedBy } from "../../paneTree";
 import type { CodingAgent, PaneNode } from "../../types";
 import {
 	autoDirection,
-	cleanCommand,
 	closeRefusal,
 	layoutDirection,
-	runRefusal,
 	startArgv,
 } from "../spawn";
 
@@ -78,37 +76,6 @@ describe("startArgv", () => {
 	it("keeps a prompt starting with - from reading as an option", () => {
 		const argv = startArgv(agents, "claude", "-x please", []).argv;
 		expect(argv[argv.length - 1].startsWith("-")).toBe(false);
-	});
-});
-
-describe("runRefusal", () => {
-	const ok = {
-		mode: "shell" as const,
-		exited: false,
-		integrationSeen: true,
-		shellCommandRunning: false,
-	};
-
-	it("allows an idle shell at its prompt", () => {
-		expect(runRefusal(ok)).toBeNull();
-	});
-
-	it("refuses an Agent pane, a running command, an unknown shell and an exited one", () => {
-		expect(runRefusal({ ...ok, mode: "agent" })?.code).toBe("busy");
-		expect(runRefusal({ ...ok, shellCommandRunning: true })?.code).toBe("busy");
-		expect(runRefusal({ ...ok, integrationSeen: false })?.code).toBe(
-			"state_unknown",
-		);
-		expect(runRefusal({ ...ok, exited: true })?.code).toBe("not_found");
-	});
-});
-
-describe("cleanCommand", () => {
-	it("makes one line with no control characters", () => {
-		expect(cleanCommand("ls -la\n rm -rf /\x1b[201~")).toBe(
-			"ls -la  rm -rf / [201~",
-		);
-		expect(cleanCommand("  \r ")).toBe("");
 	});
 });
 

@@ -9,7 +9,7 @@ import {
 describe("controlActivity", () => {
 	it("tells reads from acts", () => {
 		expect(controlKind("pane.watch")).toBe("read");
-		expect(controlKind("agent.prompt")).toBe("act");
+		expect(controlKind("pane.split")).toBe("act");
 		expect(controlKind("pane.close")).toBe("act");
 	});
 

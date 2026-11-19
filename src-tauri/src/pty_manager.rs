@@ -142,6 +142,13 @@ impl PtyManager {
         Ok(screen.read(visible, lines))
     }
 
+    /// The input modes the program in a PTY has turned on.
+    pub fn input_modes(&self, pty_id: &str) -> Option<crate::screen::InputModes> {
+        let entry = self.entries.get(pty_id)?;
+        let screen = entry.screen.lock().ok()?;
+        Some(screen.modes())
+    }
+
     /// Whether a PTY with this id is running (spawned, not exited or killed).
     pub fn is_live(&self, pty_id: &str) -> bool {
         self.entries

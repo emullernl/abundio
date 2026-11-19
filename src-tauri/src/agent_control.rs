@@ -1931,6 +1931,13 @@ impl crate::control_local::Effects for WindowEffects<'_> {
             .app
             .emit_to(self.window_label, "agent-control-effect", json!({ "type": "end", "id": id }));
     }
+    fn input(&self, pane_id: &str, data: &str) {
+        let _ = self.app.emit_to(
+            self.window_label,
+            "agent-control-effect",
+            json!({ "type": "input", "paneId": pane_id, "data": data }),
+        );
+    }
 }
 
 fn ctl_error_answer(e: crate::control_local::CtlError) -> Answer {
@@ -1962,7 +1969,10 @@ fn handle_in_rust(app: &AppHandle, caller: &Caller, scope: &Scope, request: &Req
         }
     }
     let (limit, wait_target) = match request {
-        Request::AgentWait { target, timeout_ms, .. } => (timeout_ms.map(Duration::from_millis), Some(target)),
+        Request::AgentWait { target, timeout_ms, .. }
+        | Request::AgentPrompt { target, wait: true, timeout_ms, .. } => {
+            (timeout_ms.map(Duration::from_millis), Some(target))
+        }
         _ => (None, None),
     };
     // A wait refuses a loop first, as the Window path does.

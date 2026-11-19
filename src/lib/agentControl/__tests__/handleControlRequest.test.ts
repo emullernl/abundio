@@ -14,6 +14,7 @@ const terminals = new Map<string, unknown>();
 vi.mock("../../terminalManager", () => ({
 	getTerminal: (id: string) => terminals.get(id),
 	startPtyUnlessShown: () => () => {},
+	noteControlInput: vi.fn(),
 }));
 
 import {
@@ -22,6 +23,7 @@ import {
 } from "../../../stores/controlBadgeStore";
 import { usePtyActivityStore } from "../../../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../../../stores/workspaceStore";
+import { noteControlInput } from "../../terminalManager";
 import type { WorkspaceWithTabs } from "../../types";
 import {
 	applyControlEffect,
@@ -203,5 +205,12 @@ describe("toReply", () => {
 		expect(toReply({ status: "rejected", reason: new Error("boom") })).toEqual({
 			error: { code: "internal", message: "boom" },
 		});
+	});
+});
+
+describe("input Rust typed", () => {
+	it("is kept as keystrokes in the pane", () => {
+		applyControlEffect({ type: "input", paneId: "b", data: "\r" });
+		expect(noteControlInput).toHaveBeenCalledWith("b", "\r");
 	});
 });

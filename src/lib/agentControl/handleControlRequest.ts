@@ -20,7 +20,6 @@ import {
 	pulseControlActivity,
 	startControlActivity,
 } from "../controlActivity";
-import { pasteAndSubmit } from "../firePromptAction";
 import { fleetConsoleShowing } from "../fleetFocus";
 import {
 	type AgentControlEffect,
@@ -43,14 +42,12 @@ import {
 	wrapInSplit,
 } from "../paneTree";
 import { setPendingTask, takePendingTask } from "../pendingAgentRegistry";
-import { canFire } from "../promptActions";
 import { taskTabName } from "../taskPrompt";
 import {
 	getTerminal,
-	type ManagedTerminal,
+	noteControlInput,
 	startPtyUnlessShown,
 } from "../terminalManager";
-import { typedLine } from "../typedLine";
 import type { CodingAgent, WorkspaceWithTabs } from "../types";
 import { addWorktreeTargetId } from "../worktreeGrouping";
 import { basename, resolvePath } from "../worktreePath";
@@ -69,7 +66,6 @@ import {
 	paneLabel,
 } from "./describe";
 import { openFileFor } from "./fileOpen";
-import { keysToBytes } from "./keys";
 import { appendNotes, editNotes, readNotes, writeNotes } from "./notesOps";
 import { startPaneFactsSync } from "./paneFactsSync";
 import { cleanPromptText } from "./promptText";
@@ -81,10 +77,8 @@ import {
 } from "./resolveTarget";
 import {
 	autoDirection,
-	cleanCommand,
 	closeRefusal,
 	layoutDirection,
-	runRefusal,
 	startArgv,
 } from "./spawn";
 import {
@@ -94,7 +88,6 @@ import {
 	type Direction,
 } from "./types";
 import { notifyUser, startSignalClearing } from "./userSignals";
-import { type WaitOutcome, waitForPane } from "./waitForPane";
 import {
 	compilePattern,
 	EscapeStripper,
@@ -405,12 +398,6 @@ async function runOp(
 				return describeAgent(await describeNew(scope, pane.node.id));
 			});
 		}
-		case "agent.prompt": {
-			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
-			return withBadge(scope, pane, () =>
-				promptAgent(scope, pane, request, signal),
-			);
-		}
 		case "pane.watch": {
 			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
 			if (hasNestedRepetition(request.pattern)) {
@@ -429,25 +416,6 @@ async function runOp(
 			return withBadge(scope, pane, () =>
 				watchPane(ptyIdOf(pane), pattern, signal),
 			);
-		}
-		case "agent.sendKeys": {
-			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
-			return withBadge(scope, pane, async () => {
-				const managed = mountedTerminal(pane);
-				const appCursor = managed.term.modes.applicationCursorKeysMode;
-				const keys = keysToBytes(request.keys, appCursor);
-				if (!keys.ok) {
-					throw new ControlError(
-						"internal",
-						`unknown key "${keys.unknown}"; nothing was sent`,
-					);
-				}
-				await pty.write(managed.ptyId, keys.bytes);
-				return {
-					pane: paneLabel(scope.numbers.get(pane.node.id) ?? 0),
-					sent: request.keys.length,
-				};
-			});
 		}
 		case "pane.split": {
 			// In another Workspace there is no caller pane to split, and its
@@ -476,31 +444,6 @@ async function runOp(
 		}
 		case "tab.rename":
 			return renameTabFor(scope, request);
-		case "pane.run": {
-			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
-			return withBadge(scope, pane, async () => {
-				const managed = mountedTerminal(pane);
-				const facts = liveFacts(pane);
-				const refusal = runRefusal({
-					mode: facts.mode,
-					exited: facts.exited,
-					integrationSeen: managed.shellIntegrationSeen,
-					shellCommandRunning:
-						usePtyActivityStore.getState().activities[managed.ptyId]
-							?.shellCommandRunning === true,
-				});
-				if (refusal) throw refusal;
-				const command = cleanCommand(request.command);
-				if (command === "") {
-					throw new ControlError("empty_prompt", "the command is empty");
-				}
-				await pty.write(managed.ptyId, typedLine(command));
-				return {
-					pane: paneLabel(scope.numbers.get(pane.node.id) ?? 0),
-					sent: true,
-				};
-			});
-		}
 		case "pane.close": {
 			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
 			const refusal = closeRefusal(caller.paneId, pane.node.id);
@@ -1096,74 +1039,6 @@ async function withBadge<T>(
 	}
 }
 
-function mountedTerminal(pane: WorkspacePane): ManagedTerminal {
-	const managed = getTerminal(pane.node.id);
-	if (!managed?.ptyId) {
-		throw new ControlError(
-			"state_unknown",
-			"that pane's terminal is not loaded yet; try again in a moment",
-		);
-	}
-	return managed;
-}
-
-function requireAgent(pane: WorkspacePane): PaneLiveFacts {
-	const facts = liveFacts(pane);
-	if (facts.exited || facts.mode !== "agent") {
-		throw new ControlError(
-			"not_an_agent",
-			"that pane is not running an Agent; use `abundio pane run` for a shell",
-		);
-	}
-	return facts;
-}
-
-function waitResult(scope: Scope, pane: WorkspacePane, outcome: WaitOutcome) {
-	return {
-		...describeAgent(describeIn(scope, pane)),
-		status: outcome.end === "left" ? "exited" : outcome.end,
-		waitedMs: outcome.waitedMs,
-	};
-}
-
-/** `agent prompt`: paste the text into the Agent and press Enter, without
- *  moving keyboard focus; with `--wait`, until it has Settled. */
-async function promptAgent(
-	scope: Scope,
-	pane: WorkspacePane,
-	request: Extract<ControlRequest, { op: "agent.prompt" }>,
-	signal: AbortSignal,
-) {
-	const managed = mountedTerminal(pane);
-	const facts = requireAgent(pane);
-	if (!canFire(facts.state ?? undefined)) {
-		throw new ControlError(
-			"busy",
-			"that Agent is Waiting for an answer (a permission prompt, say); read the pane, answer it with `agent send-keys` (or ask the user, if it needs their judgment), then prompt again",
-		);
-	}
-	const text = cleanPromptText(request.text);
-	if (text.trim() === "") {
-		throw new ControlError(
-			"empty_prompt",
-			"nothing is left of the prompt once control characters are removed",
-		);
-	}
-	// Watch first, so a fast Agent's Working cannot happen before we look.
-	const waiting = request.wait
-		? waitForPane(
-				pane.node.id,
-				managed.ptyId,
-				{ until: "settled", needWorking: true },
-				signal,
-			)
-		: null;
-	pasteAndSubmit(managed, text, true);
-	const label = paneLabel(scope.numbers.get(pane.node.id) ?? 0);
-	if (!waiting) return { pane: label, sent: true };
-	return { sent: true, ...waitResult(scope, pane, await waiting) };
-}
-
 /** Turn a handler's outcome into the reply Rust expects. */
 export function toReply(
 	outcome: PromiseSettledResult<unknown>,
@@ -1212,6 +1087,10 @@ const effectEnds = new Map<string, () => void>();
  *  target's Control badge and the Orchestrator graph's line. Exported for
  *  tests. */
 export function applyControlEffect(e: AgentControlEffect): void {
+	if (e.type === "input") {
+		noteControlInput(e.paneId, e.data);
+		return;
+	}
 	if (e.type === "end") {
 		effectEnds.get(e.id)?.();
 		effectEnds.delete(e.id);

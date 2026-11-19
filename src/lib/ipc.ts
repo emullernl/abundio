@@ -1550,7 +1550,10 @@ export type AgentControlEffect =
 			by: string;
 			kind: "read" | "act";
 	  }
-	| { type: "end"; id: string };
+	| { type: "end"; id: string }
+	/** Bytes Rust typed into a pane (`agent prompt`): keep them as the
+	 *  keystrokes they stand for. */
+	| { type: "input"; paneId: string; data: string };
 
 /** What the Window knows about one pane that Rust does not see yet. */
 export interface PaneFacts {

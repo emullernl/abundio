@@ -35,6 +35,7 @@ const sources = {
 	runningCommands: { "pty-a": "make" },
 	detectedAgentIds: { "pty-b": "claude" },
 	progress: { b: "2/3" },
+	integrationSeen: new Set(["a"]),
 };
 
 describe("pane facts for Rust", () => {
@@ -46,7 +47,7 @@ describe("pane facts for Rust", () => {
 			command: "make",
 			detectedAgentId: null,
 			progress: null,
-			shellIntegrationSeen: false,
+			shellIntegrationSeen: true,
 		});
 		// The PTY a pane runs now, even before the layout names it.
 		expect(facts.get("b")).toMatchObject({
