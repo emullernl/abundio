@@ -189,6 +189,15 @@ const ptyOutputHub = (() => {
 	};
 })();
 
+/** Shadow mode for the Rust status store (dev builds; `lib/statusShadow.ts`). */
+export const statusShadowApi = {
+	run: (ops: unknown[]) =>
+		invoke<{ ptyId: string; op: string; frontend: unknown; rust: unknown }[]>(
+			"status_shadow",
+			{ ops },
+		),
+};
+
 export const pty = {
 	/** Spawn a PTY. Takes an options object rather than positional arguments —
 	 *  there are eleven of them and almost all are optional. */

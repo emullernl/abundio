@@ -18,6 +18,7 @@ pub mod change_hub;
 pub mod event_sink;
 pub mod screen;
 pub mod status_machine;
+pub mod status_store;
 pub mod events;
 pub mod file_explorer;
 pub mod file_watcher;
@@ -943,6 +944,8 @@ pub fn run() {
             // Initialize PTY manager
             let pty_mgr = PtyManager::new();
             app.manage(pty_mgr);
+            // Every PTY's status in Rust (shadow mode for now, ADR-0063).
+            app.manage(status_store::StatusStore::new());
 
             // Where core modules send events (docs/plans/remote-hosts.md).
             let pty_channels = std::sync::Arc::new(event_sink::PtyChannels::default());
@@ -1512,6 +1515,7 @@ pub fn run() {
             commands::pty_output_subscribe,
             commands::pty_read_screen,
             commands::pty_set_scrollback,
+            commands::status_shadow,
             commands::pty_write,
             commands::pty_resize,
             commands::pty_redraw,

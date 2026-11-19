@@ -11,6 +11,7 @@ import {
 	type StatusTransition,
 	statusReducer,
 } from "../lib/statusReducer";
+import { type StatusView, shadowStatus } from "../lib/statusShadow";
 import type {
 	PaneNode,
 	PtyActivityState,
@@ -84,7 +85,9 @@ export function getLastOutputAt(ptyId: string): number | null {
  *  Used in agent mode to keep the idle scanner from transitioning "active" → "ready"
  *  while output is still flowing but below the byte-accumulation threshold. */
 export function touchLastOutput(ptyId: string, now?: number): void {
-	lastOutputTimestamps.set(ptyId, now ?? Date.now());
+	const at = now ?? Date.now();
+	lastOutputTimestamps.set(ptyId, at);
+	shadowStatus({ op: "touch", ptyId, now: at, expected: statusView(ptyId) });
 }
 
 // ── Types ──
@@ -206,6 +209,26 @@ function hydrate(
 		lastInputAt: 0,
 		lastOutputChunkAt: null,
 		lastEscAt: null,
+		activeSubagents: subagentState.get(ptyId)?.subagents ?? NO_SUBAGENTS,
+		stopHeldForSubagents: subagentState.get(ptyId)?.stopHeld ?? false,
+		preErrorState: preErrorStates.get(ptyId) ?? null,
+		titleHeld: titleHeldPtys.has(ptyId),
+	};
+}
+
+/** This PTY's status as the store keeps it, for shadow mode
+ *  (`lib/statusShadow.ts`); `null` when it has no entry. */
+function statusView(ptyId: string): StatusView | null {
+	const entry = usePtyActivityStore.getState().activities[ptyId];
+	if (!entry) return null;
+	return {
+		state: CANONICAL_STATE[entry.state],
+		mode: entry.detectionMode,
+		hookDriven: entry.hookDriven,
+		shellCommandRunning: entry.shellCommandRunning,
+		workingSince: entry.lastOutputAt,
+		lastActivityAt:
+			lastOutputTimestamps.get(ptyId) ?? entry.lastOutputAt ?? null,
 		activeSubagents: subagentState.get(ptyId)?.subagents ?? NO_SUBAGENTS,
 		stopHeldForSubagents: subagentState.get(ptyId)?.stopHeld ?? false,
 		preErrorState: preErrorStates.get(ptyId) ?? null,
@@ -370,6 +393,13 @@ function applyStatusEvent(
 				: {}),
 		}));
 	}
+	shadowStatus({
+		op: "apply",
+		ptyId,
+		event,
+		threshold: null,
+		expected: statusView(ptyId),
+	});
 	if (changed || isTurnStart) {
 		const prevSnap = snap(prevEntry ?? project(before, undefined));
 		emitStatusChange({
@@ -379,6 +409,61 @@ function applyStatusEvent(
 			cause: event,
 		});
 	}
+}
+
+// The bodies of `initPty` and `setShellCommandRunning`, which change status
+// outside the reducer; the actions also mirror them in shadow mode.
+
+function initPtyNow(ptyId: string, mode?: PtyDetectionMode): void {
+	const existing = usePtyActivityStore.getState().activities[ptyId];
+	if (existing) {
+		// Update mode if explicitly provided
+		if (mode && existing.detectionMode !== mode) {
+			usePtyActivityStore.setState((s) => ({
+				activities: {
+					...s.activities,
+					[ptyId]: { ...s.activities[ptyId], detectionMode: mode },
+				},
+			}));
+		}
+		return;
+	}
+	// A fresh entry starts Idle, so the mid-turn-failure memory must not
+	// survive into it (the invariant is: non-null only while Error). This
+	// set() bypasses applyStatusEvent, so clear it by hand.
+	preErrorStates.delete(ptyId);
+	usePtyActivityStore.setState((s) => ({
+		activities: {
+			...s.activities,
+			[ptyId]: {
+				state: "idle",
+				lastOutputAt: null,
+				hasEverReceivedOutput: true,
+				detectionMode: mode ?? "shell",
+				hookDriven: false,
+				shellCommandRunning: false,
+			},
+		},
+	}));
+}
+
+function setShellCommandRunningNow(ptyId: string, running: boolean): void {
+	// Deliberately not a reducer event: this only records *that* a command
+	// is in flight. The status moves that go with it (recordOutput on
+	// start, recordError / recordExitSuccess on end) are dispatched by
+	// terminalManager, which is the only caller and the only place that
+	// knows the exit code. Skips the set() when unchanged, preserving the
+	// hot-path no-re-render the out-of-band map used to give.
+	usePtyActivityStore.setState((s) => {
+		const entry = s.activities[ptyId];
+		if (!entry || entry.shellCommandRunning === running) return s;
+		return {
+			activities: {
+				...s.activities,
+				[ptyId]: { ...entry, shellCommandRunning: running },
+			},
+		};
+	});
 }
 
 // ── Store ──
@@ -395,54 +480,22 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 		detectedAgentIds: {},
 
 		initPty: (ptyId, mode) => {
-			const existing = get().activities[ptyId];
-			if (existing) {
-				// Update mode if explicitly provided
-				if (mode && existing.detectionMode !== mode) {
-					set((s) => ({
-						activities: {
-							...s.activities,
-							[ptyId]: { ...s.activities[ptyId], detectionMode: mode },
-						},
-					}));
-				}
-				return;
-			}
-			// A fresh entry starts Idle, so the mid-turn-failure memory must not
-			// survive into it (the invariant is: non-null only while Error). This
-			// set() bypasses applyStatusEvent, so clear it by hand.
-			preErrorStates.delete(ptyId);
-			set((s) => ({
-				activities: {
-					...s.activities,
-					[ptyId]: {
-						state: "idle",
-						lastOutputAt: null,
-						hasEverReceivedOutput: true,
-						detectionMode: mode ?? "shell",
-						hookDriven: false,
-						shellCommandRunning: false,
-					},
-				},
-			}));
+			initPtyNow(ptyId, mode);
+			shadowStatus({
+				op: "init",
+				ptyId,
+				mode: mode ?? null,
+				expected: statusView(ptyId),
+			});
 		},
 
 		setShellCommandRunning: (ptyId, running) => {
-			// Deliberately not a reducer event: this only records *that* a command
-			// is in flight. The status moves that go with it (recordOutput on
-			// start, recordError / recordExitSuccess on end) are dispatched by
-			// terminalManager, which is the only caller and the only place that
-			// knows the exit code. Skips the set() when unchanged, preserving the
-			// hot-path no-re-render the out-of-band map used to give.
-			set((s) => {
-				const entry = s.activities[ptyId];
-				if (!entry || entry.shellCommandRunning === running) return s;
-				return {
-					activities: {
-						...s.activities,
-						[ptyId]: { ...entry, shellCommandRunning: running },
-					},
-				};
+			setShellCommandRunningNow(ptyId, running);
+			shadowStatus({
+				op: "shellCommandRunning",
+				ptyId,
+				running,
+				expected: statusView(ptyId),
 			});
 		},
 
@@ -649,6 +702,7 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 		},
 
 		removePty: (ptyId) => {
+			shadowStatus({ op: "remove", ptyId });
 			lastOutputTimestamps.delete(ptyId);
 			subagentState.delete(ptyId);
 			preErrorStates.delete(ptyId);
@@ -743,7 +797,18 @@ setInterval(() => {
 		}));
 		for (const c of changes) emitStatusChange(c);
 	}
+	shadowTick(now);
 }, SCAN_INTERVAL_MS);
+
+/** Mirror the scanner's tick to Rust with every PTY's resulting view. */
+function shadowTick(now: number): void {
+	const expected: Record<string, StatusView> = {};
+	for (const ptyId of Object.keys(usePtyActivityStore.getState().activities)) {
+		const view = statusView(ptyId);
+		if (view) expected[ptyId] = view;
+	}
+	shadowStatus({ op: "tick", now, expected });
+}
 
 // ── Notifications for state transitions ──
 //
