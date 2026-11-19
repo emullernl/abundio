@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { TitleStatus } from "../lib/agentTitleMap";
 import { sendNotification } from "../lib/desktop";
+import { sameJson } from "../lib/layoutOps";
 import { findPaneLocation, isPaneVisible } from "../lib/notificationRouter";
 import { parseTabLayout } from "../lib/paneTree";
 import {
@@ -853,8 +854,10 @@ function viewToEntry(
 	};
 }
 
+/** Whatever the order of their keys: Rust's answers come through a JSON
+ *  value whose keys are sorted, never as the Window built its own. */
 function viewsEqual(a: StatusView | null, b: StatusView | null): boolean {
-	return JSON.stringify(a) === JSON.stringify(b);
+	return sameJson(a, b);
 }
 
 /** Take Rust's view of a pane: the entry and the hot maps. */
@@ -951,7 +954,7 @@ export function applyRustUpdate(
 	const hostCause = unheardHost ? (u.hostCause ?? undefined) : undefined;
 	const cause = deferred ?? hostCause ?? u.change?.cause ?? null;
 	const fields = (Object.keys(u.view) as (keyof StatusView)[]).filter(
-		(k) => JSON.stringify(local?.[k]) !== JSON.stringify(u.view?.[k]),
+		(k) => !sameJson(local?.[k], u.view?.[k]),
 	);
 	// The last activity time is stamped by both sides as each sees output, a
 	// hook or a title, so a few milliseconds apart is no wrong prediction (it

@@ -219,6 +219,22 @@ describe("applying Rust's status updates", () => {
 		warn.mockRestore();
 	});
 
+	it("takes a view with its keys in another order as the same", () => {
+		workingAgent(1);
+		changes = [];
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const view = __statusViewForTests("p");
+		if (!view) throw new Error("no view");
+		// As Rust's answers now come: keys sorted.
+		const sorted = Object.fromEntries(
+			Object.entries(view).sort(([a], [b]) => a.localeCompare(b)),
+		) as unknown as StatusView;
+		applyRustUpdate(update("p", sorted), false);
+		expect(warn).not.toHaveBeenCalled();
+		expect(changes).toEqual([]);
+		warn.mockRestore();
+	});
+
 	it("never applies an older update over a newer one", () => {
 		workingAgent(1);
 		const view = __statusViewForTests("p");

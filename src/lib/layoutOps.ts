@@ -25,7 +25,9 @@ type Json = Record<string, unknown>;
 
 const CHILDREN = new Set(["first", "second"]);
 
-function sameJson(a: unknown, b: unknown): boolean {
+/** Deep equality of JSON values, whatever the order of their keys (Rust's
+ *  answers come through a JSON value whose keys are sorted). */
+export function sameJson(a: unknown, b: unknown): boolean {
 	if (a === b) return true;
 	if (
 		typeof a !== "object" ||
