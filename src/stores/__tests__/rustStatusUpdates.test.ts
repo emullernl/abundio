@@ -27,6 +27,7 @@ vi.mock("../../lib/windowFocus", () => ({
 
 import {
 	__statusViewForTests,
+	applyHeldRustUpdate,
 	applyRustUpdate,
 	type StatusChange,
 	subscribeStatusChange,
@@ -233,6 +234,40 @@ describe("applying Rust's status updates", () => {
 		expect(warn).not.toHaveBeenCalled();
 		expect(changes).toEqual([]);
 		warn.mockRestore();
+	});
+
+	it("applies a change held back while in flight even when no answer comes", () => {
+		usePtyActivityStore.getState().initPty("p", "shell");
+		changes = [];
+		const view = __statusViewForTests("p");
+		if (!view) throw new Error("no view");
+		// A typed Agent starts while keystrokes are in flight; they changed
+		// nothing in Rust, so no answer comes for them.
+		pending.ids.add("p");
+		applyRustUpdate(
+			update(
+				"p",
+				{ ...view, mode: "agent" },
+				{
+					prev: { state: "idle", detectionMode: "shell", hookDriven: false },
+					next: { state: "idle", detectionMode: "agent", hookDriven: false },
+					cause: { kind: "agentDetected" },
+				},
+			),
+			true,
+		);
+		expect(usePtyActivityStore.getState().activities.p.detectionMode).toBe(
+			"shell",
+		);
+		pending.ids.clear();
+		applyHeldRustUpdate("p");
+		expect(usePtyActivityStore.getState().activities.p.detectionMode).toBe(
+			"agent",
+		);
+		expect(changes.map((c) => c.cause.kind)).toEqual(["agentDetected"]);
+		// Applied once only.
+		applyHeldRustUpdate("p");
+		expect(changes).toHaveLength(1);
 	});
 
 	it("never applies an older update over a newer one", () => {

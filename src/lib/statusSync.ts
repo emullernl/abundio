@@ -90,6 +90,13 @@ export function hasPendingStatusOps(ptyId: string): boolean {
 	return (pending.get(ptyId) ?? 0) > 0;
 }
 
+let settledHandler: ((ptyId: string) => void) | null = null;
+
+/** The store registers what to do once a pane has nothing in flight. */
+export function onStatusSettled(fn: (ptyId: string) => void): void {
+	settledHandler = fn;
+}
+
 /** The store registers how to apply Rust's updates (once, at module load). */
 export function onStatusUpdate(fn: UpdateHandler): void {
 	handler = fn;
@@ -150,12 +157,22 @@ async function flush(): Promise<void> {
 			} catch (e) {
 				console.warn("[status] Rust did not take the changes", e);
 			}
+			const settled = new Set<string>();
 			for (const op of batch) {
 				const left = (pending.get(op.ptyId) ?? 1) - 1;
-				if (left > 0) pending.set(op.ptyId, left);
-				else pending.delete(op.ptyId);
+				if (left > 0) {
+					pending.set(op.ptyId, left);
+				} else {
+					pending.delete(op.ptyId);
+					settled.add(op.ptyId);
+				}
 			}
 			for (const u of updates) handler?.(u, false);
+			// A change that changed nothing in Rust has no answer: what was
+			// held back while it was in flight must not wait for one.
+			for (const ptyId of settled) {
+				if (!pending.has(ptyId)) settledHandler?.(ptyId);
+			}
 		}
 	} finally {
 		inFlight = false;

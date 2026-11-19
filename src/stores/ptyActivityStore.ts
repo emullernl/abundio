@@ -15,6 +15,7 @@ import {
 import {
 	hasPendingStatusOps,
 	isRustStatusAuthority,
+	onStatusSettled,
 	onStatusUpdate,
 	recordScanTickForTests,
 	type StatusUpdate,
@@ -998,6 +999,14 @@ export function applyRustUpdate(
 }
 
 onStatusUpdate(applyRustUpdate);
+
+/** A pane has nothing in flight any more: apply what Rust sent meanwhile,
+ *  if no answer did. Exported for tests. */
+export function applyHeldRustUpdate(ptyId: string): void {
+	const held = deferredUpdates.get(ptyId);
+	if (held) applyRustUpdate(held, true);
+}
+onStatusSettled(applyHeldRustUpdate);
 
 /** Test-only: a pane's status as the store keeps it. */
 export const __statusViewForTests = statusView;
