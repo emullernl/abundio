@@ -651,6 +651,17 @@ pub async fn tab_delete(
     Ok(())
 }
 
+/// The Window's facts about its panes that Rust does not see yet (title,
+/// live folder, running command, detected Agent, Progress line), for Agent
+/// control to describe them (`pane_facts.rs`).
+#[tauri::command]
+pub fn pane_facts_report(
+    facts: State<'_, crate::pane_facts::PaneFactsStore>,
+    reports: Vec<crate::pane_facts::PaneFactsReport>,
+) {
+    facts.apply(reports);
+}
+
 /// Apply a Window's edits to a Tab's layout: Rust is the authority
 /// (ADR-0063). Saves the result and sends it to the Profile's other Windows
 /// as `layout-changed`; answers with the layout as it now stands. The

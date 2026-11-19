@@ -1541,6 +1541,32 @@ export type AgentControlReply =
 	| { result: unknown }
 	| { error: { code: string; message: string } };
 
+export type AgentControlEffect =
+	| {
+			type: "begin";
+			id: string;
+			callerPaneId: string;
+			targetPaneId: string;
+			by: string;
+			kind: "read" | "act";
+	  }
+	| { type: "end"; id: string };
+
+/** What the Window knows about one pane that Rust does not see yet. */
+export interface PaneFacts {
+	title: string | null;
+	cwd: string | null;
+	command: string | null;
+	detectedAgentId: string | null;
+	progress: string | null;
+	shellIntegrationSeen: boolean;
+}
+
+export interface PaneFactsReport {
+	paneId: string;
+	facts: PaneFacts | null;
+}
+
 export const agentControl = {
 	reply: (id: string, reply: AgentControlReply) =>
 		invoke<boolean>("agent_control_reply", { id, reply }),
@@ -1588,6 +1614,15 @@ export const agentControl = {
 		),
 
 	/** Rust stopped waiting for this request (timeout): drop it. */
+	/** What the user sees of a call Rust answers itself: the target's
+	 *  Control badge and the Orchestrator graph's line, begun and ended. */
+	onEffect: (cb: (e: AgentControlEffect) => void) =>
+		listenToThisWindow<AgentControlEffect>("agent-control-effect", (e) =>
+			cb(e.payload),
+		),
+	/** Tell Rust what the Window knows about its panes (`pane_facts.rs`). */
+	reportPaneFacts: (reports: PaneFactsReport[]) =>
+		invoke<void>("pane_facts_report", { reports }),
 	onCancel: (cb: (id: string) => void) =>
 		listenToThisWindow<{ id: string }>("agent-control-cancel", (e) =>
 			cb(e.payload.id),

@@ -111,13 +111,6 @@ describe("progress", () => {
 		await runRequest(agent, { op: "progress", text: "step 1/3" });
 		await runRequest(agent, { op: "progress", text: "step 2/3" });
 		expect(useAgentSignalsStore.getState().progress.b).toBe("step 2/3");
-		const list = (await runRequest(shell, { op: "agent.list" })) as {
-			agents: { handle: string; progress: string | null }[];
-		};
-		expect(list.agents[0]).toMatchObject({
-			handle: "Builder",
-			progress: "step 2/3",
-		});
 		await runRequest(agent, { op: "progress", text: null });
 		expect(useAgentSignalsStore.getState().progress.b).toBeUndefined();
 	});

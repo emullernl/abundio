@@ -99,6 +99,8 @@ Done in steps: **4a** layout edits as node-level ops (`set` / `replace` / `patch
 
 #### 5. Agent control into Rust
 
+Done in steps. **5a** Rust answers the reads itself (`control_local.rs`): pane list / current, agent list, pane read (its own screen; the xterm.js reader is gone) and agent wait (its own status store), with a wait's cycle check and cancel as before. The Window mirrors what only it sees of a pane (title, live folder, running command, detected Agent, Progress line) into `pane_facts.rs`; the badge and graph line are drawn from `agent-control-effect`; a Workspace Opened nowhere is first opened by the Window (`workspace.open`). **5b** the calls that only write to a PTY (prompt, send-keys, run, rename). **5c** the calls that change layouts, the Window only showing them. Notes, workspace close, agent start and worktree new read state only the Window has (the open Notes editor, unsaved File panes, settings and pending tasks) and stay there until phase 6.
+
 - Needs 2–4. Move `lib/agentControl/*` into Rust; the `agent-control-request` round-trip goes away except for UI-only effects (focus, File window open), which become events to the Window that should act.
 - Port the TS tests' cases to Rust: settle/wait, cycles, spawn, close refusals, notes ops.
 

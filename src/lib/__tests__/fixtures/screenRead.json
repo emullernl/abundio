@@ -1,5 +1,5 @@
 {
-	"_comment": "Shared cases for reading a pane's text: src-tauri/src/screen.rs (alacritty_terminal) and readBuffer.ts (xterm.js) must both give `expected`. docs/plans/remote-hosts.md phase 2.",
+	"_comment": "Cases for reading a pane's text from its Rust screen (src-tauri/src/screen.rs, alacritty_terminal). Once shared with the xterm.js reader, retired in phase 5 (docs/plans/remote-hosts.md).",
 	"cases": [
 		{
 			"name": "plain lines",

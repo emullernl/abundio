@@ -20,10 +20,10 @@ import {
 	pulseControlActivity,
 	startControlActivity,
 } from "../controlActivity";
-import { isDemoMode } from "../demo";
 import { pasteAndSubmit } from "../firePromptAction";
 import { fleetConsoleShowing } from "../fleetFocus";
 import {
+	type AgentControlEffect,
 	type AgentControlReply,
 	type AgentControlRequestEvent,
 	agentControl,
@@ -71,8 +71,8 @@ import {
 import { openFileFor } from "./fileOpen";
 import { keysToBytes } from "./keys";
 import { appendNotes, editNotes, readNotes, writeNotes } from "./notesOps";
+import { startPaneFactsSync } from "./paneFactsSync";
 import { cleanPromptText } from "./promptText";
-import { readBuffer } from "./readBuffer";
 import {
 	resolveTarget,
 	type TerminalNode,
@@ -273,10 +273,6 @@ function describeIn(scope: Scope, p: WorkspacePane): PaneDescription {
 	);
 }
 
-function describeAll(scope: Scope): PaneDescription[] {
-	return scope.panes.map((p) => describeIn(scope, p));
-}
-
 /** Commands that speak or act in an Agent's name (ADR-0056). */
 const AGENTS_ONLY = new Set<ControlRequest["op"]>([
 	"notify",
@@ -344,6 +340,12 @@ export async function runRequest(
 		pulseControlActivity(caller.paneId);
 		return reply;
 	}
+	// Rust answers the reads itself, but a Workspace Opened nowhere is
+	// opened here first, in the background (control_local.rs).
+	if (request.op === "workspace.open") {
+		await loadScope(caller, target, signal);
+		return { opened: true };
+	}
 	const scope = await loadScope(caller, target, signal);
 	// The graph draws the call for as long as it runs.
 	const ended = noteActivity(caller, request, scope);
@@ -385,27 +387,6 @@ async function runOp(
 			const { popup } = notifyUser(caller.paneId, name, request.message);
 			return { flagged: true, notification: popup };
 		}
-		case "resolve": {
-			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
-			return { paneId: pane.node.id };
-		}
-		case "pane.list":
-			return { panes: describeAll(scope) };
-		case "pane.current": {
-			// Always the caller's own pane, whatever --workspace says.
-			const own = scope.home ? scope : await loadScope(caller);
-			const pane = own.panes.find((p) => p.node.id === caller.paneId);
-			if (!pane) {
-				throw new ControlError("not_found", "your pane is no longer open");
-			}
-			return describeIn(own, pane);
-		}
-		case "agent.list":
-			return {
-				agents: describeAll(scope)
-					.filter((p) => p.mode === "agent")
-					.map(describeAgent),
-			};
 		case "agent.rename": {
 			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
 			return withBadge(scope, pane, async () => {
@@ -423,10 +404,6 @@ async function runOp(
 				// Read back: a cleared handle has become a default one.
 				return describeAgent(await describeNew(scope, pane.node.id));
 			});
-		}
-		case "pane.read": {
-			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
-			return withBadge(scope, pane, () => readPane(scope, pane, request));
 		}
 		case "agent.prompt": {
 			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
@@ -452,19 +429,6 @@ async function runOp(
 			return withBadge(scope, pane, () =>
 				watchPane(ptyIdOf(pane), pattern, signal),
 			);
-		}
-		case "agent.wait": {
-			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
-			return withBadge(scope, pane, async () => {
-				requireAgent(pane);
-				const outcome = await waitForPane(
-					pane.node.id,
-					ptyIdOf(pane),
-					{ until: request.until, needWorking: false },
-					signal,
-				);
-				return waitResult(scope, pane, outcome);
-			});
 		}
 		case "agent.sendKeys": {
 			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
@@ -1200,79 +1164,6 @@ async function promptAgent(
 	return { sent: true, ...waitResult(scope, pane, await waiting) };
 }
 
-function readPane(
-	scope: Scope,
-	pane: WorkspacePane,
-	request: Extract<ControlRequest, { op: "pane.read" }>,
-) {
-	const managed = mountedTerminal(pane);
-	const lines = readBuffer(managed.term.buffer.active, managed.term.rows, {
-		lines: request.lines,
-		visible: request.visible,
-	});
-	if (
-		import.meta.env.DEV &&
-		import.meta.env.MODE !== "test" &&
-		pane.node.ptyId
-	) {
-		shadowCompareRead(pane.node.ptyId, request, lines);
-	}
-	return {
-		pane: paneLabel(scope.numbers.get(pane.node.id) ?? 0),
-		lines: lines.length,
-		text: lines.join("\n"),
-	};
-}
-
-/**
- * Shadow mode (dev builds, docs/plans/remote-hosts.md phase 2): read the same
- * pane from its Rust screen too and log any difference, before Agent control
- * moves to Rust and reads only that (phase 5). Trailing spaces are ignored:
- * xterm.js keeps written ones, Rust cannot tell them from empty cells.
- */
-function shadowCompareRead(
-	ptyId: string,
-	request: Extract<ControlRequest, { op: "pane.read" }>,
-	xtermLines: string[],
-): void {
-	if (isDemoMode()) return;
-	pty
-		.readScreen(ptyId, request.visible, request.lines)
-		.then((rustLines) => {
-			const diff = compareScreenReads(xtermLines, rustLines);
-			if (diff) {
-				console.warn("[shadow] pane read differs (xterm.js vs Rust)", {
-					ptyId,
-					visible: request.visible,
-					lines: request.lines,
-					...diff,
-				});
-			}
-		})
-		.catch((e) => console.warn("[shadow] Rust screen read failed", e));
-}
-
-/** Where two reads of a pane differ, ignoring trailing spaces; `null` when
- *  they agree. Pure. */
-export function compareScreenReads(
-	xterm: string[],
-	rust: string[],
-): { firstDifferentLine: number; xterm: string[]; rust: string[] } | null {
-	const a = xterm.map((l) => l.trimEnd());
-	const b = rust.map((l) => l.trimEnd());
-	const n = Math.max(a.length, b.length);
-	for (let i = 0; i < n; i++) {
-		if (a[i] !== b[i]) {
-			return {
-				firstDifferentLine: i,
-				xterm: a.slice(Math.max(0, i - 2), i + 3),
-				rust: b.slice(Math.max(0, i - 2), i + 3),
-			};
-		}
-	}
-	return null;
-}
-
 /** Turn a handler's outcome into the reply Rust expects. */
 export function toReply(
 	outcome: PromiseSettledResult<unknown>,
@@ -1315,6 +1206,29 @@ function paneOfPty(ptyId: string): string | undefined {
 	return Object.keys(map).find((paneId) => map[paneId] === ptyId);
 }
 
+const effectEnds = new Map<string, () => void>();
+
+/** Draw (or end) what the user sees of a call Rust answers itself: the
+ *  target's Control badge and the Orchestrator graph's line. Exported for
+ *  tests. */
+export function applyControlEffect(e: AgentControlEffect): void {
+	if (e.type === "end") {
+		effectEnds.get(e.id)?.();
+		effectEnds.delete(e.id);
+		return;
+	}
+	const endBadge = useControlBadgeStore.getState().begin(e.targetPaneId, e.by);
+	const endLine = startControlActivity({
+		callerPaneId: e.callerPaneId,
+		targetPaneId: e.targetPaneId,
+		kind: e.kind,
+	});
+	effectEnds.set(e.id, () => {
+		endBadge();
+		endLine();
+	});
+}
+
 export function startAgentControl(): () => void {
 	const unlistens = [
 		agentControl.onRequest((e) => {
@@ -1323,6 +1237,8 @@ export function startAgentControl(): () => void {
 		agentControl.onCancel((id) => {
 			running.get(id)?.abort();
 		}),
+		// A call Rust answers: its badge and graph line are drawn here.
+		agentControl.onEffect(applyControlEffect),
 		// Another Window (or this one) closed a pane that may own panes and
 		// Tabs here (ADR-0055).
 		agentControl.onPaneClosed((paneId) => {
@@ -1339,9 +1255,11 @@ export function startAgentControl(): () => void {
 		if (paneId) void useWorkspaceStore.getState().ensureDefaultHandle(paneId);
 	});
 	const stopSignals = startSignalClearing();
+	const stopFacts = startPaneFactsSync();
 	return () => {
 		unsubscribe();
 		stopSignals();
+		stopFacts();
 		for (const u of unlistens) u.then((fn) => fn()).catch(() => {});
 	};
 }

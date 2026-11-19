@@ -24,12 +24,8 @@ export type ControlActivityEvent =
 	/** A call aimed at no pane (`file open`): the caller's node pulses. */
 	| { type: "pulse"; paneId: string };
 
-const READ_OPS = new Set<ControlRequest["op"]>([
-	"resolve",
-	"pane.read",
-	"pane.watch",
-	"agent.wait",
-]);
+/** The Window's own read: Rust answers the others and says their kind. */
+const READ_OPS = new Set<ControlRequest["op"]>(["pane.watch"]);
 
 /** Whether a call with `op` only looks at its target. */
 export function controlKind(op: ControlRequest["op"]): "read" | "act" {

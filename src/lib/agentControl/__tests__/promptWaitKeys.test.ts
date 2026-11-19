@@ -154,47 +154,6 @@ describe("agent prompt", () => {
 	});
 });
 
-describe("agent wait", () => {
-	it("answers at once when already Settled", async () => {
-		await expect(
-			runRequest(caller, {
-				op: "agent.wait",
-				target,
-				until: "settled",
-				timeoutMs: null,
-			}),
-		).resolves.toMatchObject({ status: "ready" });
-	});
-
-	it("stops when Rust cancels it", async () => {
-		setB("active");
-		const abort = new AbortController();
-		const p = runRequest(
-			caller,
-			{ op: "agent.wait", target, until: "settled", timeoutMs: null },
-			abort.signal,
-		);
-		const settled = expect(p).rejects.toThrow("cancelled");
-		await vi.advanceTimersByTimeAsync(300);
-		abort.abort();
-		await settled;
-	});
-
-	it("reports exited when the Agent quits", async () => {
-		setB("active");
-		const p = runRequest(caller, {
-			op: "agent.wait",
-			target,
-			until: "settled",
-			timeoutMs: null,
-		});
-		await vi.advanceTimersByTimeAsync(300);
-		setB("idle", "shell");
-		await vi.advanceTimersByTimeAsync(300);
-		await expect(p).resolves.toMatchObject({ status: "exited" });
-	});
-});
-
 describe("agent send-keys", () => {
 	// `b` is a Spawned pane of the caller's, unless a test says otherwise.
 	const ownedBy = (owner: string | undefined) =>

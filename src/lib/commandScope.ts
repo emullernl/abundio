@@ -146,6 +146,7 @@ const HOST = [
 	"orchestrator_tab_select",
 	"orchestrator_tab_set_view",
 	"orchestrator_tabs_list",
+	"pane_facts_report",
 	"pr_mark_read",
 	"pr_poller_refresh",
 	"pr_poller_set_config",

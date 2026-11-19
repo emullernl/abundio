@@ -20,6 +20,8 @@ pub mod screen;
 pub mod status_machine;
 mod layout_ops;
 pub mod layout_store;
+pub mod pane_facts;
+pub mod control_local;
 pub mod status_store;
 pub mod events;
 pub mod file_explorer;
@@ -950,6 +952,7 @@ pub fn run() {
             // scan starts once the event sink exists, below.
             let status_store = std::sync::Arc::new(status_store::StatusStore::new());
             app.manage(status_store.clone());
+            app.manage(pane_facts::PaneFactsStore::new());
             // Every Tab's layout, the authority (ADR-0063, phase 4).
             app.manage(std::sync::Arc::new(layout_store::LayoutStore::new()));
 
@@ -1532,6 +1535,7 @@ pub fn run() {
             commands::pty_set_scrollback,
             commands::status_apply,
             commands::layout_apply,
+            commands::pane_facts_report,
             commands::pty_write,
             commands::pty_resize,
             commands::pty_redraw,

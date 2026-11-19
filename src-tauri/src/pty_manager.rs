@@ -142,9 +142,11 @@ impl PtyManager {
         Ok(screen.read(visible, lines))
     }
 
-    /// Whether a PTY with this id is running.
+    /// Whether a PTY with this id is running (spawned, not exited or killed).
     pub fn is_live(&self, pty_id: &str) -> bool {
-        self.entries.contains_key(pty_id)
+        self.entries
+            .get(pty_id)
+            .is_some_and(|e| e.alive.load(Ordering::Relaxed))
     }
 
     pub fn control_tokens(&self) -> &crate::agent_control::ControlTokens {

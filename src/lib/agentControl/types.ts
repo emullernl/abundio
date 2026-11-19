@@ -10,20 +10,14 @@ export type Target =
 export type Direction = "right" | "down";
 export type Until = "settled" | "ready" | "waiting" | "error";
 
+/** The calls a Window carries out. Rust answers the reads itself
+ *  (`control_local.rs`: pane list / current / read, agent list / wait);
+ *  `workspace.open` is its ask to open a Workspace in the background first. */
 export type ControlRequest =
-	| { op: "resolve"; target: Target }
-	| { op: "pane.list" }
-	| { op: "pane.current" }
-	| {
-			op: "pane.read";
-			target: Target;
-			lines: number | null;
-			visible: boolean;
-	  }
+	| { op: "workspace.open" }
 	| { op: "pane.split"; direction: Direction | null; focus: boolean }
 	| { op: "pane.run"; target: Target; command: string }
 	| { op: "pane.close"; target: Target }
-	| { op: "agent.list" }
 	| {
 			op: "agent.start";
 			handle: string | null;
@@ -41,12 +35,6 @@ export type ControlRequest =
 			target: Target;
 			text: string;
 			wait: boolean;
-			timeoutMs: number | null;
-	  }
-	| {
-			op: "agent.wait";
-			target: Target;
-			until: Until;
 			timeoutMs: number | null;
 	  }
 	| { op: "agent.sendKeys"; target: Target; keys: string[] }

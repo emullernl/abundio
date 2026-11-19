@@ -1907,6 +1907,117 @@ fn ask_window(
     }
 }
 
+/// What the user sees of a call Rust answers, drawn by the owning Window.
+struct WindowEffects<'a> {
+    app: &'a AppHandle,
+    window_label: &'a str,
+}
+
+impl crate::control_local::Effects for WindowEffects<'_> {
+    fn begin(&self, caller_pane: &str, target_pane: &str, by: &str, kind: &str) -> String {
+        let id = uuid::Uuid::new_v4().to_string();
+        let _ = self.app.emit_to(
+            self.window_label,
+            "agent-control-effect",
+            json!({
+                "type": "begin", "id": id, "callerPaneId": caller_pane,
+                "targetPaneId": target_pane, "by": by, "kind": kind,
+            }),
+        );
+        id
+    }
+    fn end(&self, id: &str) {
+        let _ = self
+            .app
+            .emit_to(self.window_label, "agent-control-effect", json!({ "type": "end", "id": id }));
+    }
+}
+
+fn ctl_error_answer(e: crate::control_local::CtlError) -> Answer {
+    Answer {
+        status: 409,
+        body: json!({ "error": { "code": e.code, "message": e.message } }).to_string(),
+    }
+}
+
+/// The pane `target` names in the call's Workspace, read in Rust.
+fn resolve_in_rust(app: &AppHandle, caller: &Caller, scope: &Scope, target: &Target) -> Result<String, Answer> {
+    let store = app.state::<crate::workspace_store::WorkspaceStore>();
+    let ptys = app.state::<crate::pty_manager::PtyManager>();
+    let status = app.state::<std::sync::Arc<crate::status_store::StatusStore>>();
+    let facts = app.state::<crate::pane_facts::PaneFactsStore>();
+    let live = crate::control_local::AppLive { store: &store, ptys: &ptys, status: &status, facts: &facts };
+    crate::control_local::resolve(&live, caller, &scope.workspace_id, target).map_err(ctl_error_answer)
+}
+
+/// A call Rust answers itself (`control_local.rs`). A Workspace Opened
+/// nowhere is first opened by the Window, in the background, as before.
+fn handle_in_rust(app: &AppHandle, caller: &Caller, scope: &Scope, request: &Request) -> Answer {
+    if scope.open {
+        let open = json!({ "op": "workspace.open" });
+        match ask_window(app, caller, scope, &open, Some(PLAIN_REPLY_TIMEOUT)) {
+            Ok(reply) if reply.get("error").is_some() => return answer_from_reply(reply),
+            Ok(_) => {}
+            Err(answer) => return answer,
+        }
+    }
+    let (limit, wait_target) = match request {
+        Request::AgentWait { target, timeout_ms, .. } => (timeout_ms.map(Duration::from_millis), Some(target)),
+        _ => (None, None),
+    };
+    // A wait refuses a loop first, as the Window path does.
+    let Some(graph) = app.try_state::<WaitGraph>() else {
+        return error_answer(503, "unavailable", "Agent control is not ready");
+    };
+    let wait_id = uuid::Uuid::new_v4().to_string();
+    if let Some(target) = wait_target {
+        let target_pane = match resolve_in_rust(app, caller, scope, target) {
+            Ok(p) => p,
+            Err(answer) => return answer,
+        };
+        if !graph.try_add(&wait_id, &caller.pane_id, &target_pane) {
+            return error_answer(
+                409,
+                "cycle",
+                "that Agent is already waiting on you (directly or through others), so this wait would never end",
+            );
+        }
+    }
+    let Some(pending) = app.try_state::<PendingRequests>() else {
+        graph.remove(&wait_id);
+        return error_answer(503, "unavailable", "Agent control is not ready");
+    };
+    // An interrupted CLI cancels the call through its pending entry.
+    let (id, cancel) = pending.register(&scope.window_label);
+    if let Some(client) = &scope.client_id {
+        pending.track_client(client, &id, &caller.pty_id, &scope.window_label);
+    }
+    let store = app.state::<crate::workspace_store::WorkspaceStore>();
+    let ptys = app.state::<crate::pty_manager::PtyManager>();
+    let status = app.state::<std::sync::Arc<crate::status_store::StatusStore>>();
+    let facts = app.state::<crate::pane_facts::PaneFactsStore>();
+    let live = crate::control_local::AppLive { store: &store, ptys: &ptys, status: &status, facts: &facts };
+    let effects = WindowEffects { app, window_label: &scope.window_label };
+    let outcome = crate::control_local::run(&live, &effects, caller, &scope.workspace_id, request, &cancel, limit);
+    if let Some(client) = &scope.client_id {
+        pending.untrack_client(client, &caller.pty_id, &id);
+    }
+    pending.forget(&id);
+    graph.remove(&wait_id);
+    match outcome {
+        Ok(Ok(v)) => Answer { status: 200, body: v.to_string() },
+        Ok(Err(e)) => ctl_error_answer(e),
+        Err(crate::control_local::WaitStop::Cancelled) => {
+            error_answer(409, "cancelled", "the call was interrupted")
+        }
+        Err(crate::control_local::WaitStop::TimedOut) => error_answer(
+            504,
+            "timeout",
+            "no answer in time; the action may still have happened, so check before retrying",
+        ),
+    }
+}
+
 /// Carry out one parsed request for `caller`. `retry` is set when the CLI is
 /// sending the same command again after the connection dropped mid-call.
 pub fn handle(
@@ -1944,6 +2055,10 @@ pub fn handle(
         (_, r) => r,
     };
 
+    if crate::control_local::handles(&request) {
+        return handle_in_rust(app, caller, scope, &request);
+    }
+
     let wait = match &request {
         Request::AgentWait {
             target, timeout_ms, ..
@@ -1972,16 +2087,8 @@ pub fn handle(
     };
 
     // A wait: learn the target's pane, refuse a loop, then wait.
-    let resolve = json!({ "op": "resolve", "target": target });
-    let target_pane = match ask_window(app, caller, scope, &resolve, Some(PLAIN_REPLY_TIMEOUT)) {
-        Ok(reply) => match reply
-            .get("result")
-            .and_then(|r| r.get("paneId"))
-            .and_then(|p| p.as_str())
-        {
-            Some(p) => p.to_string(),
-            None => return answer_from_reply(reply),
-        },
+    let target_pane = match resolve_in_rust(app, caller, scope, &target) {
+        Ok(p) => p,
         Err(answer) => return answer,
     };
     let Some(graph) = app.try_state::<WaitGraph>() else {
