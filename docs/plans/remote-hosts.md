@@ -83,6 +83,9 @@ Back up `abundio.db` (+ `-wal`, `-shm`) before running any phase with a migratio
 
 #### 3. Status machine into Rust, shadow mode
 
+Done in three steps: **3a** the reducer ported (`status_machine.rs`, parity fixture from random event sequences); **3b** a Rust status store mirrored in shadow mode (dev builds), quiet in real use; **3c** Rust the authority with the Window predicting (`status_apply`, `status-updates`), the idle scan only in Rust. Event sources (hooks, PTY exit, title, shell integration) still start in the Window; they move into Rust with the server (phase 6), so a Host keeps status with no Window. The TypeScript reducer stays as the Window's prediction and the tests' reference.
+
+
 - Port `statusReducer.ts`, the hook inputs, title rules (`agentTitleMap.ts`) and PTY activity. Attention flags, Progress lines and the Attention count move with it.
 - **Shadow mode (dev builds):** both machines run on every input; disagreements are logged with the input sequence. Verify in the real app for each Agent, auto-launch and manual paths (not just tests).
 - Switch the frontend to read Rust's status events; delete the TS reducer.

@@ -944,8 +944,10 @@ pub fn run() {
             // Initialize PTY manager
             let pty_mgr = PtyManager::new();
             app.manage(pty_mgr);
-            // Every PTY's status in Rust (shadow mode for now, ADR-0063).
-            app.manage(status_store::StatusStore::new());
+            // Every PTY's status in Rust, the authority (ADR-0063). Its idle
+            // scan starts once the event sink exists, below.
+            let status_store = std::sync::Arc::new(status_store::StatusStore::new());
+            app.manage(status_store.clone());
 
             // Where core modules send events (docs/plans/remote-hosts.md).
             let pty_channels = std::sync::Arc::new(event_sink::PtyChannels::default());
@@ -954,6 +956,10 @@ pub fn run() {
                 app.handle(),
                 pty_channels,
             ));
+            status_store::start_ticker(
+                status_store,
+                app.state::<event_sink::Events>().inner().clone(),
+            );
 
             // Initialize file watcher; it tells the git scheduler of changes
             // through the hub.
@@ -1202,6 +1208,11 @@ pub fn run() {
                     app_handle.try_state::<std::sync::Arc<event_sink::PtyChannels>>()
                 {
                     ch.forget(&label);
+                }
+                if let Some(st) =
+                    app_handle.try_state::<std::sync::Arc<status_store::StatusStore>>()
+                {
+                    st.forget_client(&label);
                 }
                 // And its PTYs. Snapshots were saved before the window was
                 // destroyed, and the logs stay, so nothing is lost; a Profile
@@ -1515,7 +1526,7 @@ pub fn run() {
             commands::pty_output_subscribe,
             commands::pty_read_screen,
             commands::pty_set_scrollback,
-            commands::status_shadow,
+            commands::status_apply,
             commands::pty_write,
             commands::pty_resize,
             commands::pty_redraw,

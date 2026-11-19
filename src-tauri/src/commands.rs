@@ -166,20 +166,20 @@ pub async fn pty_set_scrollback(pty_mgr: State<'_, PtyManager>, lines: usize) ->
     Ok(())
 }
 
-/// Shadow mode for the Rust status store (dev builds; docs/plans/remote-hosts.md
-/// phase 3): run the frontend's status operations here too, in order, and
-/// return every place the two disagree. Synchronous, so batches never
-/// overtake each other.
+/// Run status operations from this Window in the Rust status store, the
+/// authority (ADR-0063), in order; return what the Window should show.
+/// Synchronous, so batches never overtake each other.
 #[tauri::command]
-pub fn status_shadow(
-    store: State<'_, crate::status_store::StatusStore>,
-    ops: Vec<crate::status_store::ShadowOp>,
-) -> Vec<crate::status_store::ShadowMismatch> {
-    let mismatches = store.shadow(ops);
-    for m in &mismatches {
-        log::warn!("[status shadow] {} {}: frontend {:?} rust {:?}", m.pty_id, m.op, m.frontend, m.rust);
-    }
-    mismatches
+pub fn status_apply(
+    window: Window,
+    store: State<'_, std::sync::Arc<crate::status_store::StatusStore>>,
+    ops: Vec<crate::status_store::StatusOp>,
+) -> Vec<crate::status_store::StatusUpdate> {
+    let client = crate::event_sink::ClientId::from(window.label());
+    let config = crate::status_machine::StatusConfig::default();
+    ops.into_iter()
+        .filter_map(|op| store.run_op(&client, op, &config))
+        .collect()
 }
 
 /// Ask the program in a PTY to redraw at its current size (SIGWINCH to the

@@ -10,9 +10,10 @@
 //! yet, which a later fresh entry then picks up), and runs the idle scan as a
 //! `tick` over every PTY.
 //!
-//! **Shadow mode** (dev builds): the frontend mirrors each of those operations
-//! here with its own result, and this store reports any difference. Once that
-//! stays quiet in real use, this store becomes the authority (phase 3c).
+//! Since phase 3c this store is the authority: Windows still apply each change
+//! at once (a prediction) and send it here (`status_apply`); Rust's answer
+//! wins, and the idle scan runs only here (`start_ticker`). The shadow-mode
+//! replay (`shadow`) remains as the test that the two agree.
 
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
@@ -26,6 +27,11 @@ pub struct StatusStore {
     by_pty: DashMap<String, StatusState>,
     /// Activity times for PTYs with no entry yet (`touchLastOutput` first).
     touched: DashMap<String, i64>,
+    /// The Client (Window) each PTY's status updates go to.
+    owners: DashMap<String, crate::event_sink::ClientId>,
+    /// Per-PTY update counter, so a Client never applies an older update
+    /// over a newer one (command replies and tick events can interleave).
+    seqs: DashMap<String, u64>,
 }
 
 /// What the frontend store keeps of a PTY's status: its entry plus the
@@ -146,6 +152,7 @@ impl StatusStore {
     pub fn remove(&self, pty_id: &str) {
         self.by_pty.remove(pty_id);
         self.touched.remove(pty_id);
+        self.owners.remove(pty_id);
     }
 
     pub fn view(&self, pty_id: &str) -> Option<StoreView> {
@@ -153,7 +160,227 @@ impl StatusStore {
     }
 }
 
+// ── The authority (phase 3c) ──
+//
+// The frontend sends each status operation here (`status_apply`) and shows
+// what comes back; the idle scan runs here on its own clock and sends its
+// changes as `status-updates` events to the PTY's Window.
+
+/// The part of a status the frontend's change listeners see (notifications,
+/// Turn telemetry): `StatusSnapshot` there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Snapshot {
+    pub state: DotState,
+    pub detection_mode: Mode,
+    pub hook_driven: bool,
+}
+
+impl From<&StoreView> for Snapshot {
+    fn from(v: &StoreView) -> Self {
+        Self {
+            state: v.state,
+            detection_mode: v.mode,
+            hook_driven: v.hook_driven,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Change {
+    pub prev: Snapshot,
+    pub next: Snapshot,
+    pub cause: StatusEvent,
+}
+
+/// What a Window applies for one PTY: its new view (`None`: the entry is
+/// gone) and, when the frontend would have announced one, the change.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatusUpdate {
+    pub pty_id: String,
+    pub seq: u64,
+    pub view: Option<StoreView>,
+    pub change: Option<Change>,
+}
+
+/// One status operation from a Window: the store actions of
+/// `ptyActivityStore`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum StatusOp {
+    Init { pty_id: String, mode: Option<Mode> },
+    ShellCommandRunning { pty_id: String, running: bool },
+    Apply { pty_id: String, event: StatusEvent },
+    Touch { pty_id: String, now: i64 },
+    Remove { pty_id: String },
+}
+
+/// The fields of the frontend's `PtyActivityEntry` that decide whether an
+/// event "changed" the entry (`entriesEqual` there).
+fn entry_key(v: &StoreView) -> (DotState, Option<i64>, Mode, bool, bool) {
+    (v.state, v.working_since, v.mode, v.hook_driven, v.shell_command_running)
+}
+
+impl StatusStore {
+    fn next_seq(&self, pty_id: &str) -> u64 {
+        let mut e = self.seqs.entry(pty_id.to_string()).or_insert(0);
+        *e += 1;
+        *e
+    }
+
+    fn update(&self, pty_id: &str, change: Option<Change>) -> StatusUpdate {
+        StatusUpdate {
+            pty_id: pty_id.to_string(),
+            seq: self.next_seq(pty_id),
+            view: self.view(pty_id),
+            change,
+        }
+    }
+
+    /// Run one operation from `client`; what that Window should apply.
+    /// `None` when nothing it shows changed.
+    pub fn run_op(
+        &self,
+        client: &crate::event_sink::ClientId,
+        op: StatusOp,
+        config: &StatusConfig,
+    ) -> Option<StatusUpdate> {
+        match op {
+            StatusOp::Init { pty_id, mode } => {
+                self.owners.insert(pty_id.clone(), client.clone());
+                let before = self.view(&pty_id);
+                self.init(&pty_id, mode);
+                (self.view(&pty_id) != before).then(|| self.update(&pty_id, None))
+            }
+            StatusOp::ShellCommandRunning { pty_id, running } => {
+                let before = self.view(&pty_id);
+                self.set_shell_command_running(&pty_id, running);
+                (self.view(&pty_id) != before).then(|| self.update(&pty_id, None))
+            }
+            StatusOp::Touch { pty_id, now } => {
+                // The Window keeps its own copy of the activity time; nothing
+                // to send back for the hottest operation there is.
+                self.touch(&pty_id, now);
+                None
+            }
+            StatusOp::Remove { pty_id } => {
+                let existed = self.by_pty.contains_key(&pty_id);
+                self.remove(&pty_id);
+                let update = existed.then(|| self.update(&pty_id, None));
+                self.seqs.remove(&pty_id);
+                update
+            }
+            StatusOp::Apply { pty_id, event } => {
+                self.owners
+                    .entry(pty_id.clone())
+                    .or_insert_with(|| client.clone());
+                let before = self.view(&pty_id);
+                let prev_view = before
+                    .clone()
+                    .unwrap_or_else(|| StoreView::from(&StatusState::initial(Mode::Shell)));
+                let after = self.apply(&pty_id, &event, config);
+                let changed = match &before {
+                    None => true,
+                    Some(b) => entry_key(b) != entry_key(&after),
+                };
+                let starts_turn = crate::status_machine::event_starts_turn(&event);
+                let change = (changed || starts_turn).then(|| Change {
+                    prev: Snapshot::from(&prev_view),
+                    next: Snapshot::from(&after),
+                    cause: event,
+                });
+                (before.as_ref() != Some(&after) || change.is_some())
+                    .then(|| self.update(&pty_id, change))
+            }
+        }
+    }
+
+    /// The idle scan, with what each Window should apply. A change names the
+    /// backstop it tripped (`backstopRule` in the frontend): live Subagents
+    /// before the tick mean `subagent_drain`, anything else `idle_backstop`.
+    pub fn tick_updates(
+        &self,
+        now: i64,
+        config: &StatusConfig,
+    ) -> Vec<(crate::event_sink::ClientId, StatusUpdate)> {
+        let before: Vec<(String, StoreView)> = self
+            .by_pty
+            .iter()
+            .map(|e| (e.key().clone(), StoreView::from(&*e)))
+            .collect();
+        self.tick(now, config);
+        let mut out = Vec::new();
+        for (pty_id, b) in before {
+            let Some(after) = self.view(&pty_id) else { continue };
+            if after == b {
+                continue;
+            }
+            let Some(owner) = self.owners.get(&pty_id).map(|o| o.clone()) else {
+                continue;
+            };
+            let change = (after.state != b.state).then(|| Change {
+                prev: Snapshot::from(&b),
+                next: Snapshot::from(&after),
+                cause: StatusEvent::Tick {
+                    now,
+                    rule: Some(
+                        if b.active_subagents.is_empty() {
+                            "idle_backstop"
+                        } else {
+                            "subagent_drain"
+                        }
+                        .to_string(),
+                    ),
+                },
+            });
+            out.push((owner, self.update(&pty_id, change)));
+        }
+        out
+    }
+
+    /// Every PTY a closed Window owned is forgotten with it.
+    pub fn forget_client(&self, client: &str) {
+        let ids: Vec<String> = self
+            .owners
+            .iter()
+            .filter(|e| e.value().as_str() == client)
+            .map(|e| e.key().clone())
+            .collect();
+        for id in ids {
+            self.remove(&id);
+            self.seqs.remove(&id);
+        }
+    }
+}
+
+/// How often the idle scan runs (`SCAN_INTERVAL_MS` in the frontend).
+pub const SCAN_INTERVAL_MS: u64 = 2000;
+
+/// Run the idle scan on its own thread for the life of the app, sending each
+/// Window the updates for its PTYs as one `status-updates` event.
+pub fn start_ticker(store: std::sync::Arc<StatusStore>, events: crate::event_sink::Events) {
+    use crate::event_sink::EventsExt;
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_millis(SCAN_INTERVAL_MS));
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let mut by_client: std::collections::HashMap<crate::event_sink::ClientId, Vec<StatusUpdate>> =
+            std::collections::HashMap::new();
+        for (client, update) in store.tick_updates(now, &StatusConfig::default()) {
+            by_client.entry(client).or_default().push(update);
+        }
+        for (client, updates) in by_client {
+            events.to_client(&client, "status-updates", updates);
+        }
+    });
+}
+
 /// One mirrored operation in shadow mode, with the frontend's result.
+#[cfg(test)]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum ShadowOp {
@@ -189,6 +416,7 @@ pub enum ShadowOp {
 }
 
 /// A difference shadow mode found.
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShadowMismatch {
@@ -198,6 +426,7 @@ pub struct ShadowMismatch {
     pub rust: Option<StoreView>,
 }
 
+#[cfg(test)]
 impl StatusStore {
     /// Run mirrored operations in order; return every difference.
     pub fn shadow(&self, ops: Vec<ShadowOp>) -> Vec<ShadowMismatch> {
@@ -341,7 +570,7 @@ mod tests {
         let doc: serde_json::Value = serde_json::from_str(raw).unwrap();
         let mut ops_seen = 0;
         for (i, run) in doc["runs"].as_array().unwrap().iter().enumerate() {
-            let ops: Vec<ShadowOp> = serde_json::from_value(run.clone())
+            let ops: Vec<ShadowOp> = serde_json::from_value(run["ops"].clone())
                 .unwrap_or_else(|e| panic!("run {i}: {e}"));
             ops_seen += ops.len();
             let store = StatusStore::new();
@@ -349,6 +578,78 @@ mod tests {
             assert!(mismatches.is_empty(), "run {i}: {:#?}", &mismatches[..mismatches.len().min(3)]);
         }
         assert!(ops_seen > 1000, "only {ops_seen} ops");
+    }
+
+    /// The same recording through the authority API the Windows use: every
+    /// view must match, and the changes announced (which drive notifications
+    /// and Turn telemetry) must be the frontend's, in order, cause included.
+    #[test]
+    fn as_the_authority_matches_the_frontend_store() {
+        use crate::event_sink::ClientId;
+        let raw = include_str!("../../src/lib/__tests__/fixtures/statusShadowStore.json");
+        let doc: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let client = ClientId::from("window-1");
+        let config = StatusConfig::default();
+        let mut changes_checked = 0;
+        for (i, run) in doc["runs"].as_array().unwrap().iter().enumerate() {
+            let ops: Vec<ShadowOp> = serde_json::from_value(run["ops"].clone()).unwrap();
+            let store = StatusStore::new();
+            let mut got: Vec<serde_json::Value> = Vec::new();
+            let mut push = |u: &StatusUpdate| {
+                if let Some(c) = &u.change {
+                    got.push(serde_json::json!({
+                        "ptyId": u.pty_id,
+                        "prev": c.prev,
+                        "next": c.next,
+                        "cause": c.cause,
+                    }));
+                }
+            };
+            for (j, op) in ops.into_iter().enumerate() {
+                let (pty, expected) = match op {
+                    ShadowOp::Init { pty_id, mode, expected } => {
+                        if let Some(u) = store.run_op(&client, StatusOp::Init { pty_id: pty_id.clone(), mode }, &config) { push(&u) }
+                        (Some(pty_id), expected)
+                    }
+                    ShadowOp::ShellCommandRunning { pty_id, running, expected } => {
+                        if let Some(u) = store.run_op(&client, StatusOp::ShellCommandRunning { pty_id: pty_id.clone(), running }, &config) { push(&u) }
+                        (Some(pty_id), expected)
+                    }
+                    ShadowOp::Apply { pty_id, event, expected, .. } => {
+                        if let Some(u) = store.run_op(&client, StatusOp::Apply { pty_id: pty_id.clone(), event }, &config) { push(&u) }
+                        (Some(pty_id), expected)
+                    }
+                    ShadowOp::Touch { pty_id, now, expected } => {
+                        store.run_op(&client, StatusOp::Touch { pty_id: pty_id.clone(), now }, &config);
+                        (Some(pty_id), expected)
+                    }
+                    ShadowOp::Remove { pty_id } => {
+                        store.run_op(&client, StatusOp::Remove { pty_id }, &config);
+                        (None, None)
+                    }
+                    ShadowOp::Tick { now, expected } => {
+                        for (owner, u) in store.tick_updates(now, &config) {
+                            assert_eq!(owner, client);
+                            push(&u);
+                        }
+                        for (id, v) in expected {
+                            assert_eq!(store.view(&id), Some(v), "run {i} op {j} tick {id}");
+                        }
+                        (None, None)
+                    }
+                };
+                if let Some(p) = pty {
+                    assert_eq!(store.view(&p), expected, "run {i} op {j}");
+                }
+            }
+            let want = run["changes"].as_array().unwrap();
+            assert_eq!(got.len(), want.len(), "run {i}: {} changes, frontend {}", got.len(), want.len());
+            for (k, (g, w)) in got.iter().zip(want).enumerate() {
+                assert_eq!(g, w, "run {i} change {k}");
+            }
+            changes_checked += want.len();
+        }
+        assert!(changes_checked > 300, "only {changes_checked} changes");
     }
 
     #[test]

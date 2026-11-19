@@ -171,7 +171,7 @@ const HOST = [
 	"pty_spawn",
 	"pty_write",
 	"pty_write_snapshot",
-	"status_shadow",
+	"status_apply",
 	"tab_create",
 	"tab_delete",
 	"tab_list",

@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import fixture from "../../lib/__tests__/fixtures/statusShadowStore.json";
-import type { ShadowOp } from "../../lib/statusShadow";
+import type { StatusView } from "../../lib/statusSync";
+
+/** An op as `status_store.rs`'s replay reads it: what was sent, plus the
+ *  store's view right after (`expected`). */
+type ShadowOp = Record<string, unknown> & { op: string };
 
 /**
  * The real `ptyActivityStore`, driven through seeded random sequences of its
@@ -49,18 +53,63 @@ function pick<T>(rand: () => number, items: readonly T[]): T {
 	return items[Math.floor(rand() * items.length)];
 }
 
-async function record(): Promise<ShadowOp[][]> {
+interface RecordedChange {
+	ptyId: string;
+	prev: { state: string; detectionMode: string; hookDriven: boolean };
+	next: { state: string; detectionMode: string; hookDriven: boolean };
+	cause: unknown;
+}
+
+interface RecordedRun {
+	ops: ShadowOp[];
+	changes: RecordedChange[];
+}
+
+/** The store's legacy "active" is the reducer's (and Rust's) "working". */
+function canonical(snap: {
+	state: string;
+	detectionMode: string;
+	hookDriven: boolean;
+}) {
+	return { ...snap, state: snap.state === "active" ? "working" : snap.state };
+}
+
+async function record(): Promise<RecordedRun[]> {
 	vi.useFakeTimers();
 	vi.setSystemTime(1_000_000);
 	vi.resetModules();
-	const shadow = await import("../../lib/statusShadow");
+	const sync = await import("../../lib/statusSync");
 	const store = await import("../ptyActivityStore");
 	const s = () => store.usePtyActivityStore.getState();
-	const runs: ShadowOp[][] = [];
+	const runs: RecordedRun[] = [];
 	for (let r = 0; r < RUNS; r++) {
 		const rand = prng(7000 + r);
 		const ops: ShadowOp[] = [];
-		shadow.__captureShadowForTests((op) => ops.push(op));
+		const changes: RecordedChange[] = [];
+		sync.__captureStatusOpsForTests((op) => {
+			if (op.op === "tick") {
+				const expected: Record<string, StatusView> = {};
+				for (const id of Object.keys(s().activities)) {
+					const v = store.__statusViewForTests(id);
+					if (v) expected[id] = v;
+				}
+				ops.push({ op: "tick", now: op.now, expected });
+			} else if (op.op === "remove") {
+				ops.push({ ...op });
+			} else {
+				ops.push({ ...op, expected: store.__statusViewForTests(op.ptyId) });
+			}
+		});
+		const unsubscribe = store.subscribeStatusChange((c) =>
+			changes.push(
+				structuredClone({
+					ptyId: c.ptyId,
+					prev: canonical(c.prev),
+					next: canonical(c.next),
+					cause: c.cause,
+				}),
+			),
+		);
 		const ptys = [`r${r}-a`, `r${r}-b`];
 		for (let i = 0; i < STEPS; i++) {
 			const p = pick(rand, ptys);
@@ -173,9 +222,10 @@ async function record(): Promise<ShadowOp[][]> {
 			vi.advanceTimersByTime(pick(rand, [0, 10, 300]));
 		}
 		for (const p of ptys) s().removePty(p);
-		runs.push(ops);
+		unsubscribe();
+		runs.push({ ops, changes });
 	}
-	shadow.__captureShadowForTests(null);
+	sync.__captureStatusOpsForTests(null);
 	vi.useRealTimers();
 	return runs;
 }
@@ -183,7 +233,7 @@ async function record(): Promise<ShadowOp[][]> {
 describe("status store shadow recording", () => {
 	it("matches what the store does now", async () => {
 		const runs = await record();
-		expect(runs.flat().some((op) => op.op === "tick")).toBe(true);
+		expect(runs.some((r) => r.ops.some((op) => op.op === "tick"))).toBe(true);
 		const proc = (
 			globalThis as {
 				process?: { env?: Record<string, string>; cwd(): string };
@@ -199,6 +249,6 @@ describe("status store shadow recording", () => {
 			);
 			return;
 		}
-		expect(runs).toEqual((fixture as { runs: ShadowOp[][] }).runs);
+		expect(runs).toEqual((fixture as { runs: RecordedRun[] }).runs);
 	});
 });

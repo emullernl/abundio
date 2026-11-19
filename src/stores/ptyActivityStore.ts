@@ -11,7 +11,15 @@ import {
 	type StatusTransition,
 	statusReducer,
 } from "../lib/statusReducer";
-import { type StatusView, shadowStatus } from "../lib/statusShadow";
+import {
+	hasPendingStatusOps,
+	isRustStatusAuthority,
+	onStatusUpdate,
+	recordScanTickForTests,
+	type StatusUpdate,
+	type StatusView,
+	sendStatusOp,
+} from "../lib/statusSync";
 import type {
 	PaneNode,
 	PtyActivityState,
@@ -87,7 +95,7 @@ export function getLastOutputAt(ptyId: string): number | null {
 export function touchLastOutput(ptyId: string, now?: number): void {
 	const at = now ?? Date.now();
 	lastOutputTimestamps.set(ptyId, at);
-	shadowStatus({ op: "touch", ptyId, now: at, expected: statusView(ptyId) });
+	sendStatusOp({ op: "touch", ptyId, now: at });
 }
 
 // ── Types ──
@@ -217,7 +225,7 @@ function hydrate(
 }
 
 /** This PTY's status as the store keeps it, for shadow mode
- *  (`lib/statusShadow.ts`); `null` when it has no entry. */
+ *  and Rust (`lib/statusSync.ts`); `null` when it has no entry. */
 function statusView(ptyId: string): StatusView | null {
 	const entry = usePtyActivityStore.getState().activities[ptyId];
 	if (!entry) return null;
@@ -393,13 +401,7 @@ function applyStatusEvent(
 				: {}),
 		}));
 	}
-	shadowStatus({
-		op: "apply",
-		ptyId,
-		event,
-		threshold: null,
-		expected: statusView(ptyId),
-	});
+	sendStatusOp({ op: "apply", ptyId, event });
 	if (changed || isTurnStart) {
 		const prevSnap = snap(prevEntry ?? project(before, undefined));
 		emitStatusChange({
@@ -481,22 +483,12 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 
 		initPty: (ptyId, mode) => {
 			initPtyNow(ptyId, mode);
-			shadowStatus({
-				op: "init",
-				ptyId,
-				mode: mode ?? null,
-				expected: statusView(ptyId),
-			});
+			sendStatusOp({ op: "init", ptyId, mode: mode ?? null });
 		},
 
 		setShellCommandRunning: (ptyId, running) => {
 			setShellCommandRunningNow(ptyId, running);
-			shadowStatus({
-				op: "shellCommandRunning",
-				ptyId,
-				running,
-				expected: statusView(ptyId),
-			});
+			sendStatusOp({ op: "shellCommandRunning", ptyId, running });
 		},
 
 		recordOutput: (ptyId) => {
@@ -702,7 +694,7 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 		},
 
 		removePty: (ptyId) => {
-			shadowStatus({ op: "remove", ptyId });
+			sendStatusOp({ op: "remove", ptyId });
 			lastOutputTimestamps.delete(ptyId);
 			subagentState.delete(ptyId);
 			preErrorStates.delete(ptyId);
@@ -758,7 +750,12 @@ function getPtyToPaneMap(
 	return _cachedPtyToPaneMap;
 }
 
-setInterval(() => {
+// Where Rust is the authority, the idle scan runs there and its changes
+// arrive through `applyRustUpdate` below. Tests and the browser demo have no
+// Rust, so the store scans for itself.
+if (!isRustStatusAuthority()) setInterval(scanForIdle, SCAN_INTERVAL_MS);
+
+function scanForIdle(): void {
 	const { activities } = usePtyActivityStore.getState();
 	const now = Date.now();
 	const updates: Record<string, PtyActivityEntry> = {};
@@ -797,18 +794,123 @@ setInterval(() => {
 		}));
 		for (const c of changes) emitStatusChange(c);
 	}
-	shadowTick(now);
-}, SCAN_INTERVAL_MS);
-
-/** Mirror the scanner's tick to Rust with every PTY's resulting view. */
-function shadowTick(now: number): void {
-	const expected: Record<string, StatusView> = {};
-	for (const ptyId of Object.keys(usePtyActivityStore.getState().activities)) {
-		const view = statusView(ptyId);
-		if (view) expected[ptyId] = view;
-	}
-	shadowStatus({ op: "tick", now, expected });
+	recordScanTickForTests(now);
 }
+
+// ── Rust's answers (phase 3c) ──
+
+/** Newest Rust update applied per pane, so an older one never wins. */
+const appliedSeq = new Map<string, number>();
+/** A scan change Rust sent while the pane still had changes in flight: the
+ *  answer to those will carry its effect, and this names its cause. */
+const deferredScanCause = new Map<string, StatusEvent>();
+
+function viewToEntry(
+	v: StatusView,
+	prev: PtyActivityEntry | undefined,
+): PtyActivityEntry {
+	return {
+		state: LEGACY_STATE[v.state],
+		lastOutputAt: v.workingSince,
+		hasEverReceivedOutput: prev?.hasEverReceivedOutput ?? true,
+		detectionMode: v.mode,
+		hookDriven: v.hookDriven,
+		shellCommandRunning: v.shellCommandRunning,
+	};
+}
+
+function viewsEqual(a: StatusView | null, b: StatusView | null): boolean {
+	return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** Take Rust's view of a pane: the entry and the hot maps. */
+function writeView(ptyId: string, v: StatusView): void {
+	if (v.lastActivityAt !== null)
+		lastOutputTimestamps.set(ptyId, v.lastActivityAt);
+	if (v.activeSubagents.length > 0 || v.stopHeldForSubagents) {
+		subagentState.set(ptyId, {
+			subagents: v.activeSubagents,
+			stopHeld: v.stopHeldForSubagents,
+		});
+	} else {
+		subagentState.delete(ptyId);
+	}
+	if (v.preErrorState !== null) preErrorStates.set(ptyId, v.preErrorState);
+	else preErrorStates.delete(ptyId);
+	if (v.titleHeld) titleHeldPtys.add(ptyId);
+	else titleHeldPtys.delete(ptyId);
+	usePtyActivityStore.setState((s) => ({
+		activities: {
+			...s.activities,
+			[ptyId]: viewToEntry(v, s.activities[ptyId]),
+		},
+	}));
+}
+
+/**
+ * Apply one update from Rust. The Window already applied its own changes,
+ * so an answer to them is only compared, and only once the pane has nothing
+ * else in flight; a difference means the prediction was wrong, and Rust's
+ * view is taken and announced. A change from Rust's idle scan is the
+ * Window's only source of those transitions and is always taken.
+ * Exported for tests.
+ */
+export function applyRustUpdate(u: StatusUpdate, fromScan: boolean): void {
+	const last = appliedSeq.get(u.ptyId) ?? 0;
+	if (u.seq <= last) return;
+	appliedSeq.set(u.ptyId, u.seq);
+	if (hasPendingStatusOps(u.ptyId)) {
+		if (fromScan && u.change) deferredScanCause.set(u.ptyId, u.change.cause);
+		return;
+	}
+	const local = statusView(u.ptyId);
+	if (viewsEqual(local, u.view)) {
+		deferredScanCause.delete(u.ptyId);
+		return;
+	}
+	const prevEntry = usePtyActivityStore.getState().activities[u.ptyId];
+	if (u.view === null) {
+		// Rust has no entry: the pane was removed there.
+		if (!prevEntry) return;
+		console.warn(
+			"[status] Rust has no status for a pane the Window keeps",
+			u.ptyId,
+		);
+		return;
+	}
+	const cause = u.change?.cause ?? deferredScanCause.get(u.ptyId) ?? null;
+	deferredScanCause.delete(u.ptyId);
+	if (!fromScan && cause?.kind !== "tick") {
+		console.warn("[status] Rust corrected the Window's status", {
+			ptyId: u.ptyId,
+			window: local,
+			rust: u.view,
+		});
+	}
+	writeView(u.ptyId, u.view);
+	const nextEntry = usePtyActivityStore.getState().activities[u.ptyId];
+	if (!prevEntry || !nextEntry) return;
+	const prevSnap = snap(prevEntry);
+	const nextSnap = snap(nextEntry);
+	if (
+		prevSnap.state === nextSnap.state &&
+		prevSnap.detectionMode === nextSnap.detectionMode &&
+		prevSnap.hookDriven === nextSnap.hookDriven
+	) {
+		return;
+	}
+	emitStatusChange({
+		ptyId: u.ptyId,
+		prev: prevSnap,
+		next: nextSnap,
+		cause: cause ?? { kind: "focus" },
+	});
+}
+
+onStatusUpdate(applyRustUpdate);
+
+/** Test-only: a pane's status as the store keeps it. */
+export const __statusViewForTests = statusView;
 
 // ── Notifications for state transitions ──
 //

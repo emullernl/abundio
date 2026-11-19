@@ -1,0 +1,167 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { StatusUpdate, StatusView } from "../../lib/statusSync";
+
+const pending = vi.hoisted(() => ({ ids: new Set<string>() }));
+
+vi.mock("../../lib/statusSync", async (importOriginal) => {
+	const real = await importOriginal<typeof import("../../lib/statusSync")>();
+	return {
+		...real,
+		hasPendingStatusOps: (id: string) => pending.ids.has(id),
+	};
+});
+vi.mock("@tauri-apps/plugin-notification", () => ({
+	sendNotification: vi.fn(),
+	onAction: vi.fn(),
+}));
+vi.mock("../../lib/notificationRouter", () => ({
+	findPaneLocation: vi.fn(() => null),
+	isPaneVisible: vi.fn(() => false),
+}));
+vi.mock("../../lib/windowFocus", () => ({
+	isAppWindowFocused: () => true,
+	getWindowBlurredMs: () => null,
+	addWindowFocusListener: () => () => {},
+	NOTIFICATION_BLUR_THRESHOLD_MS: 3000,
+}));
+
+import {
+	__statusViewForTests,
+	applyRustUpdate,
+	type StatusChange,
+	subscribeStatusChange,
+	usePtyActivityStore,
+} from "../ptyActivityStore";
+
+let seq = 0;
+function update(
+	ptyId: string,
+	view: StatusView | null,
+	change: StatusUpdate["change"] = null,
+): StatusUpdate {
+	seq += 1;
+	return { ptyId, seq, view, change };
+}
+
+function workingAgent(now: number): void {
+	const s = usePtyActivityStore.getState();
+	s.initPty("p", "agent");
+	s.applyHookEvent("p", "active", true);
+	void now;
+}
+
+describe("applying Rust's status updates", () => {
+	let changes: StatusChange[];
+	let unsubscribe: () => void;
+
+	beforeEach(() => {
+		usePtyActivityStore.getState().removePty("p");
+		pending.ids.clear();
+		changes = [];
+		unsubscribe?.();
+		unsubscribe = subscribeStatusChange((c) => changes.push(c));
+	});
+
+	it("does nothing when Rust agrees with the prediction", () => {
+		workingAgent(1);
+		changes = [];
+		const view = __statusViewForTests("p");
+		applyRustUpdate(update("p", view), false);
+		expect(changes).toEqual([]);
+		expect(__statusViewForTests("p")).toEqual(view);
+	});
+
+	it("takes and announces a change from Rust's idle scan", () => {
+		workingAgent(1);
+		changes = [];
+		const view = __statusViewForTests("p");
+		if (!view) throw new Error("no view");
+		const ready: StatusView = { ...view, state: "ready" };
+		applyRustUpdate(
+			update("p", ready, {
+				prev: { state: "working", detectionMode: "agent", hookDriven: true },
+				next: { state: "ready", detectionMode: "agent", hookDriven: true },
+				cause: { kind: "tick", now: 99, rule: "idle_backstop" },
+			}),
+			true,
+		);
+		expect(usePtyActivityStore.getState().activities.p.state).toBe("ready");
+		expect(changes).toHaveLength(1);
+		expect(changes[0].prev.state).toBe("active");
+		expect(changes[0].next.state).toBe("ready");
+		expect(changes[0].cause).toEqual({
+			kind: "tick",
+			now: 99,
+			rule: "idle_backstop",
+		});
+	});
+
+	it("corrects a wrong prediction and says so", () => {
+		workingAgent(1);
+		changes = [];
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const view = __statusViewForTests("p");
+		if (!view) throw new Error("no view");
+		applyRustUpdate(
+			update(
+				"p",
+				{ ...view, state: "waiting" },
+				{
+					prev: { state: "idle", detectionMode: "agent", hookDriven: false },
+					next: { state: "waiting", detectionMode: "agent", hookDriven: true },
+					cause: { kind: "hook", transition: "waiting", now: 5 },
+				},
+			),
+			false,
+		);
+		expect(usePtyActivityStore.getState().activities.p.state).toBe("waiting");
+		expect(changes.map((c) => c.next.state)).toEqual(["waiting"]);
+		expect(warn).toHaveBeenCalledWith(
+			"[status] Rust corrected the Window's status",
+			expect.anything(),
+		);
+		warn.mockRestore();
+	});
+
+	it("never applies an older update over a newer one", () => {
+		workingAgent(1);
+		const view = __statusViewForTests("p");
+		if (!view) throw new Error("no view");
+		const newer = update("p", view);
+		const older = { ...update("p", { ...view, state: "error" }), seq: 1 };
+		applyRustUpdate(newer, false);
+		applyRustUpdate(older, true);
+		expect(usePtyActivityStore.getState().activities.p.state).toBe("active");
+	});
+
+	it("waits while the pane has changes in flight, then applies with the scan's cause", () => {
+		workingAgent(1);
+		changes = [];
+		const view = __statusViewForTests("p");
+		if (!view) throw new Error("no view");
+		pending.ids.add("p");
+		applyRustUpdate(
+			update(
+				"p",
+				{ ...view, state: "ready" },
+				{
+					prev: { state: "working", detectionMode: "agent", hookDriven: true },
+					next: { state: "ready", detectionMode: "agent", hookDriven: true },
+					cause: { kind: "tick", now: 50, rule: "idle_backstop" },
+				},
+			),
+			true,
+		);
+		expect(usePtyActivityStore.getState().activities.p.state).toBe("active");
+		pending.ids.clear();
+		// The answer to the in-flight change carries the scan's effect.
+		applyRustUpdate(update("p", { ...view, state: "ready" }), false);
+		expect(usePtyActivityStore.getState().activities.p.state).toBe("ready");
+		expect(changes).toHaveLength(1);
+		expect(changes[0].cause).toEqual({
+			kind: "tick",
+			now: 50,
+			rule: "idle_backstop",
+		});
+	});
+});

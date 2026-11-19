@@ -9,6 +9,7 @@ import { decodeBase64 } from "./base64";
 import { isDemoMode } from "./demo";
 import { mockInvoke } from "./demo/mockInvoke";
 import { mockListen } from "./demo/mockListen";
+import type { StatusOp, StatusUpdate } from "./statusSync";
 import type {
 	AgentHookEvent,
 	AppMetrics,
@@ -189,13 +190,9 @@ const ptyOutputHub = (() => {
 	};
 })();
 
-/** Shadow mode for the Rust status store (dev builds; `lib/statusShadow.ts`). */
-export const statusShadowApi = {
-	run: (ops: unknown[]) =>
-		invoke<{ ptyId: string; op: string; frontend: unknown; rust: unknown }[]>(
-			"status_shadow",
-			{ ops },
-		),
+/** The Rust status store, the authority for pane status (`lib/statusSync.ts`). */
+export const statusApi = {
+	apply: (ops: StatusOp[]) => invoke<StatusUpdate[]>("status_apply", { ops }),
 };
 
 export const pty = {
