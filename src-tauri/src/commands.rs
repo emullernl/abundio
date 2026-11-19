@@ -544,13 +544,60 @@ pub async fn workspace_reorder(
 
 // ── Tab commands ──
 
+/// A Workspace's Tabs, as sent to the Profile's other Windows when one is
+/// created, closed, renamed or moved (`tabs-changed`, ADR-0063).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TabsChanged {
+    workspace_id: String,
+    tabs: Vec<Tab>,
+}
+
+/// Tell every other Window of `profile_id` the Workspace's Tabs now.
+fn send_tabs_changed(
+    store: &WorkspaceStore,
+    profiles: &crate::profile_store::ActiveProfileState,
+    events: &crate::event_sink::Events,
+    origin: &Window,
+    workspace_id: &str,
+    profile_id: &str,
+) {
+    use crate::event_sink::EventsExt;
+    let targets = crate::layout_store::broadcast_targets(
+        &profiles.snapshot(),
+        profile_id,
+        &crate::event_sink::ClientId::from(origin.label()),
+    );
+    if targets.is_empty() {
+        return;
+    }
+    let tabs = match store.list_tabs(workspace_id) {
+        Ok(tabs) => tabs,
+        Err(e) => {
+            log::warn!("[tabs] cannot list {workspace_id}'s Tabs to send: {e}");
+            return;
+        }
+    };
+    let payload = TabsChanged { workspace_id: workspace_id.to_string(), tabs };
+    for client in targets {
+        events.to_client(&client, "tabs-changed", &payload);
+    }
+}
+
 #[tauri::command]
 pub async fn tab_create(
+    window: Window,
     store: State<'_, WorkspaceStore>,
+    profiles: State<'_, crate::profile_store::ActiveProfileState>,
+    events: State<'_, crate::event_sink::Events>,
     workspace_id: String,
     name: String,
 ) -> Result<Tab, AbundioError> {
-    store.create_tab(&workspace_id, &name)
+    let tab = store.create_tab(&workspace_id, &name)?;
+    if let Some(profile_id) = store.profile_of(&workspace_id)? {
+        send_tabs_changed(&store, &profiles, &events, &window, &workspace_id, &profile_id);
+    }
+    Ok(tab)
 }
 
 #[tauri::command]
@@ -562,9 +609,13 @@ pub async fn tab_list(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn tab_update(
+    window: Window,
     store: State<'_, WorkspaceStore>,
     layouts: State<'_, std::sync::Arc<crate::layout_store::LayoutStore>>,
+    profiles: State<'_, crate::profile_store::ActiveProfileState>,
+    events: State<'_, crate::event_sink::Events>,
     id: String,
     updates: TabUpdate,
 ) -> Result<(), AbundioError> {
@@ -572,17 +623,32 @@ pub async fn tab_update(
     if updates.layout_json.is_some() {
         layouts.forget(&id);
     }
-    store.update_tab(&id, updates)
+    let tab_level = updates.name.is_some() || updates.position.is_some();
+    store.update_tab(&id, updates)?;
+    if tab_level {
+        if let Some((workspace_id, profile_id)) = store.tab_owner(&id)? {
+            send_tabs_changed(&store, &profiles, &events, &window, &workspace_id, &profile_id);
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn tab_delete(
+    window: Window,
     store: State<'_, WorkspaceStore>,
     layouts: State<'_, std::sync::Arc<crate::layout_store::LayoutStore>>,
+    profiles: State<'_, crate::profile_store::ActiveProfileState>,
+    events: State<'_, crate::event_sink::Events>,
     id: String,
 ) -> Result<(), AbundioError> {
     layouts.forget(&id);
-    store.delete_tab(&id)
+    let owner = store.tab_owner(&id)?;
+    store.delete_tab(&id)?;
+    if let Some((workspace_id, profile_id)) = owner {
+        send_tabs_changed(&store, &profiles, &events, &window, &workspace_id, &profile_id);
+    }
+    Ok(())
 }
 
 /// Apply a Window's edits to a Tab's layout: Rust is the authority

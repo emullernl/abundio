@@ -275,6 +275,16 @@ mod tests {
     }
 
     #[test]
+    fn names_a_tabs_workspace_and_profile_until_it_is_deleted() {
+        let (db, tab) = db();
+        let (ws, profile) = db.tab_owner(&tab).unwrap().unwrap();
+        assert_eq!(profile, PID);
+        assert_eq!(db.list_tabs(&ws).unwrap()[0].id, tab);
+        db.delete_tab(&tab).unwrap();
+        assert!(db.tab_owner(&tab).unwrap().is_none());
+    }
+
+    #[test]
     fn tells_every_other_window_of_the_profile() {
         let windows: HashMap<String, String> = [
             ("window-a", PID),

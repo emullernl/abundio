@@ -18,6 +18,8 @@ import {
 	forgetLayout,
 	isRustLayoutAuthority,
 	onLayoutFromRust,
+	onTabsFromRust,
+	type TabsChanged,
 } from "../lib/layoutSync";
 import { isOrchestratorPane } from "../lib/orchestrator";
 import {
@@ -523,6 +525,59 @@ export function findMutatedTabLayout(
 		}
 	}
 	return null;
+}
+
+/**
+ * Another Window's Tab change applied to this Window's state: the
+ * Workspace's Tabs in their new order and names. Layouts this Window already
+ * has are kept (they follow `layout-changed`); a Tab it has not seen comes
+ * with its layout. A Tab that is gone stops being the active one. Returns
+ * null when the Workspace is not in this Window. Exported for tests.
+ */
+export function mergeRemoteTabs(
+	state: Pick<
+		WorkspaceState,
+		| "workspaces"
+		| "activeTabByWorkspace"
+		| "activeWorkspaceId"
+		| "focusedPaneId"
+		| "focusedPaneByTab"
+	>,
+	change: TabsChanged,
+):
+	| (Pick<
+			WorkspaceState,
+			"workspaces" | "activeTabByWorkspace" | "focusedPaneId"
+	  > & { removedTabIds: string[] })
+	| null {
+	const ws = state.workspaces.find((w) => w.id === change.workspaceId);
+	if (!ws || change.tabs.length === 0) return null;
+	const mine = new Map(ws.tabs.map((t) => [t.id, t]));
+	const tabs = change.tabs.map((t) => {
+		const have = mine.get(t.id);
+		return have ? { ...t, layoutJson: have.layoutJson } : t;
+	});
+	const kept = new Set(tabs.map((t) => t.id));
+	const removedTabIds = ws.tabs.map((t) => t.id).filter((id) => !kept.has(id));
+	const workspaces = state.workspaces.map((w) =>
+		w.id === ws.id ? { ...w, tabs } : w,
+	);
+	let activeTabByWorkspace = state.activeTabByWorkspace;
+	let focusedPaneId = state.focusedPaneId;
+	const active = state.activeTabByWorkspace[ws.id];
+	if (active && !kept.has(active)) {
+		const next = tabs[0].id;
+		activeTabByWorkspace = { ...activeTabByWorkspace, [ws.id]: next };
+		if (state.activeWorkspaceId === ws.id) {
+			focusedPaneId = restoreTabFocus(
+				workspaces,
+				ws.id,
+				next,
+				state.focusedPaneByTab,
+			);
+		}
+	}
+	return { workspaces, activeTabByWorkspace, focusedPaneId, removedTabIds };
 }
 
 interface PersistedFileTab {
@@ -1747,4 +1802,13 @@ onLayoutFromRust((tabId, layoutJson) => {
 	useWorkspaceStore.setState((state) => ({
 		workspaces: updateTabInWorkspaces(state.workspaces, tabId, layoutJson),
 	}));
+});
+
+// Another Window of this Profile created, closed, renamed or moved a Tab.
+onTabsFromRust((change) => {
+	const merged = mergeRemoteTabs(useWorkspaceStore.getState(), change);
+	if (!merged) return;
+	const { removedTabIds, ...next } = merged;
+	for (const id of removedTabIds) forgetLayout(id);
+	useWorkspaceStore.setState(next);
 });

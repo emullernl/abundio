@@ -1,6 +1,7 @@
 import { isDemoMode } from "./demo";
 import { diffLayout, type LayoutOp, sameLayout } from "./layoutOps";
 import { parseTabLayout } from "./paneTree";
+import type { Tab } from "./types";
 
 /**
  * The Window's link to the Rust layout store, the authority for every Tab's
@@ -165,4 +166,23 @@ async function flush(): Promise<void> {
 	} finally {
 		flushing = false;
 	}
+}
+
+/** A Workspace's Tabs after another Window created, closed, renamed or
+ *  moved one (`tabs-changed`). */
+export interface TabsChanged {
+	workspaceId: string;
+	tabs: Tab[];
+}
+
+/** The store registers how to take another Window's Tab changes. */
+export function onTabsFromRust(fn: (change: TabsChanged) => void): void {
+	if (!isRustLayoutAuthority()) return;
+	ipc()
+		.then(({ listenToThisWindow }) =>
+			listenToThisWindow<TabsChanged>("tabs-changed", (event) =>
+				fn(event.payload),
+			),
+		)
+		.catch((e) => console.warn("[layout] cannot hear other Windows' Tabs", e));
 }

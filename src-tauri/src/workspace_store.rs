@@ -1069,6 +1069,19 @@ impl WorkspaceStore {
         .map_err(AbundioError::Db)
     }
 
+    /// The Workspace a Tab belongs to and that Workspace's Profile.
+    pub fn tab_owner(&self, tab_id: &str) -> Result<Option<(String, String)>, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT w.id, w.profile_id FROM tabs t JOIN workspaces w ON w.id = t.workspace_id
+              WHERE t.id = ?1",
+            [tab_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(AbundioError::Db)
+    }
+
     /// Store a Tab's layout. `false` when the Tab is gone.
     pub fn set_tab_layout(&self, tab_id: &str, layout_json: &str) -> Result<bool, AbundioError> {
         let conn = self.conn.lock().unwrap();
