@@ -123,6 +123,60 @@ describe("applying Rust's status updates", () => {
 		warn.mockRestore();
 	});
 
+	it("takes quietly an answer that overtook a change Rust made itself", () => {
+		workingAgent(1);
+		changes = [];
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const view = __statusViewForTests("p");
+		if (!view) throw new Error("no view");
+		const title = {
+			kind: "title" as const,
+			status: "none" as const,
+			now: 5,
+			startsTurn: false,
+		};
+		// Rust's own title change is seq N; the answer to the Window's focus
+		// (seq N+1) arrives first and already shows it.
+		const hostSeq = seq + 1;
+		seq += 1;
+		const answer = {
+			...update(
+				"p",
+				{ ...view, state: "idle" },
+				{
+					prev: { state: "working", detectionMode: "agent", hookDriven: true },
+					next: { state: "idle", detectionMode: "agent", hookDriven: true },
+					cause: { kind: "focus" },
+				},
+			),
+			hostSeq,
+			hostCause: title,
+		};
+		applyRustUpdate(answer, false);
+		expect(warn).not.toHaveBeenCalled();
+		expect(changes.map((c) => c.cause)).toEqual([title]);
+		// The overtaken event, when it lands, changes nothing.
+		applyRustUpdate(
+			{
+				...update("p", { ...view, state: "idle" }, answer.change),
+				seq: hostSeq,
+			},
+			true,
+		);
+		expect(changes).toHaveLength(1);
+		// Once heard, a later difference is a correction again.
+		applyRustUpdate(
+			{
+				...update("p", { ...view, state: "waiting" }),
+				hostSeq,
+				hostCause: title,
+			},
+			false,
+		);
+		expect(warn).toHaveBeenCalledTimes(1);
+		warn.mockRestore();
+	});
+
 	it("never applies an older update over a newer one", () => {
 		workingAgent(1);
 		const view = __statusViewForTests("p");

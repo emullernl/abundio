@@ -45,6 +45,11 @@ export interface StatusUpdate {
 		next: StatusSnapshotView;
 		cause: StatusEvent;
 	} | null;
+	/** The latest change Rust made by itself (a hook, an exit, a title, the
+	 *  idle scan) as of this update: its seq and cause. An answer showing one
+	 *  the Window has not heard of yet is no sign of a wrong prediction. */
+	hostSeq?: number | null;
+	hostCause?: StatusEvent | null;
 }
 
 export type StatusOp =

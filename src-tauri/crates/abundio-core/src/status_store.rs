@@ -39,6 +39,11 @@ pub struct StatusStore {
     titles: DashMap<String, TitleEntry>,
     /// OpenCode 1.x: PTYs whose last turn was cancelled (`openCodeCancelGate`).
     open_code_cancelled: dashmap::DashSet<String>,
+    /// The latest change Rust made by itself (a hook, an exit, a title, the
+    /// idle scan) per PTY: its update's seq and cause. Every update names
+    /// it, so a Window can tell a change it has not heard of yet from a
+    /// wrong prediction of its own.
+    host: DashMap<String, (u64, StatusEvent)>,
 }
 
 #[derive(Default)]
@@ -234,6 +239,10 @@ pub struct StatusUpdate {
     pub seq: u64,
     pub view: Option<StoreView>,
     pub change: Option<Change>,
+    /// See `StatusStore::host`: the latest change Rust made by itself, as
+    /// of this update (its seq and cause).
+    pub host_seq: Option<u64>,
+    pub host_cause: Option<StatusEvent>,
 }
 
 /// One status operation from a Window: the store actions of
@@ -264,12 +273,25 @@ impl StatusStore {
     }
 
     fn update(&self, pty_id: &str, change: Option<Change>) -> StatusUpdate {
+        let host = self.host.get(pty_id).map(|h| h.clone());
         StatusUpdate {
             pty_id: pty_id.to_string(),
             seq: self.next_seq(pty_id),
             view: self.view(pty_id),
             change,
+            host_seq: host.as_ref().map(|h| h.0),
+            host_cause: host.map(|h| h.1),
         }
+    }
+
+    /// Remember an update Rust made by itself (see `host`).
+    fn by_host(&self, update: Option<StatusUpdate>) -> Option<StatusUpdate> {
+        if let Some(u) = &update {
+            if let Some(c) = &u.change {
+                self.host.insert(u.pty_id.clone(), (u.seq, c.cause.clone()));
+            }
+        }
+        update
     }
 
     /// Run one operation from `client`; what that Window should apply.
@@ -304,6 +326,7 @@ impl StatusStore {
             }
             StatusOp::Remove { pty_id } => {
                 self.titles.remove(&pty_id);
+                self.host.remove(&pty_id);
                 self.open_code_cancelled.remove(&pty_id);
                 let existed = self.by_pty.contains_key(&pty_id);
                 self.remove(&pty_id);
@@ -356,7 +379,7 @@ impl StatusStore {
     /// Apply an event the Host saw itself (a hook, an exit): what the owning
     /// Window should take, if anything changed.
     pub fn apply_from_host(&self, pty_id: &str, event: StatusEvent, config: &StatusConfig) -> Option<StatusUpdate> {
-        self.apply_change(pty_id, event, config)
+        self.by_host(self.apply_change(pty_id, event, config))
     }
 
     /// Whether the PTY has a status yet (a Window's `initPty`, or an event).
@@ -400,7 +423,7 @@ impl StatusStore {
         };
         let Some(d) = dispatch else { return TitleOutcome::default() };
         let event = StatusEvent::Title { status: d.status, now, starts_turn: Some(d.starts_turn) };
-        TitleOutcome { update: self.apply_change(pty_id, event, config), grace }
+        TitleOutcome { update: self.apply_from_host(pty_id, event, config), grace }
     }
 
     /// A grace window ran out: unless a later title (or a new agent session)
@@ -416,7 +439,7 @@ impl StatusStore {
         if !self.has(pty_id) {
             return None;
         }
-        self.apply_change(pty_id, StatusEvent::TitleTurnEnded { now }, config)
+        self.apply_from_host(pty_id, StatusEvent::TitleTurnEnded { now }, config)
     }
 
     pub fn open_code_cancelled(&self, pty_id: &str) -> bool {
@@ -447,7 +470,7 @@ impl StatusStore {
             return None;
         }
         let event = if failed { StatusEvent::RecordError } else { StatusEvent::RecordExitSuccess };
-        let update = self.apply_change(pty_id, event, config)?;
+        let update = self.apply_from_host(pty_id, event, config)?;
         let owner = self.owners.get(pty_id).map(|o| o.clone())?;
         Some((owner, update))
     }
@@ -490,7 +513,8 @@ impl StatusStore {
                     ),
                 },
             });
-            out.push((owner, self.update(&pty_id, change)));
+            let update = self.by_host(Some(self.update(&pty_id, change)));
+            out.extend(update.map(|u| (owner, u)));
         }
         out
     }
@@ -875,6 +899,20 @@ mod tests {
         store.run_op(&w, StatusOp::Init { pty_id: "p".into(), mode: Some(Mode::Agent) }, &config);
         store.set_agent("p", Some("vibe".into()));
         store
+    }
+
+    #[test]
+    fn an_answer_names_the_latest_change_rust_made_itself() {
+        let store = vibe_pane();
+        let config = StatusConfig::default();
+        let w = crate::event_sink::ClientId::from("w");
+        let own = store.title_changed("p", ">> Vibe", 1, &config).update.unwrap();
+        assert!(own.host_cause.is_none());
+        let answer = store
+            .run_op(&w, StatusOp::Apply { pty_id: "p".into(), event: StatusEvent::AgentExited }, &config)
+            .unwrap();
+        assert_eq!(answer.host_seq, Some(own.seq));
+        assert!(matches!(answer.host_cause, Some(StatusEvent::Title { .. })));
     }
 
     #[test]

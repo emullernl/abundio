@@ -820,6 +820,9 @@ const appliedSeq = new Map<string, number>();
 /** A scan change Rust sent while the pane still had changes in flight: the
  *  answer to those will carry its effect, and this names its cause. */
 const deferredScanCause = new Map<string, StatusEvent>();
+/** The newest change Rust made by itself that has reached this Window, per
+ *  pane, whether it was applied, deferred or overtaken. */
+const heardHostSeq = new Map<string, number>();
 
 function viewToEntry(
 	v: StatusView,
@@ -872,6 +875,15 @@ function writeView(ptyId: string, v: StatusView): void {
  * Exported for tests.
  */
 export function applyRustUpdate(u: StatusUpdate, fromScan: boolean): void {
+	if (fromScan && u.change) {
+		heardHostSeq.set(u.ptyId, Math.max(heardHostSeq.get(u.ptyId) ?? 0, u.seq));
+	}
+	// An answer can overtake the event that carries a change Rust made by
+	// itself: the answer already shows it, under the Window's own cause.
+	const unheardHost =
+		!fromScan &&
+		u.hostSeq != null &&
+		u.hostSeq > (heardHostSeq.get(u.ptyId) ?? 0);
 	const last = appliedSeq.get(u.ptyId) ?? 0;
 	if (u.seq <= last) return;
 	appliedSeq.set(u.ptyId, u.seq);
@@ -894,11 +906,15 @@ export function applyRustUpdate(u: StatusUpdate, fromScan: boolean): void {
 		);
 		return;
 	}
-	// A scan that landed while the Window's own change was in flight is what
-	// the Window could not predict: credit it, not the Window's change.
-	const cause = deferredScanCause.get(u.ptyId) ?? u.change?.cause ?? null;
+	// A change Rust made by itself (a hook, an exit, a title, the idle scan)
+	// that landed while the Window's own change was in flight, or that this
+	// answer overtook, is what the Window could not predict: credit it, not
+	// the Window's change, and it is no correction.
+	const deferred = deferredScanCause.get(u.ptyId);
 	deferredScanCause.delete(u.ptyId);
-	if (!fromScan && cause?.kind !== "tick") {
+	const hostCause = unheardHost ? (u.hostCause ?? undefined) : undefined;
+	const cause = deferred ?? hostCause ?? u.change?.cause ?? null;
+	if (!fromScan && !deferred && !hostCause && cause?.kind !== "tick") {
 		const fields = (Object.keys(u.view) as (keyof StatusView)[])
 			.filter((k) => JSON.stringify(local?.[k]) !== JSON.stringify(u.view?.[k]))
 			.map(
