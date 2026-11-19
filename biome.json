@@ -8,7 +8,8 @@
 			"*.json",
 			"*.js",
 			"!src/lib/__tests__/fixtures/statusParity.json",
-			"!src/lib/__tests__/fixtures/statusShadowStore.json"
+			"!src/lib/__tests__/fixtures/statusShadowStore.json",
+			"!src/lib/__tests__/fixtures/layoutOps.json"
 		]
 	},
 	"assist": { "actions": { "source": { "organizeImports": "on" } } },

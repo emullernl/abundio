@@ -18,6 +18,7 @@ pub mod change_hub;
 pub mod event_sink;
 pub mod screen;
 pub mod status_machine;
+mod layout_ops;
 pub mod status_store;
 pub mod events;
 pub mod file_explorer;
