@@ -78,6 +78,7 @@ import { trackPtyResize } from "./projectionResize";
 import { stripControlChars } from "./promptActions";
 import { ShellIntegrationParser } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
+import { isRustStatusAuthority } from "./statusSync";
 import { installFileLinkProvider } from "./terminalFileLinks";
 import {
 	alternateScreenBefore,
@@ -783,7 +784,9 @@ async function startBackgroundTracking(ptyId: string) {
 		}
 	});
 	const unlistenStatus = await pty.onStatus(ptyId, (status) => {
-		if (status.type === "exited") {
+		// Rust sees the exit first and its status arrives as `status-updates`
+		// (phase 6d); only tests and the demo record it here.
+		if (status.type === "exited" && !isRustStatusAuthority()) {
 			// Telemetry finalizes this Turn as a pty_exit off the StatusChange cause
 			// (recordExitSuccess/recordError below) — no inline call needed.
 			const actStore = usePtyActivityStore.getState();
@@ -1861,7 +1864,9 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			}),
 
 			pty.onStatus(currentPtyId, (status) => {
-				if (status.type === "exited") {
+				// Rust sees the exit first and its status arrives as
+				// `status-updates` (phase 6d); only tests and the demo record it.
+				if (status.type === "exited" && !isRustStatusAuthority()) {
 					// Telemetry finalizes this Turn as a pty_exit off the StatusChange
 					// cause (recordExitSuccess/recordError below) — no inline call.
 					// Set activity state BEFORE setPtyStatus to avoid subscriber race

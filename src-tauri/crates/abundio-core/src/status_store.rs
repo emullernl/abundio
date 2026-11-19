@@ -276,25 +276,57 @@ impl StatusStore {
                 self.owners
                     .entry(pty_id.clone())
                     .or_insert_with(|| client.clone());
-                let before = self.view(&pty_id);
-                let prev_view = before
-                    .clone()
-                    .unwrap_or_else(|| StoreView::from(&StatusState::initial(Mode::Shell)));
-                let after = self.apply(&pty_id, &event, config);
-                let changed = match &before {
-                    None => true,
-                    Some(b) => entry_key(b) != entry_key(&after),
-                };
-                let starts_turn = crate::status_machine::event_starts_turn(&event);
-                let change = (changed || starts_turn).then(|| Change {
-                    prev: Snapshot::from(&prev_view),
-                    next: Snapshot::from(&after),
-                    cause: event,
-                });
-                (before.as_ref() != Some(&after) || change.is_some())
-                    .then(|| self.update(&pty_id, change))
+                self.apply_change(&pty_id, event, config)
             }
         }
+    }
+
+    /// Apply `event` and say what the owning Window should take: the new
+    /// view, and the change (with `event` as its cause) when the status moved
+    /// or a Turn started. `None` when nothing it shows changed.
+    fn apply_change(
+        &self,
+        pty_id: &str,
+        event: StatusEvent,
+        config: &StatusConfig,
+    ) -> Option<StatusUpdate> {
+        let before = self.view(pty_id);
+        let prev_view = before
+            .clone()
+            .unwrap_or_else(|| StoreView::from(&StatusState::initial(Mode::Shell)));
+        let after = self.apply(pty_id, &event, config);
+        let changed = match &before {
+            None => true,
+            Some(b) => entry_key(b) != entry_key(&after),
+        };
+        let starts_turn = crate::status_machine::event_starts_turn(&event);
+        let change = (changed || starts_turn).then(|| Change {
+            prev: Snapshot::from(&prev_view),
+            next: Snapshot::from(&after),
+            cause: event,
+        });
+        (before.as_ref() != Some(&after) || change.is_some()).then(|| self.update(pty_id, change))
+    }
+
+    /// The PTY exited (its process ended or was killed), seen by the Host
+    /// itself: a failure (a non-zero code other than a user stop, 130 or 143)
+    /// is an Error, anything else a clean exit, as `classifyShellExit` says.
+    /// The status is kept even with no Window; the owning Window, if any, is
+    /// told with the change. A clean exit of a PTY with no status is nothing.
+    pub fn exit_update(
+        &self,
+        pty_id: &str,
+        code: Option<u32>,
+        config: &StatusConfig,
+    ) -> Option<(crate::event_sink::ClientId, StatusUpdate)> {
+        let failed = matches!(code, Some(c) if c != 0 && !SHELL_USER_STOP_CODES.contains(&c));
+        if !failed && !self.by_pty.contains_key(pty_id) {
+            return None;
+        }
+        let event = if failed { StatusEvent::RecordError } else { StatusEvent::RecordExitSuccess };
+        let update = self.apply_change(pty_id, event, config)?;
+        let owner = self.owners.get(pty_id).map(|o| o.clone())?;
+        Some((owner, update))
     }
 
     /// The idle scan, with what each Window should apply. A change names the
@@ -354,6 +386,10 @@ impl StatusStore {
         }
     }
 }
+
+/// Exit codes of a shell or program the user stopped (Ctrl+C, a kill):
+/// not failures (`SHELL_USER_STOP_CODES` in the frontend).
+pub const SHELL_USER_STOP_CODES: [u32; 2] = [130, 143];
 
 /// How often the idle scan runs (`SCAN_INTERVAL_MS` in the frontend).
 pub const SCAN_INTERVAL_MS: u64 = 2000;
@@ -650,6 +686,52 @@ mod tests {
             changes_checked += want.len();
         }
         assert!(changes_checked > 300, "only {changes_checked} changes");
+    }
+
+    #[test]
+    fn an_exit_seen_by_the_host_tells_the_owning_window() {
+        use crate::event_sink::ClientId;
+        let store = StatusStore::new();
+        let config = StatusConfig::default();
+        let w = ClientId::from("window-1");
+        store.run_op(&w, StatusOp::Init { pty_id: "p".into(), mode: Some(Mode::Agent) }, &config);
+        store.run_op(
+            &w,
+            StatusOp::Apply {
+                pty_id: "p".into(),
+                event: StatusEvent::Hook { transition: crate::status_machine::Transition::Working, now: 1, starts_turn: None },
+            },
+            &config,
+        );
+        let (to, u) = store.exit_update("p", Some(1), &config).unwrap();
+        assert_eq!(to, w);
+        assert_eq!(u.view.unwrap().state, DotState::Error);
+        assert_eq!(u.change.unwrap().cause, StatusEvent::RecordError);
+    }
+
+    #[test]
+    fn a_user_stop_is_a_clean_exit_and_an_unknown_clean_exit_is_nothing() {
+        use crate::event_sink::ClientId;
+        let store = StatusStore::new();
+        let config = StatusConfig::default();
+        store.run_op(&ClientId::from("w"), StatusOp::Init { pty_id: "p".into(), mode: Some(Mode::Shell) }, &config);
+        store.run_op(
+            &ClientId::from("w"),
+            StatusOp::Apply { pty_id: "p".into(), event: StatusEvent::ShellCommandStarted { now: 1 } },
+            &config,
+        );
+        let (_, u) = store.exit_update("p", Some(130), &config).unwrap();
+        assert_eq!(u.change.unwrap().cause, StatusEvent::RecordExitSuccess);
+        assert!(store.exit_update("never-seen", Some(0), &config).is_none());
+        assert!(store.exit_update("never-seen", None, &config).is_none());
+    }
+
+    #[test]
+    fn a_host_keeps_an_exit_with_no_window_to_tell() {
+        let store = StatusStore::new();
+        let config = StatusConfig::default();
+        assert!(store.exit_update("p", Some(2), &config).is_none());
+        assert_eq!(store.view("p").unwrap().state, DotState::Error);
     }
 
     #[test]

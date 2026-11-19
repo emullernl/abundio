@@ -20,7 +20,8 @@ use abundio_core::event_sink::{ClientId, EventSink, Events};
 use abundio_core::events::AgentHookEvent;
 use abundio_core::hook_server::{HookHost, HookServer};
 use abundio_core::{
-    app_paths, db_open, env_vars, layout_store, migrations, pane_facts, pty_manager, status_store,
+    app_paths, db_open, env_vars, layout_store, migrations, pane_facts, pty_manager, status_machine,
+    status_store,
     workspace_store,
 };
 use serde_json::Value;
@@ -206,6 +207,13 @@ fn run(data_dir: PathBuf) -> Result<(), String> {
     let _layouts = layout_store::LayoutStore::new();
     let _facts = pane_facts::PaneFactsStore::new();
     let events: Events = Arc::new(NoClients);
+    {
+        // A PTY's exit reaches its status here, Window or not (phase 6d).
+        let status = status.clone();
+        ptys.on_exit(Arc::new(move |pty, code| {
+            let _ = status.exit_update(pty, code, &status_machine::StatusConfig::default());
+        }));
+    }
     status_store::start_ticker(status.clone(), events);
 
     let host = Arc::new(ServerHookHost { ptys: ptys.clone(), env });

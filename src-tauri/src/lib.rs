@@ -968,6 +968,19 @@ pub fn run() {
                 app.handle(),
                 pty_channels,
             ));
+            // A PTY's exit reaches its status in Rust first (phase 6d): the
+            // owning Window takes it from `status-updates`.
+            {
+                let status = status_store.clone();
+                let events = app.state::<event_sink::Events>().inner().clone();
+                app.state::<PtyManager>().on_exit(std::sync::Arc::new(move |pty, code| {
+                    use event_sink::EventsExt;
+                    let config = status_machine::StatusConfig::default();
+                    if let Some((owner, update)) = status.exit_update(pty, code, &config) {
+                        events.to_client(&owner, "status-updates", vec![update]);
+                    }
+                }));
+            }
             status_store::start_ticker(
                 status_store,
                 app.state::<event_sink::Events>().inner().clone(),

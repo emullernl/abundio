@@ -89,6 +89,9 @@ pub struct SpawnContext {
     pub inherit_from: Option<String>,
 }
 
+/// Told when a PTY ends: its id and exit code (`None` when killed).
+pub type ExitListener = Arc<dyn Fn(&str, Option<u32>) + Send + Sync>;
+
 pub struct PtyManager {
     entries: DashMap<String, PtyEntry>,
     spawn_contexts: DashMap<String, SpawnContext>,
@@ -100,6 +103,8 @@ pub struct PtyManager {
     control_tokens: Arc<crate::control_protocol::ControlTokens>,
     /// Scrollback lines each PTY's screen keeps: the terminal setting.
     scrollback: AtomicUsize,
+    /// See [`PtyManager::on_exit`].
+    exit_listener: Arc<std::sync::OnceLock<ExitListener>>,
 }
 
 impl PtyManager {
@@ -109,6 +114,7 @@ impl PtyManager {
             spawn_contexts: DashMap::new(),
             owner_windows: DashMap::new(),
             control_tokens: Default::default(),
+            exit_listener: Arc::new(std::sync::OnceLock::new()),
             scrollback: AtomicUsize::new(crate::screen::DEFAULT_SCROLLBACK),
         }
     }
@@ -493,9 +499,10 @@ impl PtyManager {
 
         let tokens = self.control_tokens.clone();
         let events = deps.events;
+        let on_exit = self.exit_listener.clone();
         thread::spawn(move || {
             pty_thread(
-                id_clone, master, child, rx, alive, events, screen, log_file, shell_type,
+                id_clone, master, child, rx, alive, events, screen, log_file, shell_type, on_exit,
             );
             // The PTY is gone: its token must not outlive it (a background
             // process it left behind still has the token in its environment).
@@ -572,6 +579,12 @@ impl PtyManager {
     /// destroyed. Logs are kept, so the panes restore their scrollback when the
     /// Profile is opened again (a fresh load never reattaches to a live PTY).
     /// Kill every PTY (the server shutting down).
+    /// Be told whenever a PTY ends (exits or is killed), with its exit code,
+    /// before its `pty-status` event goes out. Set once, at startup.
+    pub fn on_exit(&self, listener: ExitListener) {
+        let _ = self.exit_listener.set(listener);
+    }
+
     pub fn kill_all(&self) {
         let ids: Vec<String> = self.entries.iter().map(|e| e.key().clone()).collect();
         for id in ids {
@@ -1798,7 +1811,13 @@ fn pty_thread(
     screen: Arc<Mutex<crate::screen::Screen>>,
     log_file: Option<(File, PathBuf)>,
     shell_type: ShellType,
+    on_exit: Arc<std::sync::OnceLock<ExitListener>>,
 ) {
+    let exited = |code: Option<u32>| {
+        if let Some(listener) = on_exit.get() {
+            listener(&pty_id, code);
+        }
+    };
     let mut writer = master.take_writer().unwrap();
     let mut reader = master.try_clone_reader().unwrap();
 
@@ -1913,6 +1932,7 @@ fn pty_thread(
         if let Ok(Some(status)) = child.try_wait() {
             alive.store(false, Ordering::Relaxed);
             let code = Some(status.exit_code());
+            exited(code);
             let event_name = format!("pty-status-{}", pty_id);
             events.broadcast(&event_name, PtyStatus::Exited { code });
             break;
@@ -1998,6 +2018,7 @@ fn pty_thread(
             Ok(PtyCommand::Kill) => {
                 alive.store(false, Ordering::Relaxed);
                 let _ = child.kill();
+                exited(None);
                 let event_name = format!("pty-status-{}", pty_id);
                 events.broadcast(&event_name, PtyStatus::Exited { code: None });
                 break;
