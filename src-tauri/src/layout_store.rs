@@ -148,6 +148,29 @@ impl LayoutStore {
     }
 }
 
+/// A Tab's layout edit Rust makes itself (Agent control): applied, saved,
+/// and sent to every Window of the Profile, the owning one included.
+pub fn apply_from_rust(
+    app: &tauri::AppHandle,
+    tab_id: &str,
+    ops: &[LayoutOp],
+) -> Result<LayoutState, AbundioError> {
+    use crate::event_sink::EventsExt;
+    use tauri::Manager;
+    let layouts = app.state::<std::sync::Arc<LayoutStore>>();
+    let db = app.state::<WorkspaceStore>();
+    let ptys = app.state::<crate::pty_manager::PtyManager>();
+    let applied = layouts.apply(&db, tab_id, ops, &|id| ptys.is_live(id))?;
+    if applied.changed {
+        let events = app.state::<crate::event_sink::Events>();
+        let profiles = app.state::<crate::profile_store::ActiveProfileState>();
+        for client in broadcast_targets(&profiles.snapshot(), &applied.profile_id, &ClientId(String::new())) {
+            events.to_client(&client, "layout-changed", &applied.state);
+        }
+    }
+    Ok(applied.state)
+}
+
 /// The Windows to tell of a change to a Profile's layout: every Window
 /// showing that Profile except the one that made it.
 pub fn broadcast_targets(

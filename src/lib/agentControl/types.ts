@@ -12,7 +12,8 @@ export type Until = "settled" | "ready" | "waiting" | "error";
 
 /** The calls a Window carries out. Rust answers the reads itself
  *  and the calls that only type into a pane (`control_local.rs`: pane list /
- *  current / read / run, agent list / wait / prompt / send-keys);
+ *  current / read / run, agent list / wait / prompt / send-keys) and the two
+ *  renames (agent rename, tab rename);
  *  `workspace.open` is its ask to open a Workspace in the background first. */
 export type ControlRequest =
 	| { op: "workspace.open" }
@@ -30,10 +31,7 @@ export type ControlRequest =
 			tab: boolean;
 			tabName: string | null;
 	  }
-	| { op: "agent.rename"; target: Target; handle: string | null }
 	| { op: "tab.new"; name: string | null; focus: boolean }
-	/** `target: null` is the caller's own Tab. */
-	| { op: "tab.rename"; name: string; target: Target | null }
 	// Round four (ADR-0056). `notify`, `progress` and `worktree.new` are for
 	// agent-mode callers only.
 	| { op: "notify"; message: string }

@@ -553,20 +553,22 @@ struct TabsChanged {
     tabs: Vec<Tab>,
 }
 
-/// Tell every other Window of `profile_id` the Workspace's Tabs now.
-fn send_tabs_changed(
+/// Tell the Windows of `profile_id` the Workspace's Tabs now: every one but
+/// `origin`, which made the change itself (`None`: Rust did, tell them all).
+pub(crate) fn send_tabs_changed(
     store: &WorkspaceStore,
     profiles: &crate::profile_store::ActiveProfileState,
     events: &crate::event_sink::Events,
-    origin: &Window,
+    origin: Option<&crate::event_sink::ClientId>,
     workspace_id: &str,
     profile_id: &str,
 ) {
     use crate::event_sink::EventsExt;
+    let nobody = crate::event_sink::ClientId(String::new());
     let targets = crate::layout_store::broadcast_targets(
         &profiles.snapshot(),
         profile_id,
-        &crate::event_sink::ClientId::from(origin.label()),
+        origin.unwrap_or(&nobody),
     );
     if targets.is_empty() {
         return;
@@ -595,7 +597,7 @@ pub async fn tab_create(
 ) -> Result<Tab, AbundioError> {
     let tab = store.create_tab(&workspace_id, &name)?;
     if let Some(profile_id) = store.profile_of(&workspace_id)? {
-        send_tabs_changed(&store, &profiles, &events, &window, &workspace_id, &profile_id);
+        send_tabs_changed(&store, &profiles, &events, Some(&crate::event_sink::ClientId::from(window.label())), &workspace_id, &profile_id);
     }
     Ok(tab)
 }
@@ -627,7 +629,7 @@ pub async fn tab_update(
     store.update_tab(&id, updates)?;
     if tab_level {
         if let Some((workspace_id, profile_id)) = store.tab_owner(&id)? {
-            send_tabs_changed(&store, &profiles, &events, &window, &workspace_id, &profile_id);
+            send_tabs_changed(&store, &profiles, &events, Some(&crate::event_sink::ClientId::from(window.label())), &workspace_id, &profile_id);
         }
     }
     Ok(())
@@ -646,7 +648,7 @@ pub async fn tab_delete(
     let owner = store.tab_owner(&id)?;
     store.delete_tab(&id)?;
     if let Some((workspace_id, profile_id)) = owner {
-        send_tabs_changed(&store, &profiles, &events, &window, &workspace_id, &profile_id);
+        send_tabs_changed(&store, &profiles, &events, Some(&crate::event_sink::ClientId::from(window.label())), &workspace_id, &profile_id);
     }
     Ok(())
 }

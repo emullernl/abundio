@@ -178,25 +178,6 @@ describe("calls into another Workspace", () => {
 			.workspaces.find((w) => w.id === "home");
 		expect(JSON.parse(home?.tabs[0].layoutJson ?? "{}").type).toBe("terminal");
 	});
-
-	it("tab rename there needs --tab, then renames any Tab", async () => {
-		await expect(
-			runRequest(
-				caller,
-				{ op: "tab.rename", name: "X", target: null },
-				undefined,
-				there,
-			),
-		).rejects.toMatchObject({ code: "not_found" });
-		await expect(
-			runRequest(
-				caller,
-				{ op: "tab.rename", name: "X", target: { kind: "pane", value: 1 } },
-				undefined,
-				there,
-			),
-		).resolves.toEqual({ tab: "X", renamed: true });
-	});
 });
 
 describe("a Workspace that is not Opened", () => {

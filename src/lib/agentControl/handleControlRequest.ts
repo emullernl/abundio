@@ -380,24 +380,6 @@ async function runOp(
 			const { popup } = notifyUser(caller.paneId, name, request.message);
 			return { flagged: true, notification: popup };
 		}
-		case "agent.rename": {
-			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
-			return withBadge(scope, pane, async () => {
-				const facts = liveFacts(pane);
-				if (facts.mode !== "agent") {
-					throw new ControlError(
-						"not_an_agent",
-						"that pane is not running an Agent; only Agents have handles",
-					);
-				}
-				const check = await useWorkspaceStore
-					.getState()
-					.setAgentHandle(pane.node.id, request.handle);
-				if (!check.ok) throw new ControlError(check.code, check.message);
-				// Read back: a cleared handle has become a default one.
-				return describeAgent(await describeNew(scope, pane.node.id));
-			});
-		}
 		case "pane.watch": {
 			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
 			if (hasNestedRepetition(request.pattern)) {
@@ -442,8 +424,6 @@ async function runOp(
 			});
 			return describeNew(scope, paneId);
 		}
-		case "tab.rename":
-			return renameTabFor(scope, request);
 		case "pane.close": {
 			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
 			const refusal = closeRefusal(caller.paneId, pane.node.id);
@@ -984,36 +964,6 @@ async function openSpawnedTab(
 	if (opts.focus) revealPane(paneId, scope.workspaceId, tab.id);
 	startEvenIfHidden(scope, paneId);
 	return paneId;
-}
-
-/** `tab rename`: the caller's own Tab, or one it opened, and never one the
- *  user has named by hand. */
-async function renameTabFor(
-	scope: Scope,
-	request: Extract<ControlRequest, { op: "tab.rename" }>,
-) {
-	// The caller's own Tab exists only in its own Workspace.
-	const self = scope.home
-		? scope.panes.find((p) => p.node.id === scope.caller.paneId)
-		: undefined;
-	if (!request.target && !self) {
-		throw new ControlError(
-			"not_found",
-			scope.home
-				? "your pane is no longer open"
-				: "in another Workspace, name the Tab by a pane in it: --tab <pane>",
-		);
-	}
-	const pane = request.target
-		? resolveTarget(request.target, scope.panes, scope.numbers)
-		: (self as WorkspacePane);
-	const tab = useWorkspaceStore
-		.getState()
-		.workspaces.find((w) => w.id === scope.workspaceId)
-		?.tabs.find((t) => t.id === pane.tabId);
-	if (!tab) throw new ControlError("not_found", "that Tab is no longer open");
-	await useWorkspaceStore.getState().renameTab(tab.id, request.name);
-	return { tab: request.name, renamed: true };
 }
 
 /** The caller as the badge names it: its handle, else its Pane number. */

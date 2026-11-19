@@ -53,6 +53,9 @@ let handler: LayoutHandler | null = null;
 const base = new Map<string, string>();
 const versions = new Map<string, number>();
 const pending = new Map<string, number>();
+/** Tabs another Window (or Rust itself) changed while this one had edits in
+ *  flight: the answer carries that change, which is no correction. */
+const changedElsewhere = new Set<string>();
 let queue: Job[] = [];
 let flushing = false;
 
@@ -66,6 +69,7 @@ export function __resetLayoutSyncForTests(): void {
 	base.clear();
 	versions.clear();
 	pending.clear();
+	changedElsewhere.clear();
 	queue = [];
 	flushing = false;
 }
@@ -93,14 +97,18 @@ function settle(state: LayoutState): void {
 	}
 	// Still more on the way: their answer will carry this one's effect.
 	if (hasPendingLayoutOps(state.tabId)) return;
-	adopt(state.tabId, state.layoutJson, "correction");
+	const elsewhere = changedElsewhere.delete(state.tabId);
+	adopt(state.tabId, state.layoutJson, elsewhere ? "broadcast" : "correction");
 }
 
 /** Another Window changed a Tab's layout (`layout-changed`). */
 export function receiveLayoutChanged(s: LayoutState): void {
 	if (s.version <= (versions.get(s.tabId) ?? 0)) return;
 	// Our own answer is coming and will carry this edit too.
-	if (hasPendingLayoutOps(s.tabId)) return;
+	if (hasPendingLayoutOps(s.tabId)) {
+		changedElsewhere.add(s.tabId);
+		return;
+	}
 	versions.set(s.tabId, s.version);
 	adopt(s.tabId, s.layoutJson, "broadcast");
 }

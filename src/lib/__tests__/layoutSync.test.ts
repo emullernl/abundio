@@ -140,4 +140,34 @@ describe("layout sync", () => {
 		receiveLayoutChanged(theirs(10, "/later"));
 		expect(taken).toHaveLength(1);
 	});
+
+	it("takes an edit made elsewhere during its own without calling it a correction", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		await commitLayout("t", j(split(pane("a"), pane("b"))));
+		let release!: () => void;
+		rust.hold = new Promise((r) => {
+			release = r;
+		});
+		const mine = commitLayout("t", j(split(pane("a", { cwd: "/x" }), pane("b"))));
+		// Rust renamed b meanwhile (Agent control), and told every Window.
+		const e = rust.tabs.get("t");
+		if (!e) throw new Error("no tab");
+		e.layout = split(pane("a"), pane("b", { agentHandle: "New" }));
+		receiveLayoutChanged({
+			tabId: "t",
+			version: 99,
+			layoutJson: j(e.layout),
+			applied: true,
+		});
+		release();
+		await mine;
+		expect(JSON.parse(taken[taken.length - 1].layoutJson).second.agentHandle).toBe(
+			"New",
+		);
+		expect(warn).not.toHaveBeenCalledWith(
+			"[layout] Rust corrected the Window's layout",
+			expect.anything(),
+		);
+		warn.mockRestore();
+	});
 });

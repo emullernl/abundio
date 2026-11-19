@@ -51,6 +51,15 @@ pub trait Live {
     fn read_screen(&self, pty_id: &str, visible: bool, lines: Option<usize>) -> Result<Vec<String>, AbundioError>;
     fn input_modes(&self, pty_id: &str) -> Option<crate::screen::InputModes>;
     fn write(&self, pty_id: &str, bytes: &[u8]) -> Result<(), AbundioError>;
+    /// May `pane_id` take `handle` in its Profile? Reserves it if so.
+    fn check_handle(&self, workspace_id: &str, pane_id: &str, handle: &str) -> Result<crate::agent_names::HandleCheck, AbundioError>;
+    /// The lowest free Default handle, reserved for `pane_id`.
+    fn take_default_handle(&self, workspace_id: &str, pane_id: &str) -> Result<String, AbundioError>;
+    /// Edit one pane's own fields in its Tab's layout, as the authority,
+    /// and tell every Window.
+    fn patch_pane(&self, tab_id: &str, pane_id: &str, set: serde_json::Map<String, Value>) -> Result<(), AbundioError>;
+    /// Rename a Tab and tell every Window.
+    fn rename_tab(&self, workspace_id: &str, tab_id: &str, name: &str) -> Result<(), AbundioError>;
 }
 
 /// What the user sees of a call, drawn by the owning Window.
@@ -512,7 +521,21 @@ pub fn handles(request: &Request) -> bool {
             | Request::AgentPrompt { .. }
             | Request::AgentSendKeys { .. }
             | Request::PaneRun { .. }
+            | Request::AgentRename { .. }
+            | Request::TabRename { .. }
     )
+}
+
+fn is_orchestrator_pane(all: &[WorkspaceWithTabs], pane_id: &str) -> bool {
+    all.iter().any(|w| {
+        w.workspace.kind == "orchestrator"
+            && workspace_panes(&w.tabs).iter().any(|p| {
+                p.id() == pane_id
+                    && p.str("agentHandle").is_some_and(|h| {
+                        handle_key(h) == handle_key(crate::agent_names::ORCHESTRATOR_HANDLE)
+                    })
+            })
+    })
 }
 
 // ── Typing into a pane (keys.ts, promptText.ts, typedLine.ts, spawn.ts) ──
@@ -856,6 +879,77 @@ pub fn run(
                 }
             }
         }
+        Request::AgentRename { target, handle } => {
+            let pane = match resolve_target(target, &scope.panes, &scope.numbers) {
+                Ok(p) => p,
+                Err(e) => return Ok(Err(e)),
+            };
+            let renamed = with_effects(effects, &scope, pane, "act", || {
+                if live_facts(live, pane).mode != Some(Mode::Agent) {
+                    return Err(err("not_an_agent", "that pane is not running an Agent; only Agents have handles"));
+                }
+                // The Orchestrator is found by its handle (ADR-0057).
+                if is_orchestrator_pane(&live.workspaces(&caller.workspace_id)?, pane.id()) {
+                    return Err(err("handle_taken", "The Orchestrator keeps its name."));
+                }
+                let name = match handle {
+                    Some(h) => match live.check_handle(workspace_id, pane.id(), h)? {
+                        crate::agent_names::HandleCheck::Refused { code, message, .. } => {
+                            return Err(err(code, message))
+                        }
+                        crate::agent_names::HandleCheck::Ok { .. } => {
+                            crate::agent_control::normalize_handle(h).unwrap_or_else(|| h.clone())
+                        }
+                    },
+                    // Every Agent has a handle: clearing one hands out a default.
+                    None => live.take_default_handle(workspace_id, pane.id())?,
+                };
+                let mut set = serde_json::Map::new();
+                set.insert("agentHandle".into(), json!(name));
+                live.patch_pane(&pane.tab_id, pane.id(), set)?;
+                Ok(())
+            });
+            if let Err(e) = renamed {
+                return Ok(Err(e));
+            }
+            let after = match load_scope(live, caller, workspace_id) {
+                Ok(s) => s,
+                Err(e) => return Ok(Err(e)),
+            };
+            let Some(now) = after.panes.iter().find(|p| p.id() == pane.id()) else {
+                return Ok(Err(err("not_found", "that pane closed")));
+            };
+            describe_agent(&describe_pane(&after, now, &live_facts(live, now)))
+        }
+        Request::TabRename { name, target } => {
+            // The caller's own Tab exists only in its own Workspace.
+            let pane = match target {
+                Some(t) => match resolve_target(t, &scope.panes, &scope.numbers) {
+                    Ok(p) => p,
+                    Err(e) => return Ok(Err(e)),
+                },
+                None => {
+                    let own = scope.home.then(|| scope.panes.iter().find(|p| p.id() == caller.pane_id)).flatten();
+                    match own {
+                        Some(p) => p,
+                        None => {
+                            return Ok(Err(err(
+                                "not_found",
+                                if scope.home {
+                                    "your pane is no longer open"
+                                } else {
+                                    "in another Workspace, name the Tab by a pane in it: --tab <pane>"
+                                },
+                            )))
+                        }
+                    }
+                }
+            };
+            if let Err(e) = live.rename_tab(workspace_id, &pane.tab_id, name) {
+                return Ok(Err(e.into()));
+            }
+            json!({ "tab": name, "renamed": true })
+        }
         _ => return Ok(Err(err("internal", "not a call Rust answers"))),
     }))
 }
@@ -863,6 +957,7 @@ pub fn run(
 // ── The app's live state ──
 
 pub struct AppLive<'a> {
+    pub app: &'a tauri::AppHandle,
     pub store: &'a crate::workspace_store::WorkspaceStore,
     pub ptys: &'a crate::pty_manager::PtyManager,
     pub status: &'a crate::status_store::StatusStore,
@@ -897,6 +992,42 @@ impl Live for AppLive<'_> {
     fn write(&self, pty_id: &str, bytes: &[u8]) -> Result<(), AbundioError> {
         self.ptys.write(pty_id, bytes.to_vec())
     }
+    fn check_handle(&self, workspace_id: &str, pane_id: &str, handle: &str) -> Result<crate::agent_names::HandleCheck, AbundioError> {
+        use tauri::Manager;
+        let r = self.app.state::<crate::agent_names::HandleReservations>();
+        r.check(self.store, workspace_id, pane_id, handle)
+    }
+    fn take_default_handle(&self, workspace_id: &str, pane_id: &str) -> Result<String, AbundioError> {
+        use tauri::Manager;
+        let r = self.app.state::<crate::agent_names::HandleReservations>();
+        r.take_default(self.store, workspace_id, pane_id)
+    }
+    fn patch_pane(&self, tab_id: &str, pane_id: &str, set: serde_json::Map<String, Value>) -> Result<(), AbundioError> {
+        let op = crate::layout_ops::LayoutOp::Patch { id: pane_id.to_string(), set, unset: vec![] };
+        let state = crate::layout_store::apply_from_rust(self.app, tab_id, &[op])?;
+        if !state.applied {
+            return Err(AbundioError::NotFound(state.reason.unwrap_or_else(|| "that pane closed".into())));
+        }
+        Ok(())
+    }
+    fn rename_tab(&self, workspace_id: &str, tab_id: &str, name: &str) -> Result<(), AbundioError> {
+        use tauri::Manager;
+        self.store.update_tab(
+            tab_id,
+            crate::workspace_store::TabUpdate { name: Some(name.to_string()), ..Default::default() },
+        )?;
+        if let Some(profile) = self.store.profile_of(workspace_id)? {
+            crate::commands::send_tabs_changed(
+                self.store,
+                &self.app.state::<crate::profile_store::ActiveProfileState>(),
+                &self.app.state::<crate::event_sink::Events>(),
+                None,
+                workspace_id,
+                &profile,
+            );
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -920,6 +1051,8 @@ mod tests {
         /// What a PTY's status turns to once something is written to it
         /// (an Agent starting its turn).
         on_write: Option<(&'static str, DotState)>,
+        handles: crate::agent_names::HandleReservations,
+        layouts: crate::layout_store::LayoutStore,
     }
 
     impl Live for Fake {
@@ -949,6 +1082,23 @@ mod tests {
         }
         fn input_modes(&self, pty: &str) -> Option<crate::screen::InputModes> {
             Some(self.modes.get(pty).copied().unwrap_or_default())
+        }
+        fn check_handle(&self, ws: &str, pane: &str, h: &str) -> Result<crate::agent_names::HandleCheck, AbundioError> {
+            self.handles.check(self.store.as_ref().unwrap(), ws, pane, h)
+        }
+        fn take_default_handle(&self, ws: &str, pane: &str) -> Result<String, AbundioError> {
+            self.handles.take_default(self.store.as_ref().unwrap(), ws, pane)
+        }
+        fn patch_pane(&self, tab: &str, pane: &str, set: serde_json::Map<String, Value>) -> Result<(), AbundioError> {
+            let op = crate::layout_ops::LayoutOp::Patch { id: pane.into(), set, unset: vec![] };
+            self.layouts.apply(self.store.as_ref().unwrap(), tab, &[op], &|p| self.is_live(p))?;
+            Ok(())
+        }
+        fn rename_tab(&self, _ws: &str, tab: &str, name: &str) -> Result<(), AbundioError> {
+            self.store.as_ref().unwrap().update_tab(
+                tab,
+                crate::workspace_store::TabUpdate { name: Some(name.into()), ..Default::default() },
+            )
         }
         fn write(&self, pty: &str, bytes: &[u8]) -> Result<(), AbundioError> {
             self.written.lock().unwrap().push((pty.to_string(), String::from_utf8_lossy(bytes).into()));
@@ -1434,6 +1584,65 @@ mod tests {
         assert_eq!(fake.written.lock().unwrap()[0], ("pty-sh".to_string(), "ls -la\r".to_string()));
         fake.live.lock().unwrap().remove("pty-sh");
         assert_eq!(run_in(&fake, 1).unwrap_err().code, "not_found");
+    }
+
+
+    // ── renames ──
+
+    fn rename(handle: Option<&str>) -> Request {
+        Request::AgentRename { target: Target::Pane(2), handle: handle.map(str::to_string) }
+    }
+
+    #[test]
+    fn renames_an_agent_with_the_badge_up_and_reads_it_back() {
+        let (fake, ws, caller) = world();
+        let effects = Recorded::default();
+        let v = ok(run(&fake, &effects, &caller, &ws, &rename(Some("  Tester  ")), &never(), None));
+        assert_eq!(v["handle"], "Tester");
+        assert_eq!(v["pane"], "p2");
+        assert_eq!(effects.0.lock().unwrap()[0], "begin sh->ag by p1 (act)");
+        let stored = load_scope(&fake, &caller, &ws).unwrap();
+        assert_eq!(stored.panes[1].str("agentHandle"), Some("Tester"));
+    }
+
+    #[test]
+    fn clearing_a_handle_gives_a_default_one_back() {
+        let (fake, ws, caller) = world();
+        let v = ok(run(&fake, &Recorded::default(), &caller, &ws, &rename(None), &never(), None));
+        assert_eq!(v["handle"], "Agent One");
+    }
+
+    #[test]
+    fn refuses_a_shell_a_taken_handle_and_a_bad_one() {
+        let (fake, ws, caller) = world();
+        let code = |r: &Request| run(&fake, &Recorded::default(), &caller, &ws, r, &never(), None).unwrap().unwrap_err().code;
+        let shell = Request::AgentRename { target: Target::Pane(1), handle: Some("x".into()) };
+        assert_eq!(code(&shell), "not_an_agent");
+        assert_eq!(code(&rename(Some("p3"))), "invalid_handle");
+        assert_eq!(code(&rename(Some("Orchestrator"))), "handle_taken");
+        // Another pane of the Profile already has it.
+        let store = fake.store.as_ref().unwrap();
+        let other = store.create("api", "/tmp/api", PID).unwrap();
+        store.set_tab_layout(&other.tabs[0].id, &term("x", "", json!({ "agentHandle": "Builder" })).to_string()).unwrap();
+        assert_eq!(code(&rename(Some("builder"))), "handle_taken");
+    }
+
+    #[test]
+    fn renames_the_callers_tab_or_a_targets_and_needs_a_target_elsewhere() {
+        let (fake, ws, caller) = world();
+        let req = Request::TabRename { name: "Review".into(), target: None };
+        let v = ok(run(&fake, &Recorded::default(), &caller, &ws, &req, &never(), None));
+        assert_eq!(v, json!({ "tab": "Review", "renamed": true }));
+        assert_eq!(load_scope(&fake, &caller, &ws).unwrap().panes[0].tab_name, "Review");
+        let store = fake.store.as_ref().unwrap();
+        let other = store.create("api", "/tmp/api", PID).unwrap();
+        store.set_tab_layout(&other.tabs[0].id, &term("x", "", json!({})).to_string()).unwrap();
+        let there = other.workspace.id.clone();
+        let e = run(&fake, &Recorded::default(), &caller, &there, &req, &never(), None).unwrap().unwrap_err();
+        assert_eq!(e.code, "not_found");
+        let with_tab = Request::TabRename { name: "X".into(), target: Some(Target::Pane(1)) };
+        ok(run(&fake, &Recorded::default(), &caller, &there, &with_tab, &never(), None));
+        assert_eq!(load_scope(&fake, &caller, &there).unwrap().panes[0].tab_name, "X");
     }
 
 }

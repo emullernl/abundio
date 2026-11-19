@@ -1953,7 +1953,7 @@ fn resolve_in_rust(app: &AppHandle, caller: &Caller, scope: &Scope, target: &Tar
     let ptys = app.state::<crate::pty_manager::PtyManager>();
     let status = app.state::<std::sync::Arc<crate::status_store::StatusStore>>();
     let facts = app.state::<crate::pane_facts::PaneFactsStore>();
-    let live = crate::control_local::AppLive { store: &store, ptys: &ptys, status: &status, facts: &facts };
+    let live = crate::control_local::AppLive { app, store: &store, ptys: &ptys, status: &status, facts: &facts };
     crate::control_local::resolve(&live, caller, &scope.workspace_id, target).map_err(ctl_error_answer)
 }
 
@@ -2006,7 +2006,7 @@ fn handle_in_rust(app: &AppHandle, caller: &Caller, scope: &Scope, request: &Req
     let ptys = app.state::<crate::pty_manager::PtyManager>();
     let status = app.state::<std::sync::Arc<crate::status_store::StatusStore>>();
     let facts = app.state::<crate::pane_facts::PaneFactsStore>();
-    let live = crate::control_local::AppLive { store: &store, ptys: &ptys, status: &status, facts: &facts };
+    let live = crate::control_local::AppLive { app, store: &store, ptys: &ptys, status: &status, facts: &facts };
     let effects = WindowEffects { app, window_label: &scope.window_label };
     let outcome = crate::control_local::run(&live, &effects, caller, &scope.workspace_id, request, &cancel, limit);
     if let Some(client) = &scope.client_id {
