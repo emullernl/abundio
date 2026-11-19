@@ -182,6 +182,17 @@ pub fn status_apply(
         .collect()
 }
 
+/// The Agents a command typed at a prompt is matched against (the user's
+/// list: custom Agents, disabled ones), so Rust sees a typed Agent start
+/// (shell integration, phase 6d-4). Every Window sends it on a change.
+#[tauri::command]
+pub fn agent_commands_set(
+    agents: State<'_, std::sync::Arc<crate::shell_integration::AgentCommands>>,
+    list: Vec<crate::shell_integration::AgentCommand>,
+) {
+    agents.set(list);
+}
+
 /// Ask the program in a PTY to redraw at its current size (SIGWINCH to the
 /// foreground process group). `false` where unsupported (Windows).
 #[tauri::command]

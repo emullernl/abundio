@@ -1720,7 +1720,11 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					scheduleWrite(managed, output);
 				}
 
-				// Process shell integration commands (agent detection + shell activity)
+				// Process shell integration commands (agent detection + shell
+				// activity). Where Rust is the authority it reads them from the
+				// PTY itself and applies their status (shell_integration.rs,
+				// phase 6d-4); the Window keeps its own bookkeeping only.
+				const statusFromRust = isRustStatusAuthority();
 				for (const cmd of commands) {
 					if (cmd.type === "cwd_change") {
 						actState.setCwd(currentPtyId, cmd.path ?? "");
@@ -1740,7 +1744,11 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 							const matched = matchTitleToAgent(cmd.commandText, agents);
 							if (matched) {
 								resetTitleStatus(managed);
-								actState.setAgentPty(currentPtyId, matched.id);
+								if (statusFromRust) {
+									actState.noteAgentFromHost(currentPtyId, matched.id);
+								} else {
+									actState.setAgentPty(currentPtyId, matched.id);
+								}
 								// Persist the agent identity onto the layout so a
 								// manually-typed agent re-runs after a restart, mirroring
 								// the cwd stamp above.
@@ -1777,7 +1785,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						// shellCommandRunning=true for the agent's own command_start.
 						// If that flag stays true, the idle scanner will never
 						// transition active → ready (purple) for the agent.
-						if (!managed.suppressActivity && !nowIsAgent) {
+						if (!statusFromRust && !managed.suppressActivity && !nowIsAgent) {
 							actState.setShellCommandRunning(currentPtyId, true);
 							actState.recordOutput(currentPtyId);
 						}
@@ -1787,10 +1795,14 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						tryFlushStartup(managed);
 						// Exit agent mode when the command finishes (reads fresh state,
 						// since setAgentPty above may have mutated it).
-						const wasAgentMode = applyAgentExit(currentPtyId, paneId);
+						const wasAgentMode = applyAgentExit(
+							currentPtyId,
+							paneId,
+							statusFromRust,
+						);
 						if (wasAgentMode) resetTitleStatus(managed);
 						const freshState = usePtyActivityStore.getState();
-						if (!managed.suppressActivity && !wasAgentMode) {
+						if (!statusFromRust && !managed.suppressActivity && !wasAgentMode) {
 							freshState.setShellCommandRunning(currentPtyId, false);
 							const outcome = classifyShellExit(cmd.exitCode);
 							if (outcome === "error") {

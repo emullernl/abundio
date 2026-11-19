@@ -43,3 +43,17 @@ describe("which Agent a PTY runs", () => {
 		}
 	});
 });
+
+describe("an Agent's end Rust read from the shell", () => {
+	it("is forgotten for the PTY without touching its status", () => {
+		const s = usePtyActivityStore.getState();
+		s.initPty("x", "shell");
+		s.noteAgentFromHost("x", "claude");
+		const before = usePtyActivityStore.getState().activities.x;
+		s.noteAgentExitFromHost("x");
+		const after = usePtyActivityStore.getState();
+		expect(after.agentPtyIds.has("x")).toBe(false);
+		expect(after.detectedAgentIds.x).toBeUndefined();
+		expect(after.activities.x).toBe(before);
+	});
+});

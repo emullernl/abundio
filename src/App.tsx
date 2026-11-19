@@ -36,6 +36,7 @@ import { useSplitPane } from "./hooks/useSplitPane";
 import { useTerminalFileDrop } from "./hooks/useTerminalFileDrop";
 import { useWorkspace } from "./hooks/useWorkspace";
 import { useWorktreeSync } from "./hooks/useWorktreeSync";
+import { startAgentCommandsSync } from "./lib/agentCommandsSync";
 import { startAgentControl } from "./lib/agentControl/handleControlRequest";
 import { cycleAgent } from "./lib/agentCycle";
 import {
@@ -887,6 +888,9 @@ export function App() {
 
 	// Agent control (ADR-0054): `abundio` calls from this Window's panes.
 	useEffect(() => startAgentControl(), []);
+
+	// The Agents a typed command can start, for Rust's shell integration.
+	useEffect(() => startAgentCommandsSync(), []);
 
 	// Listen for native menu "Switch Profile" submenu clicks.
 	useEffect(() => {

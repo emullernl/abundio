@@ -225,6 +225,12 @@ fn run(data_dir: PathBuf) -> Result<(), String> {
             let _ = status.exit_update(pty, code, &status_machine::StatusConfig::default());
         }));
     }
+    abundio_core::shell_integration::listen(
+        &ptys,
+        status.clone(),
+        Arc::new(abundio_core::shell_integration::AgentCommands::default()),
+        events.clone(),
+    );
     abundio_core::title_status::listen(&ptys, status.clone(), events.clone());
     status_store::start_ticker(status.clone(), events);
 

@@ -166,6 +166,9 @@ interface PtyActivityState_Store {
 	 *  routed, phase 6d). Records which Agent runs in the PTY. */
 	noteAgentFromHost: (ptyId: string, agentId: string) => void;
 	clearAgentPty: (ptyId: string) => void;
+	/** `clearAgentPty` without its status half: Rust applied that (the
+	 *  shell reported the Agent's end, phase 6d-4). */
+	noteAgentExitFromHost: (ptyId: string) => void;
 	setTitle: (paneId: string, title: string) => void;
 	setRunningCommand: (ptyId: string, text: string | null) => void;
 	setCwd: (ptyId: string, path: string) => void;
@@ -641,6 +644,15 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			} else {
 				set({ agentPtyIds: newSet, ...detectedUpdate });
 			}
+		},
+
+		noteAgentExitFromHost: (ptyId) => {
+			const s = get();
+			if (!s.agentPtyIds.has(ptyId)) return;
+			const newSet = new Set(s.agentPtyIds);
+			newSet.delete(ptyId);
+			const { [ptyId]: _, ...restDetected } = s.detectedAgentIds;
+			set({ agentPtyIds: newSet, detectedAgentIds: restDetected });
 		},
 
 		clearAgentPty: (ptyId) => {

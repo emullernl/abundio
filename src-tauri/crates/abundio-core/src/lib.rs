@@ -35,6 +35,7 @@ pub mod profile_store;
 pub mod pty_manager;
 pub mod screen;
 pub mod shell_env;
+pub mod shell_integration;
 pub mod status_machine;
 pub mod status_store;
 pub mod title_status;

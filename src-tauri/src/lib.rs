@@ -62,6 +62,7 @@ pub use abundio_core::workspace_store;
 pub mod worktree_commands;
 pub use abundio_core::worktree_watcher;
 pub use abundio_core::shell_env;
+pub use abundio_core::shell_integration;
 pub mod unsaved_edits;
 
 use tauri::menu::{AboutMetadata, CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -984,6 +985,18 @@ pub fn run() {
                     }
                 }));
             }
+            // And the shell's reports: a command's Working and Error, a typed
+            // Agent entering and leaving agent mode (phase 6d-4).
+            {
+                let agents = std::sync::Arc::new(shell_integration::AgentCommands::default());
+                app.manage(agents.clone());
+                shell_integration::listen(
+                    &app.state::<PtyManager>(),
+                    status_store.clone(),
+                    agents,
+                    app.state::<event_sink::Events>().inner().clone(),
+                );
+            }
             // Titles too: a Title-status Agent's status is read from the
             // PTY's own screen (phase 6d-3).
             title_status::listen(
@@ -1564,6 +1577,7 @@ pub fn run() {
             commands::pty_read_screen,
             commands::pty_set_scrollback,
             commands::status_apply,
+            commands::agent_commands_set,
             commands::layout_apply,
             commands::pane_facts_report,
             commands::pty_write,

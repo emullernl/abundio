@@ -95,6 +95,17 @@ pub type ExitListener = Arc<dyn Fn(&str, Option<u32>) + Send + Sync>;
 /// Told when a PTY's terminal title changes: its id and the new title.
 pub type TitleListener = Arc<dyn Fn(&str, &str) + Send + Sync>;
 
+/// Told what a PTY's shell reported on the shell-integration channel.
+pub type ShellListener = Arc<dyn Fn(&str, Vec<crate::shell_integration::ShellCommand>) + Send + Sync>;
+
+/// What hears a PTY's output besides its Windows (see `on_title`,
+/// `on_shell`). Set once, at startup.
+#[derive(Default)]
+struct OutputListeners {
+    title: std::sync::OnceLock<TitleListener>,
+    shell: std::sync::OnceLock<ShellListener>,
+}
+
 pub struct PtyManager {
     entries: DashMap<String, PtyEntry>,
     spawn_contexts: DashMap<String, SpawnContext>,
@@ -108,8 +119,8 @@ pub struct PtyManager {
     scrollback: AtomicUsize,
     /// See [`PtyManager::on_exit`].
     exit_listener: Arc<std::sync::OnceLock<ExitListener>>,
-    /// See [`PtyManager::on_title`].
-    title_listener: Arc<std::sync::OnceLock<TitleListener>>,
+    /// See [`PtyManager::on_title`] and [`PtyManager::on_shell`].
+    output_listeners: Arc<OutputListeners>,
 }
 
 impl PtyManager {
@@ -120,7 +131,7 @@ impl PtyManager {
             owner_windows: DashMap::new(),
             control_tokens: Default::default(),
             exit_listener: Arc::new(std::sync::OnceLock::new()),
-            title_listener: Arc::new(std::sync::OnceLock::new()),
+            output_listeners: Arc::default(),
             scrollback: AtomicUsize::new(crate::screen::DEFAULT_SCROLLBACK),
         }
     }
@@ -511,11 +522,11 @@ impl PtyManager {
         let tokens = self.control_tokens.clone();
         let events = deps.events;
         let on_exit = self.exit_listener.clone();
-        let on_title = self.title_listener.clone();
+        let on_output = self.output_listeners.clone();
         thread::spawn(move || {
             pty_thread(
                 id_clone, master, child, rx, alive, events, screen, log_file, shell_type, on_exit,
-                on_title,
+                on_output,
             );
             // The PTY is gone: its token must not outlive it (a background
             // process it left behind still has the token in its environment).
@@ -598,7 +609,14 @@ impl PtyManager {
     /// read by its Rust screen), in order, after the output that set it.
     /// Set once, at startup.
     pub fn on_title(&self, listener: TitleListener) {
-        let _ = self.title_listener.set(listener);
+        let _ = self.output_listeners.title.set(listener);
+    }
+
+    /// Be told what each PTY's shell reports on the shell-integration
+    /// channel (`shell_integration.rs`), in order, before the titles set by
+    /// the same output. Set once, at startup.
+    pub fn on_shell(&self, listener: ShellListener) {
+        let _ = self.output_listeners.shell.set(listener);
     }
 
     /// Kill every PTY (the server shutting down).
@@ -1820,8 +1838,22 @@ fn write_abundio_env_helper(dir: &Path) {
     let _ = fs::write(dir.join("abundio-env.ps1"), ABUNDIO_ENV_PS1);
 }
 
-fn tell_titles(on_title: &std::sync::OnceLock<TitleListener>, pty_id: &str, titles: Vec<String>) {
-    if let Some(listener) = on_title.get() {
+/// Tell the listeners what one read of output said: the shell's reports,
+/// then the titles.
+fn tell_listeners(
+    listeners: &OutputListeners,
+    shell: &mut crate::shell_integration::Parser,
+    pty_id: &str,
+    bytes: &[u8],
+    titles: Vec<String>,
+) {
+    if let Some(listener) = listeners.shell.get() {
+        let commands = shell.parse(bytes);
+        if !commands.is_empty() {
+            listener(pty_id, commands);
+        }
+    }
+    if let Some(listener) = listeners.title.get() {
         for title in titles {
             listener(pty_id, &title);
         }
@@ -1840,7 +1872,7 @@ fn pty_thread(
     log_file: Option<(File, PathBuf)>,
     shell_type: ShellType,
     on_exit: Arc<std::sync::OnceLock<ExitListener>>,
-    on_title: Arc<std::sync::OnceLock<TitleListener>>,
+    on_output: Arc<OutputListeners>,
 ) {
     let exited = |code: Option<u32>| {
         if let Some(listener) = on_exit.get() {
@@ -1876,6 +1908,7 @@ fn pty_thread(
     // is unaffected.
     let read_thread = thread::spawn(move || {
         let mut log = log_file;
+        let mut shell = crate::shell_integration::Parser::default();
 
         // Bounded channel: 32 slots × 4 KB = 128 KB max buffered before
         // back-pressure slows the reader — prevents unbounded memory growth.
@@ -1932,7 +1965,7 @@ fn pty_thread(
             // Keep the screen, then emit the coalesced batch as one message.
             let titles = screen.lock().map(|mut s| s.feed(&accum)).unwrap_or_default();
             read_events.pty_output(&read_pty_id, &accum);
-            tell_titles(&on_title, &read_pty_id, titles);
+            tell_listeners(&on_output, &mut shell, &read_pty_id, &accum, titles);
             accum.clear();
         }
 
@@ -1944,7 +1977,7 @@ fn pty_thread(
         if !accum.is_empty() {
             let titles = screen.lock().map(|mut s| s.feed(&accum)).unwrap_or_default();
             read_events.pty_output(&read_pty_id, &accum);
-            tell_titles(&on_title, &read_pty_id, titles);
+            tell_listeners(&on_output, &mut shell, &read_pty_id, &accum, titles);
         }
 
         let _ = inner.join();

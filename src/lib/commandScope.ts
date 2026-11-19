@@ -174,6 +174,7 @@ const HOST = [
 	"pty_write",
 	"pty_write_snapshot",
 	"status_apply",
+	"agent_commands_set",
 	"tab_create",
 	"tab_delete",
 	"tab_list",

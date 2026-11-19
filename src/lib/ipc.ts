@@ -197,6 +197,13 @@ export const statusApi = {
 	apply: (ops: StatusOp[]) => invoke<StatusUpdate[]>("status_apply", { ops }),
 };
 
+/** The Agents a command typed at a prompt can start, for Rust's shell
+ *  integration (`lib/agentCommandsSync.ts`). */
+export const agentCommandsApi = {
+	set: (list: { id: string; command: string; enabled: boolean }[]) =>
+		invoke<void>("agent_commands_set", { list }),
+};
+
 export const layoutApi = {
 	/** Apply edits to a Tab's layout in Rust, the authority (`layoutSync.ts`). */
 	apply: (tabId: string, ops: LayoutOp[]) =>

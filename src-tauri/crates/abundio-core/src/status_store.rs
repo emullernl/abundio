@@ -44,6 +44,11 @@ pub struct StatusStore {
     /// it, so a Window can tell a change it has not heard of yet from a
     /// wrong prediction of its own.
     host: DashMap<String, (u64, StatusEvent)>,
+    /// PTYs whose shell started a command (not an Agent) that has not ended:
+    /// only such a command's end counts. A shell reports an end at every
+    /// prompt, the first one too, with the exit code of whatever ran last
+    /// (its startup files, the command before an empty Enter).
+    shell_started: dashmap::DashSet<String>,
 }
 
 #[derive(Default)]
@@ -327,6 +332,7 @@ impl StatusStore {
             StatusOp::Remove { pty_id } => {
                 self.titles.remove(&pty_id);
                 self.host.remove(&pty_id);
+                self.shell_started.remove(&pty_id);
                 self.open_code_cancelled.remove(&pty_id);
                 let existed = self.by_pty.contains_key(&pty_id);
                 self.remove(&pty_id);
@@ -358,10 +364,12 @@ impl StatusStore {
             .unwrap_or_else(|| StoreView::from(&StatusState::initial(Mode::Shell)));
         let after = self.apply(pty_id, &event, config);
         if before.as_ref().is_some_and(|b| b.mode != after.mode) {
-            // Into or out of agent mode: a new agent session's titles.
+            // Into or out of agent mode: a new agent session's titles, and
+            // no shell command of its own.
             if let Some(mut t) = self.titles.get_mut(pty_id) {
                 t.reset();
             }
+            self.shell_started.remove(pty_id);
         }
         let changed = match &before {
             None => true,
@@ -424,6 +432,62 @@ impl StatusStore {
         let Some(d) = dispatch else { return TitleOutcome::default() };
         let event = StatusEvent::Title { status: d.status, now, starts_turn: Some(d.starts_turn) };
         TitleOutcome { update: self.apply_from_host(pty_id, event, config), grace }
+    }
+
+    /// What the PTY's shell reported (shell integration, phase 6d-4), as the
+    /// Window's output handler applied it: a typed Agent enters agent mode
+    /// (`setAgentPty`); another command is Working (`setShellCommandRunning`,
+    /// `recordOutput`); its end is an Error or a clean finish
+    /// (`classifyShellExit`), and an Agent's end leaves agent mode
+    /// (`applyAgentExit`). What the owning Window should take.
+    pub fn shell_commands(
+        &self,
+        pty_id: &str,
+        commands: &[crate::shell_integration::ShellCommand],
+        agents: &crate::shell_integration::AgentCommands,
+        now: i64,
+        config: &StatusConfig,
+    ) -> Vec<StatusUpdate> {
+        use crate::shell_integration::ShellCommand;
+        let mut out = Vec::new();
+        for c in commands {
+            let agent_mode = self.view(pty_id).is_some_and(|v| v.mode == Mode::Agent);
+            match c {
+                ShellCommand::Cwd { .. } => {}
+                ShellCommand::CommandStart { command_text } => {
+                    if let Some(id) = command_text.as_deref().and_then(|t| agents.matching(t)) {
+                        self.set_agent(pty_id, Some(id));
+                        if self.has(pty_id) && !agent_mode {
+                            out.extend(self.apply_from_host(pty_id, StatusEvent::AgentDetected, config));
+                        }
+                    } else if !agent_mode {
+                        self.shell_started.insert(pty_id.to_string());
+                        out.extend(self.shell_flag(pty_id, true));
+                        out.extend(self.apply_from_host(pty_id, StatusEvent::RecordOutput { now }, config));
+                    }
+                }
+                ShellCommand::CommandEnd { exit_code } => {
+                    if agent_mode {
+                        out.extend(self.apply_from_host(pty_id, StatusEvent::AgentExited, config));
+                        self.set_agent(pty_id, None);
+                    } else if self.shell_started.remove(pty_id).is_some() {
+                        out.extend(self.shell_flag(pty_id, false));
+                        let failed = matches!(exit_code, Some(c) if *c != 0 && !SHELL_USER_STOP_CODES.iter().any(|s| i64::from(*s) == *c));
+                        let event = if failed { StatusEvent::RecordError } else { StatusEvent::RecordExitSuccess };
+                        out.extend(self.apply_from_host(pty_id, event, config));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// `setShellCommandRunning` seen by the Host: an update when the view
+    /// changed.
+    fn shell_flag(&self, pty_id: &str, running: bool) -> Option<StatusUpdate> {
+        let before = self.view(pty_id);
+        self.set_shell_command_running(pty_id, running);
+        (self.view(pty_id) != before).then(|| self.update(pty_id, None))
     }
 
     /// A grace window ran out: unless a later title (or a new agent session)
@@ -899,6 +963,58 @@ mod tests {
         store.run_op(&w, StatusOp::Init { pty_id: "p".into(), mode: Some(Mode::Agent) }, &config);
         store.set_agent("p", Some("vibe".into()));
         store
+    }
+
+    fn shell(store: &StatusStore, chunk: &str, now: i64) -> Vec<StatusUpdate> {
+        let mut p = crate::shell_integration::Parser::default();
+        let agents = crate::shell_integration::AgentCommands::default();
+        store.shell_commands("p", &p.parse(chunk.as_bytes()), &agents, now, &StatusConfig::default())
+    }
+
+    fn shell_pane() -> StatusStore {
+        let store = StatusStore::new();
+        let w = crate::event_sink::ClientId::from("w");
+        store.run_op(&w, StatusOp::Init { pty_id: "p".into(), mode: Some(Mode::Shell) }, &StatusConfig::default());
+        store
+    }
+
+    #[test]
+    fn a_shell_command_works_then_fails_or_finishes() {
+        let store = shell_pane();
+        shell(&store, "\x1b]7770;command_start;make\x07", 1);
+        let v = store.view("p").unwrap();
+        assert_eq!((v.state, v.shell_command_running), (DotState::Working, true));
+        shell(&store, "\x1b]7770;command_end;2\x07", 2);
+        let v = store.view("p").unwrap();
+        assert_eq!((v.state, v.shell_command_running), (DotState::Error, false));
+        store.apply("p", &StatusEvent::Focus, &StatusConfig::default());
+        store.apply("p", &StatusEvent::Click, &StatusConfig::default());
+        shell(&store, "\x1b]7770;command_start;sleep 9\x07", 3);
+        shell(&store, "\x1b]7770;command_end;130\x07", 4);
+        assert_eq!(store.view("p").unwrap().state, DotState::Idle);
+    }
+
+    #[test]
+    fn a_prompt_with_no_command_before_it_is_nothing() {
+        let store = shell_pane();
+        // The first prompt, after startup files that failed; an empty Enter.
+        assert!(shell(&store, "\x1b]7770;command_end;1\x07\x1b]7770;cwd;/x\x07", 1).is_empty());
+        assert_eq!(store.view("p").unwrap().state, DotState::Idle);
+    }
+
+    #[test]
+    fn a_typed_agent_enters_agent_mode_and_its_end_leaves_it() {
+        let store = shell_pane();
+        let u = shell(&store, "\x1b]7770;command_start;npx vibe --x\x07", 1);
+        assert!(matches!(u[0].change.as_ref().unwrap().cause, StatusEvent::AgentDetected));
+        let v = store.view("p").unwrap();
+        assert_eq!((v.mode, v.shell_command_running), (Mode::Agent, false));
+        assert_eq!(store.titles.get("p").unwrap().agent.as_deref(), Some("vibe"));
+        shell(&store, "\x1b]7770;command_end;0\x07", 2);
+        assert_eq!(store.view("p").unwrap().mode, Mode::Shell);
+        assert_eq!(store.titles.get("p").unwrap().agent, None);
+        // The Agent's end is not a shell command's: the next prompt is nothing.
+        assert!(shell(&store, "\x1b]7770;command_end;1\x07", 3).is_empty());
     }
 
     #[test]
