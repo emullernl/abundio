@@ -29,10 +29,11 @@ import {
 import { agentSessionIdFrom } from "./agentSessionId";
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
 import {
-	readTitle,
+	NO_TITLE_TRACK,
 	TITLE_TURN_END_GRACE_MS,
-	type TitleStatus,
-	titleStep,
+	type TitleTrack,
+	titleChange,
+	titleGraceEnded,
 } from "./agentTitleMap";
 import { currentWindowLabel } from "./appWindow";
 import { writeClipboardText } from "./clipboard";
@@ -68,7 +69,7 @@ import { trackPtyResize } from "./projectionResize";
 import { stripControlChars } from "./promptActions";
 import { ShellIntegrationParser } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
-import { isRustStatusAuthority, sendStatusOp } from "./statusSync";
+import { isRustStatusAuthority } from "./statusSync";
 import { installFileLinkProvider } from "./terminalFileLinks";
 import {
 	alternateScreenBefore,
@@ -434,16 +435,10 @@ export interface ManagedTerminal {
 	 *  cleaning it. Cleared on that `command_start`, or when the filter window
 	 *  ends, so it can never exempt the Agent's own redraws later. */
 	awaitingTypedAgentStart: boolean;
-	/** The **Title status** last read from this agent session's terminal title
-	 *  (ADR-0047); null until its first title. */
-	titleStatus: TitleStatus | null;
-	/** The Agent's title carried a status *prefix* this agent session — proof
-	 *  its tab status is on, so its title and turn-finished hook drive status.
-	 *  A suffix alone is not proof (agentTitleMap `readTitle`). */
-	titleStatusSeen: boolean;
-	/** While the grace window runs: the busy status the title held before it
-	 *  went bare, so a prompt answered across a bare title resumes its Turn. */
-	titleBusyBeforeBare: TitleStatus | null;
+	/** What this agent session's titles have said (**Title status**, ADR-0047;
+	 *  `agentTitleMap` `titleChange`). Where Rust is the authority it reads the
+	 *  titles itself (`title_status.rs`) and this stays empty. */
+	titleTrack: TitleTrack;
 	/** The grace window after the title ended a Turn, waiting for the
 	 *  turn-finished hook before calling it a cancel or failure. */
 	titleTurnEndTimer: ReturnType<typeof setTimeout> | null;
@@ -962,14 +957,10 @@ function scheduleWebglReconcile(): void {
 	});
 }
 
-/** Forget a pane's **Title status** — a new agent session, or none. */
+/** Forget a pane's **Title status** — a new agent session, or none. (Rust
+ *  forgets its own when the PTY's Agent or mode changes.) */
 function resetTitleStatus(managed: ManagedTerminal): void {
-	managed.titleStatus = null;
-	managed.titleStatusSeen = false;
-	if (managed.ptyId) {
-		sendStatusOp({ op: "titleStatusSeen", ptyId: managed.ptyId, seen: false });
-	}
-	managed.titleBusyBeforeBare = null;
+	managed.titleTrack = NO_TITLE_TRACK;
 	if (managed.titleTurnEndTimer) {
 		clearTimeout(managed.titleTurnEndTimer);
 		managed.titleTurnEndTimer = null;
@@ -1330,9 +1321,7 @@ export async function createTerminal(
 		awaitingTaskStart: false,
 		refused: false,
 		awaitingTypedAgentStart: false,
-		titleStatus: null,
-		titleStatusSeen: false,
-		titleBusyBeforeBare: null,
+		titleTrack: NO_TITLE_TRACK,
 		titleTurnEndTimer: null,
 		writes: createWriteBatcher((data) => term.write(data)),
 		queuedAltScreen: false,
@@ -1976,7 +1965,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					payload,
 					{
 						hasSubagent: (id) => hasActiveSubagent(currentPtyId, id),
-						titleStatusSeen: managed.titleStatusSeen,
+						titleStatusSeen: managed.titleTrack.seen,
 						openCodeCancelled: openCodeCancelledPtys.has(currentPtyId),
 					},
 				);
@@ -2111,41 +2100,31 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		const actStore = usePtyActivityStore.getState();
 		actStore.setTitle(paneId, title);
 		// **Title status** (ADR-0047): an agent-mode pane whose Agent announces
-		// its state in the title. Replayed scrollback is a dead session's title.
+		// its state in the title. Rust reads it from its own screen where it is
+		// the authority (phase 6d-3). Replayed scrollback is a dead session's title.
+		if (isRustStatusAuthority()) return;
 		if (managed.restoring || !actStore.agentPtyIds.has(currentPtyId)) return;
-		const reading = readTitle(actStore.detectedAgentIds[currentPtyId], title);
-		if (reading === null) return;
-		// Until a prefix proves tab status is on, the pane stays on the byte
-		// heuristic — a suffix alone would turn it hook-driven for good.
-		if (reading.live && !managed.titleStatusSeen) {
-			managed.titleStatusSeen = true;
-			sendStatusOp({ op: "titleStatusSeen", ptyId: managed.ptyId, seen: true });
-		}
-		if (!managed.titleStatusSeen) return;
-		const { status } = reading;
-		const step = titleStep(
-			managed.titleStatus,
-			status,
-			managed.titleBusyBeforeBare,
+		const change = titleChange(
+			managed.titleTrack,
+			actStore.detectedAgentIds[currentPtyId],
+			title,
 		);
-		const prev = managed.titleStatus;
-		managed.titleStatus = status;
-		if (!step.dispatch) return;
+		managed.titleTrack = change.track;
+		if (!change.dispatch) return;
 		if (managed.titleTurnEndTimer) {
 			clearTimeout(managed.titleTurnEndTimer);
 			managed.titleTurnEndTimer = null;
 		}
-		managed.titleBusyBeforeBare = step.awaitTurnEnd ? prev : null;
 		actStore.applyTitleStatus(
 			currentPtyId,
-			step.dispatch.status,
-			step.dispatch.startsTurn,
+			change.dispatch.status,
+			change.dispatch.startsTurn,
 		);
-		if (step.awaitTurnEnd) {
+		if (change.awaitTurnEnd) {
 			const ptyId = currentPtyId;
 			managed.titleTurnEndTimer = setTimeout(() => {
 				managed.titleTurnEndTimer = null;
-				managed.titleBusyBeforeBare = null;
+				managed.titleTrack = titleGraceEnded(managed.titleTrack);
 				usePtyActivityStore.getState().titleTurnEnded(ptyId);
 			}, TITLE_TURN_END_GRACE_MS);
 		}

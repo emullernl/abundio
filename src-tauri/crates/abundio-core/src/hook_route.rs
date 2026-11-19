@@ -336,7 +336,7 @@ fn open_code_v2(event: &str, p: &Value) -> Option<Vec<HookStep>> {
 /// Agents whose Working and Waiting come from their terminal title
 /// (`hasTitleStatus`, ADR-0047).
 fn has_title_status(agent: &str) -> bool {
-    agent == "vibe"
+    crate::title_status::has_title_status(agent)
 }
 
 /// `routeHookEvent`. `payload` is the parsed hook JSON (`Null` when it was

@@ -148,7 +148,10 @@ describe("layout sync", () => {
 		rust.hold = new Promise((r) => {
 			release = r;
 		});
-		const mine = commitLayout("t", j(split(pane("a", { cwd: "/x" }), pane("b"))));
+		const mine = commitLayout(
+			"t",
+			j(split(pane("a", { cwd: "/x" }), pane("b"))),
+		);
 		// Rust renamed b meanwhile (Agent control), and told every Window.
 		const e = rust.tabs.get("t");
 		if (!e) throw new Error("no tab");
@@ -161,9 +164,9 @@ describe("layout sync", () => {
 		});
 		release();
 		await mine;
-		expect(JSON.parse(taken[taken.length - 1].layoutJson).second.agentHandle).toBe(
-			"New",
-		);
+		expect(
+			JSON.parse(taken[taken.length - 1].layoutJson).second.agentHandle,
+		).toBe("New");
 		expect(warn).not.toHaveBeenCalledWith(
 			"[layout] Rust corrected the Window's layout",
 			expect.anything(),

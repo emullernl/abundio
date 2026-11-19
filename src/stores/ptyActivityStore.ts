@@ -1352,3 +1352,19 @@ function makeShellCountSelector(target: PtyActivityState) {
 export const selectIdleShellCount = makeShellCountSelector("idle");
 export const selectWorkingShellCount = makeShellCountSelector("active");
 export const selectErrorShellCount = makeShellCountSelector("error");
+
+// Rust reads each Agent's Title status from the PTY's own title (phase
+// 6d-3), so it needs to know which Agent a PTY runs: tell it on every change.
+usePtyActivityStore.subscribe((s, prev) => {
+	if (s.detectedAgentIds === prev.detectedAgentIds) return;
+	for (const [ptyId, agentId] of Object.entries(s.detectedAgentIds)) {
+		if (prev.detectedAgentIds[ptyId] !== agentId) {
+			sendStatusOp({ op: "agent", ptyId, agentId });
+		}
+	}
+	for (const ptyId of Object.keys(prev.detectedAgentIds)) {
+		if (!(ptyId in s.detectedAgentIds)) {
+			sendStatusOp({ op: "agent", ptyId, agentId: null });
+		}
+	}
+});

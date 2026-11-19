@@ -87,6 +87,9 @@ async function record(): Promise<RecordedRun[]> {
 		const ops: ShadowOp[] = [];
 		const changes: RecordedChange[] = [];
 		sync.__captureStatusOpsForTests((op) => {
+			// Which Agent a PTY runs feeds only its Title status, not the
+			// store view replayed here.
+			if (op.op === "agent") return;
 			if (op.op === "tick") {
 				const expected: Record<string, StatusView> = {};
 				for (const id of Object.keys(s().activities)) {

@@ -37,5 +37,6 @@ pub mod screen;
 pub mod shell_env;
 pub mod status_machine;
 pub mod status_store;
+pub mod title_status;
 pub mod workspace_store;
 pub mod worktree_watcher;

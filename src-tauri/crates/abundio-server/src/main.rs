@@ -225,6 +225,7 @@ fn run(data_dir: PathBuf) -> Result<(), String> {
             let _ = status.exit_update(pty, code, &status_machine::StatusConfig::default());
         }));
     }
+    abundio_core::title_status::listen(&ptys, status.clone(), events.clone());
     status_store::start_ticker(status.clone(), events);
 
     let host = Arc::new(ServerHookHost { ptys: ptys.clone(), env, status: status.clone() });

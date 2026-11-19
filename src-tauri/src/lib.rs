@@ -28,6 +28,7 @@ pub use abundio_core::db_open;
 pub mod env_vars_commands;
 pub mod tauri_sink;
 pub use abundio_core::status_store;
+pub use abundio_core::title_status;
 pub use abundio_core::events;
 pub mod file_explorer;
 pub use abundio_core::file_watcher;
@@ -983,6 +984,13 @@ pub fn run() {
                     }
                 }));
             }
+            // Titles too: a Title-status Agent's status is read from the
+            // PTY's own screen (phase 6d-3).
+            title_status::listen(
+                &app.state::<PtyManager>(),
+                status_store.clone(),
+                app.state::<event_sink::Events>().inner().clone(),
+            );
             status_store::start_ticker(
                 status_store,
                 app.state::<event_sink::Events>().inner().clone(),

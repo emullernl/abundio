@@ -13,7 +13,9 @@
 //! trimmed (a written space and an empty cell look the same); and clearing the
 //! screen moves its rows into scrollback instead of erasing them.
 
-use alacritty_terminal::event::VoidListener;
+use std::sync::{Arc, Mutex};
+
+use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::cell::{Cell, Flags};
@@ -49,9 +51,29 @@ pub struct InputModes {
     pub app_cursor: bool,
 }
 
+/// Keeps the titles the program set while output was fed (OSC 0 and 2; a
+/// reset is an empty title, as xterm.js reports it). Every other event (the
+/// replies a terminal writes back, the bell) is xterm.js's job.
+#[derive(Clone, Default)]
+struct Titles(Arc<Mutex<Vec<String>>>);
+
+impl EventListener for Titles {
+    fn send_event(&self, event: Event) {
+        let title = match event {
+            Event::Title(t) => t,
+            Event::ResetTitle => String::new(),
+            _ => return,
+        };
+        if let Ok(mut v) = self.0.lock() {
+            v.push(title);
+        }
+    }
+}
+
 pub struct Screen {
-    term: Term<VoidListener>,
+    term: Term<Titles>,
     parser: Processor,
+    titles: Titles,
 }
 
 impl Screen {
@@ -64,15 +86,18 @@ impl Screen {
             scrolling_history: scrollback,
             ..Config::default()
         };
+        let titles = Titles::default();
         Self {
-            term: Term::new(config, &size, VoidListener),
+            term: Term::new(config, &size, titles.clone()),
             parser: Processor::new(),
+            titles,
         }
     }
 
-    /// Feed PTY output, in order.
-    pub fn feed(&mut self, bytes: &[u8]) {
+    /// Feed PTY output, in order: the titles it set, in order.
+    pub fn feed(&mut self, bytes: &[u8]) -> Vec<String> {
         self.parser.advance(&mut self.term, bytes);
+        self.titles.0.lock().map(|mut v| std::mem::take(&mut *v)).unwrap_or_default()
     }
 
     pub fn resize(&mut self, columns: u16, lines: u16) {
@@ -90,8 +115,6 @@ impl Screen {
         });
     }
 
-    /// The text as drawn, for `abundio pane read`. `visible` limits it to the
-    /// screen; `lines` keeps only the last N lines after joining.
     /// The input modes a program has turned on, which decide the bytes a
     /// key or a paste must be sent as.
     pub fn modes(&self) -> InputModes {
@@ -103,6 +126,8 @@ impl Screen {
         }
     }
 
+    /// The text as drawn, for `abundio pane read`. `visible` limits it to the
+    /// screen; `lines` keeps only the last N lines after joining.
     pub fn read(&self, visible: bool, lines: Option<usize>) -> Vec<String> {
         let grid = self.term.grid();
         let columns = grid.columns();
@@ -194,6 +219,16 @@ mod tests {
         let mut s = Screen::new(cols, rows, 100);
         s.feed(input.as_bytes());
         s
+    }
+
+    #[test]
+    fn reports_the_titles_a_program_sets() {
+        let mut s = Screen::new(80, 24, 100);
+        assert_eq!(s.feed(b"\x1b]0;>> Vibe\x07hi\x1b]2;? Vibe\x1b\\"), vec![">> Vibe", "? Vibe"]);
+        assert!(s.feed(b"more").is_empty());
+        // Split across reads, and a reset.
+        assert!(s.feed(b"\x1b]2;Vi").is_empty());
+        assert_eq!(s.feed(b"be\x07\x1b]2;\x07"), vec!["Vibe", ""]);
     }
 
     #[test]

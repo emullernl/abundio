@@ -32,11 +32,37 @@ pub struct StatusStore {
     /// Per-PTY update counter, so a Client never applies an older update
     /// over a newer one (command replies and tick events can interleave).
     seqs: DashMap<String, u64>,
-    /// PTYs whose Agent's terminal title has shown a Title status (ADR-0047):
-    /// before it has, a Title-status Agent's hooks are dropped.
-    title_seen: dashmap::DashSet<String>,
+    /// Each PTY's Agent, as its Window or a hook said, and what its terminal
+    /// titles have said this agent session (**Title status**, ADR-0047,
+    /// `title_status.rs`). Before a title has shown a status, a
+    /// Title-status Agent's hooks are dropped.
+    titles: DashMap<String, TitleEntry>,
     /// OpenCode 1.x: PTYs whose last turn was cancelled (`openCodeCancelGate`).
     open_code_cancelled: dashmap::DashSet<String>,
+}
+
+#[derive(Default)]
+struct TitleEntry {
+    agent: Option<String>,
+    track: crate::title_status::TitleTrack,
+    /// Bumped whenever a grace window must no longer end the Turn.
+    grace: u64,
+}
+
+impl TitleEntry {
+    fn reset(&mut self) {
+        self.track = Default::default();
+        self.grace += 1;
+    }
+}
+
+/// What a title did (`StatusStore::title_changed`).
+#[derive(Debug, Default)]
+pub struct TitleOutcome {
+    pub update: Option<StatusUpdate>,
+    /// A grace window to run: call `title_grace_ended` with this after
+    /// `title_status::TURN_END_GRACE_MS`.
+    pub grace: Option<u64>,
 }
 
 /// What the frontend store keeps of a PTY's status: its entry plus the
@@ -220,9 +246,8 @@ pub enum StatusOp {
     Apply { pty_id: String, event: StatusEvent },
     Touch { pty_id: String, now: i64 },
     Remove { pty_id: String },
-    /// The pane's terminal title showed a Title status (or, `false`, its PTY
-    /// restarted and has not yet).
-    TitleStatusSeen { pty_id: String, seen: bool },
+    /// Which Agent the PTY runs, as the Window detected it, or none.
+    Agent { pty_id: String, agent_id: Option<String> },
 }
 
 /// The fields of the frontend's `PtyActivityEntry` that decide whether an
@@ -273,16 +298,12 @@ impl StatusStore {
                 self.touch(&pty_id, now);
                 None
             }
-            StatusOp::TitleStatusSeen { pty_id, seen } => {
-                if seen {
-                    self.title_seen.insert(pty_id);
-                } else {
-                    self.title_seen.remove(&pty_id);
-                }
+            StatusOp::Agent { pty_id, agent_id } => {
+                self.set_agent(&pty_id, agent_id);
                 None
             }
             StatusOp::Remove { pty_id } => {
-                self.title_seen.remove(&pty_id);
+                self.titles.remove(&pty_id);
                 self.open_code_cancelled.remove(&pty_id);
                 let existed = self.by_pty.contains_key(&pty_id);
                 self.remove(&pty_id);
@@ -313,6 +334,12 @@ impl StatusStore {
             .clone()
             .unwrap_or_else(|| StoreView::from(&StatusState::initial(Mode::Shell)));
         let after = self.apply(pty_id, &event, config);
+        if before.as_ref().is_some_and(|b| b.mode != after.mode) {
+            // Into or out of agent mode: a new agent session's titles.
+            if let Some(mut t) = self.titles.get_mut(pty_id) {
+                t.reset();
+            }
+        }
         let changed = match &before {
             None => true,
             Some(b) => entry_key(b) != entry_key(&after),
@@ -343,7 +370,53 @@ impl StatusStore {
     }
 
     pub fn title_status_seen(&self, pty_id: &str) -> bool {
-        self.title_seen.contains(pty_id)
+        self.titles.get(pty_id).is_some_and(|t| t.track.seen)
+    }
+
+    /// Which Agent the PTY runs. A different one starts its titles afresh.
+    pub fn set_agent(&self, pty_id: &str, agent: Option<String>) {
+        let mut t = self.titles.entry(pty_id.to_string()).or_default();
+        if t.agent != agent {
+            t.agent = agent;
+            t.reset();
+        }
+    }
+
+    /// The PTY's terminal title changed (`title_status::change`), in agent
+    /// mode only: what the owning Window should take, and a grace window to
+    /// run when the title ended a Turn.
+    pub fn title_changed(&self, pty_id: &str, title: &str, now: i64, config: &StatusConfig) -> TitleOutcome {
+        if !self.view(pty_id).is_some_and(|v| v.mode == Mode::Agent) {
+            return TitleOutcome::default();
+        }
+        let (dispatch, grace) = {
+            let mut t = self.titles.entry(pty_id.to_string()).or_default();
+            let c = crate::title_status::change(t.track, t.agent.as_deref(), title);
+            t.track = c.track;
+            if c.dispatch.is_some() {
+                t.grace += 1;
+            }
+            (c.dispatch, (c.await_turn_end).then_some(t.grace))
+        };
+        let Some(d) = dispatch else { return TitleOutcome::default() };
+        let event = StatusEvent::Title { status: d.status, now, starts_turn: Some(d.starts_turn) };
+        TitleOutcome { update: self.apply_change(pty_id, event, config), grace }
+    }
+
+    /// A grace window ran out: unless a later title (or a new agent session)
+    /// cancelled it, the Turn was cancelled or failed.
+    pub fn title_grace_ended(&self, pty_id: &str, grace: u64, now: i64, config: &StatusConfig) -> Option<StatusUpdate> {
+        {
+            let mut t = self.titles.get_mut(pty_id)?;
+            if t.grace != grace {
+                return None;
+            }
+            t.track = crate::title_status::grace_ended(t.track);
+        }
+        if !self.has(pty_id) {
+            return None;
+        }
+        self.apply_change(pty_id, StatusEvent::TitleTurnEnded { now }, config)
     }
 
     pub fn open_code_cancelled(&self, pty_id: &str) -> bool {
@@ -785,11 +858,65 @@ mod tests {
     }
 
     #[test]
-    fn reads_the_windows_title_status_op() {
-        let op: StatusOp = serde_json::from_str(r#"{"op":"titleStatusSeen","ptyId":"p","seen":true}"#).unwrap();
+    fn reads_the_windows_agent_op() {
+        let op: StatusOp = serde_json::from_str(r#"{"op":"agent","ptyId":"p","agentId":"vibe"}"#).unwrap();
         let store = StatusStore::new();
         assert!(store.run_op(&crate::event_sink::ClientId::from("w"), op, &StatusConfig::default()).is_none());
+        assert_eq!(store.titles.get("p").unwrap().agent.as_deref(), Some("vibe"));
+        let op: StatusOp = serde_json::from_str(r#"{"op":"agent","ptyId":"p","agentId":null}"#).unwrap();
+        store.run_op(&crate::event_sink::ClientId::from("w"), op, &StatusConfig::default());
+        assert_eq!(store.titles.get("p").unwrap().agent, None);
+    }
+
+    fn vibe_pane() -> StatusStore {
+        let store = StatusStore::new();
+        let w = crate::event_sink::ClientId::from("w");
+        let config = StatusConfig::default();
+        store.run_op(&w, StatusOp::Init { pty_id: "p".into(), mode: Some(Mode::Agent) }, &config);
+        store.set_agent("p", Some("vibe".into()));
+        store
+    }
+
+    #[test]
+    fn a_vibe_title_drives_the_status() {
+        let store = vibe_pane();
+        let config = StatusConfig::default();
+        assert!(store.title_changed("p", "Vibe", 1, &config).update.is_none());
+        assert!(!store.title_status_seen("p"));
+        let o = store.title_changed("p", ">> Vibe", 2, &config);
         assert!(store.title_status_seen("p"));
+        assert_eq!(o.update.unwrap().view.unwrap().state, DotState::Working);
+        let o = store.title_changed("p", "? Vibe", 3, &config);
+        assert_eq!(o.update.unwrap().view.unwrap().state, DotState::Waiting);
+        // Bare again: wait for the hook, then call it a cancel.
+        let o = store.title_changed("p", "Vibe", 4, &config);
+        let grace = o.grace.unwrap();
+        let u = store.title_grace_ended("p", grace, 5, &config).unwrap();
+        assert_eq!(u.view.unwrap().state, DotState::Idle);
+    }
+
+    #[test]
+    fn a_later_title_cancels_the_grace_window() {
+        let store = vibe_pane();
+        let config = StatusConfig::default();
+        store.title_changed("p", ">> Vibe", 1, &config);
+        let grace = store.title_changed("p", "Vibe", 2, &config).grace.unwrap();
+        store.title_changed("p", ">> Vibe", 3, &config);
+        assert!(store.title_grace_ended("p", grace, 4, &config).is_none());
+        assert_eq!(store.view("p").unwrap().state, DotState::Working);
+    }
+
+    #[test]
+    fn titles_count_only_in_agent_mode_and_start_afresh_with_a_new_session() {
+        let store = vibe_pane();
+        let config = StatusConfig::default();
+        store.title_changed("p", ">> Vibe", 1, &config);
+        store.apply_from_host("p", StatusEvent::AgentExited, &config);
+        assert!(!store.title_status_seen("p"));
+        assert!(store.title_changed("p", ">> Vibe", 2, &config).update.is_none());
+        let shell = StatusStore::new();
+        shell.set_agent("p", Some("vibe".into()));
+        assert!(shell.title_changed("p", ">> Vibe", 1, &config).update.is_none());
     }
 
     #[test]

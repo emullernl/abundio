@@ -67,6 +67,10 @@ pub fn apply(
     status.set_open_code_cancelled(pty_id, route.open_code_cancelled);
 
     let adopted = route.steps.iter().any(|s| !matches!(s, HookStep::SessionEnd));
+    if adopted {
+        // The hook proves which Agent runs here; its titles are read by it.
+        status.set_agent(pty_id, Some(agent.to_string()));
+    }
     let mut updates = Vec::new();
     let mut push = |u: Option<StatusUpdate>| updates.extend(u);
     let is_agent = |s: &StatusStore| s.view(pty_id).is_some_and(|v| v.mode == Mode::Agent);
@@ -198,7 +202,8 @@ mod tests {
         let s = store_with(Mode::Agent);
         let a = hook_in(&s, "vibe", "post_agent", "{}", 10);
         assert_eq!(a.notice.dropped.as_deref(), Some("no_title_status"));
-        s.run_op(&ClientId::from("w"), StatusOp::TitleStatusSeen { pty_id: "p".into(), seen: true }, &StatusConfig::default());
+        s.set_agent("p", Some("vibe".into()));
+        s.title_changed("p", ">> Vibe", 10, &StatusConfig::default());
         let a = hook_in(&s, "vibe", "post_agent", "{}", 11);
         assert_eq!(a.notice.dropped, None);
     }

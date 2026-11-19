@@ -92,6 +92,9 @@ pub struct SpawnContext {
 /// Told when a PTY ends: its id and exit code (`None` when killed).
 pub type ExitListener = Arc<dyn Fn(&str, Option<u32>) + Send + Sync>;
 
+/// Told when a PTY's terminal title changes: its id and the new title.
+pub type TitleListener = Arc<dyn Fn(&str, &str) + Send + Sync>;
+
 pub struct PtyManager {
     entries: DashMap<String, PtyEntry>,
     spawn_contexts: DashMap<String, SpawnContext>,
@@ -105,6 +108,8 @@ pub struct PtyManager {
     scrollback: AtomicUsize,
     /// See [`PtyManager::on_exit`].
     exit_listener: Arc<std::sync::OnceLock<ExitListener>>,
+    /// See [`PtyManager::on_title`].
+    title_listener: Arc<std::sync::OnceLock<TitleListener>>,
 }
 
 impl PtyManager {
@@ -115,6 +120,7 @@ impl PtyManager {
             owner_windows: DashMap::new(),
             control_tokens: Default::default(),
             exit_listener: Arc::new(std::sync::OnceLock::new()),
+            title_listener: Arc::new(std::sync::OnceLock::new()),
             scrollback: AtomicUsize::new(crate::screen::DEFAULT_SCROLLBACK),
         }
     }
@@ -505,9 +511,11 @@ impl PtyManager {
         let tokens = self.control_tokens.clone();
         let events = deps.events;
         let on_exit = self.exit_listener.clone();
+        let on_title = self.title_listener.clone();
         thread::spawn(move || {
             pty_thread(
                 id_clone, master, child, rx, alive, events, screen, log_file, shell_type, on_exit,
+                on_title,
             );
             // The PTY is gone: its token must not outlive it (a background
             // process it left behind still has the token in its environment).
@@ -580,16 +588,20 @@ impl PtyManager {
         Ok(())
     }
 
-    /// Kill every PTY spawned by Window `label`. Called when the Window is
-    /// destroyed. Logs are kept, so the panes restore their scrollback when the
-    /// Profile is opened again (a fresh load never reattaches to a live PTY).
-    /// Kill every PTY (the server shutting down).
     /// Be told whenever a PTY ends (exits or is killed), with its exit code,
     /// before its `pty-status` event goes out. Set once, at startup.
     pub fn on_exit(&self, listener: ExitListener) {
         let _ = self.exit_listener.set(listener);
     }
 
+    /// Be told whenever a PTY's program sets its terminal title (OSC 0 or 2,
+    /// read by its Rust screen), in order, after the output that set it.
+    /// Set once, at startup.
+    pub fn on_title(&self, listener: TitleListener) {
+        let _ = self.title_listener.set(listener);
+    }
+
+    /// Kill every PTY (the server shutting down).
     pub fn kill_all(&self) {
         let ids: Vec<String> = self.entries.iter().map(|e| e.key().clone()).collect();
         for id in ids {
@@ -597,6 +609,9 @@ impl PtyManager {
         }
     }
 
+    /// Kill every PTY spawned by Window `label`. Called when the Window is
+    /// destroyed. Logs are kept, so the panes restore their scrollback when the
+    /// Profile is opened again (a fresh load never reattaches to a live PTY).
     pub fn kill_for_window(&self, label: &str) {
         let owned: Vec<String> = self
             .owner_windows
@@ -1805,6 +1820,14 @@ fn write_abundio_env_helper(dir: &Path) {
     let _ = fs::write(dir.join("abundio-env.ps1"), ABUNDIO_ENV_PS1);
 }
 
+fn tell_titles(on_title: &std::sync::OnceLock<TitleListener>, pty_id: &str, titles: Vec<String>) {
+    if let Some(listener) = on_title.get() {
+        for title in titles {
+            listener(pty_id, &title);
+        }
+    }
+}
+
 /// Runs on a dedicated OS thread. Owns the master PTY and child process.
 fn pty_thread(
     pty_id: String,
@@ -1817,6 +1840,7 @@ fn pty_thread(
     log_file: Option<(File, PathBuf)>,
     shell_type: ShellType,
     on_exit: Arc<std::sync::OnceLock<ExitListener>>,
+    on_title: Arc<std::sync::OnceLock<TitleListener>>,
 ) {
     let exited = |code: Option<u32>| {
         if let Some(listener) = on_exit.get() {
@@ -1906,10 +1930,9 @@ fn pty_thread(
             }
 
             // Keep the screen, then emit the coalesced batch as one message.
-            if let Ok(mut s) = screen.lock() {
-                s.feed(&accum);
-            }
+            let titles = screen.lock().map(|mut s| s.feed(&accum)).unwrap_or_default();
             read_events.pty_output(&read_pty_id, &accum);
+            tell_titles(&on_title, &read_pty_id, titles);
             accum.clear();
         }
 
@@ -1919,10 +1942,9 @@ fn pty_thread(
             accum.extend_from_slice(&chunk);
         }
         if !accum.is_empty() {
-            if let Ok(mut s) = screen.lock() {
-                s.feed(&accum);
-            }
+            let titles = screen.lock().map(|mut s| s.feed(&accum)).unwrap_or_default();
             read_events.pty_output(&read_pty_id, &accum);
+            tell_titles(&on_title, &read_pty_id, titles);
         }
 
         let _ = inner.join();
