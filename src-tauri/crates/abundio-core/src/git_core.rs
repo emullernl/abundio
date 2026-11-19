@@ -13,7 +13,7 @@ use std::sync::OnceLock;
 /// Keyed by the canonicalized repo working directory path.
 /// Note: this cache lives for the process lifetime. If the remote default
 /// branch is renamed, the app must be restarted to pick up the change.
-pub(crate) fn default_branch_cache() -> &'static DashMap<String, String> {
+pub fn default_branch_cache() -> &'static DashMap<String, String> {
     static CACHE: OnceLock<DashMap<String, String>> = OnceLock::new();
     CACHE.get_or_init(DashMap::new)
 }
@@ -111,13 +111,13 @@ pub struct TreeDiffStats {
     pub files: i64,
 }
 
-pub(crate) fn cache_key_for(cwd: &str) -> String {
+pub fn cache_key_for(cwd: &str) -> String {
     std::fs::canonicalize(cwd)
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| cwd.to_string())
 }
 
-pub(crate) fn detect_default_branch(cwd: &str) -> Result<String, AbundioError> {
+pub fn detect_default_branch(cwd: &str) -> Result<String, AbundioError> {
     let key = cache_key_for(cwd);
     if let Some(cached) = default_branch_cache().get(&key) {
         return Ok(cached.clone());
@@ -127,7 +127,7 @@ pub(crate) fn detect_default_branch(cwd: &str) -> Result<String, AbundioError> {
     Ok(detected)
 }
 
-pub(crate) fn resolve_base_branch(cwd: &str, base_branch: Option<String>) -> Result<String, AbundioError> {
+pub fn resolve_base_branch(cwd: &str, base_branch: Option<String>) -> Result<String, AbundioError> {
     match base_branch {
         Some(b) if !b.is_empty() => Ok(b),
         _ => detect_default_branch(cwd),
@@ -144,18 +144,18 @@ pub(crate) fn resolve_base_branch(cwd: &str, base_branch: Option<String>) -> Res
 // user-action one-shots, but they now also use libgit2 for consistency and
 // to keep the entire production binary subprocess-free for git.
 
-pub(crate) fn compute_changed_files_sync(
+pub fn compute_changed_files_sync(
     cwd: &str,
     base_branch: Option<String>,
 ) -> Result<Vec<GitChangedFile>, AbundioError> {
     crate::git_libgit2::compute_changed_files_sync(cwd, base_branch)
 }
 
-pub(crate) fn compute_branch_info_sync(cwd: &str) -> Result<BranchInfo, AbundioError> {
+pub fn compute_branch_info_sync(cwd: &str) -> Result<BranchInfo, AbundioError> {
     crate::git_libgit2::compute_branch_info_sync(cwd)
 }
 
-pub(crate) fn compute_status_fingerprint_sync(cwd: &str) -> Result<String, AbundioError> {
+pub fn compute_status_fingerprint_sync(cwd: &str) -> Result<String, AbundioError> {
     crate::git_libgit2::compute_status_fingerprint_sync(cwd)
 }
 
@@ -197,7 +197,7 @@ pub struct GitFetchBundle {
 /// Shared by every command that turns a caller-supplied path into a filesystem
 /// or index lookup. `git_stage_path` *writes* through this, so it must not grow
 /// its own copy — one validator, one set of rules.
-pub(crate) fn validate_repo_relative(file_path: &str) -> Result<(), AbundioError> {
+pub fn validate_repo_relative(file_path: &str) -> Result<(), AbundioError> {
     // Every component must be a plain name. Allow-listing rather than rejecting
     // `is_absolute()` + `ParentDir` matters on Windows, where `C:foo` is
     // *drive-relative* — `is_absolute()` is false, so the old check passed it,
@@ -271,7 +271,7 @@ pub struct WorkspaceGitSummary {
 /// Change *stats* remain excluded — they're computed by `git_changed_files`
 /// whenever a workspace's scheduler runs, and synced back to the workspace chip
 /// store via the frontend.
-pub(crate) fn compute_workspace_git_summary(req: WorkspaceGitRequest) -> WorkspaceGitSummary {
+pub fn compute_workspace_git_summary(req: WorkspaceGitRequest) -> WorkspaceGitSummary {
     let repo = git2::Repository::discover(&req.cwd).ok();
     let current_branch = repo.as_ref().and_then(git_libgit2::current_branch_only_in);
     let bits = match repo.as_ref() {

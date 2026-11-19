@@ -284,7 +284,7 @@ mod tests {
     /// The cases `screenReadFixtures.test.ts` also runs through xterm.js.
     #[test]
     fn shared_fixtures() {
-        let raw = include_str!("../../src/lib/__tests__/fixtures/screenRead.json");
+        let raw = include_str!("../../../../src/lib/__tests__/fixtures/screenRead.json");
         let doc: serde_json::Value = serde_json::from_str(raw).unwrap();
         for c in doc["cases"].as_array().unwrap() {
             let mut s = Screen::new(

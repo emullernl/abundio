@@ -24,7 +24,10 @@ Abundio is a GPU-accelerated terminal multiplexer desktop app built with Tauri v
 
 ## Architecture
 
-### Rust Backend (`src-tauri/src/`)
+### Rust Backend (`src-tauri/src/` desktop, `src-tauri/crates/abundio-core/src/` core)
+
+The modules below are listed together; which crate holds each is decided by whether it needs Tauri (see "The core crate has no Tauri" under Key Conventions).
+
 
 - `pty_manager.rs` — Per-PTY dedicated OS threads with crossbeam channels. PTY types never cross async boundaries. Output goes to the `EventSink` (`event_sink.rs`), which sends it raw on each Window's PTY output channel.
 - `app_paths.rs` — Every on-disk path, split into **shared** (`<data>/abundio/`: hook relay scripts, shims) and **epoch-versioned** (`<data>/abundio/v2/`: database, pty-logs, shell-integration, windows.json). Also does the one-time import of the previous epoch's database. See ADR-0025.
@@ -213,8 +216,8 @@ pnpm check:fix          # Biome auto-fix
 Rust requires `cargo` on PATH. If not found, it's at `~/.rustup/toolchains/stable-x86_64-apple-darwin/bin/cargo`.
 
 ```bash
-cd src-tauri && cargo check              # Rust type check
-cd src-tauri && cargo test               # Rust tests (all)
+cd src-tauri && cargo check --workspace  # Rust type check (both crates)
+cd src-tauri && cargo test --workspace   # Rust tests (both crates)
 cd src-tauri && cargo test test_name     # Run a single Rust test
 ```
 
@@ -240,7 +243,7 @@ git push --follow-tags         # triggers CI build for all platforms
 - PTY data is binary — raw bytes on the Window's PTY output channel (`ipc.ts` `ptyOutputHub`, `parsePtyOutputFrame`), `Uint8Array` in frontend. Never treat as UTF-8 strings. Invoke results that carry bytes (`pty_read_log`) are still base64, and so is the demo's mock bus.
 - **Rust is the authority for pane status** (ADR-0063). `status_machine.rs` is the reducer (a port of `statusReducer.ts`, held equal by `statusParity.test.ts` / `fixtures/statusParity.json`); `status_store.rs` keeps every PTY's status and runs the idle scan (`start_ticker`, `status-updates` to the owning Window). The Window still **predicts**: `ptyActivityStore` applies each change at once, as before, and sends it (`lib/statusSync.ts`, `status_apply`); Rust's answer wins and a correction is logged as `[status] Rust corrected the Window's status`. Tests and the browser demo have no Rust (`isRustStatusAuthority()` false), so there the store runs its own scan. Change the reducer in both languages and regenerate the fixtures (`UPDATE_STATUS_PARITY=1`); `statusShadowStore.test.ts` records the real store for `status_store.rs` to replay.
 - **Rust is the authority for layouts** (ADR-0063). Never save a layout with `tab_update`: the store's `saveLayout` diffs it into node-level ops (`lib/layoutOps.ts`) and sends them through `lib/layoutSync.ts` (`layout_apply`); `layout_store.rs` applies them (`layout_ops.rs`), saves, and sends `layout-changed` to the Profile's other Windows. The Window predicts and takes Rust's answer when it differs (`[layout] Rust corrected the Window's layout`). Tests and the demo save whole with `tab_update` (`isRustLayoutAuthority()` false). After changing `paneTree.ts`, regenerate `fixtures/layoutOps.json` (`UPDATE_LAYOUT_OPS=1`). Tab create / close / rename / move reach the Profile's other Windows as `tabs-changed` (`mergeRemoteTabs`). A new field in `workspaceStore` or `ptyActivityStore` must be labelled **shared** (the Profile's work, the same for every Client) or **view** (this Window's own) in `lib/stateScope.ts`.
-- **Core modules use no Tauri** (`src-tauri/src/core_boundary.rs`, docs/plans/remote-hosts.md phase 6): the modules listed there are what a Host runs with no window, and a test fails if one uses Tauri, `AppHandle` or a desktop module. Put a command (`#[tauri::command]`) and anything holding an `AppHandle` in a desktop module (`*_commands.rs`, `agent_control.rs`, `tauri_sink.rs`); core reaches the app through a trait (`EventSink`, `HookHost`, `control_local::Live`).
+- **The core crate has no Tauri** (`src-tauri/crates/abundio-core`, docs/plans/remote-hosts.md phase 6): it is what a Host runs with no window (stores, PTYs, status, layouts, hook server, Agent control's core), and it cannot depend on Tauri or on the desktop crate. The desktop crate (`src-tauri/src`) re-exports its modules (`pub use abundio_core::x;` in `lib.rs`), so `crate::x` paths work in both. Put a command (`#[tauri::command]`) and anything holding an `AppHandle` in the desktop crate (`*_commands.rs`, `agent_control.rs`, `tauri_sink.rs`); core reaches the app through a trait (`EventSink`, `HookHost`, `control_local::Live`). Migrations live in `crates/abundio-core/migrations`.
 - **Every Tauri import lives in a seam module** (`ipc.ts`, `desktop.ts`, `appWindow.ts`, `clipboard.ts`, `platform.ts`; `seamImports.test.ts`), and **every command has a scope** in `lib/commandScope.ts` (host or desktop; `commandScope.test.ts`). A new command must pick one. See `docs/plans/remote-hosts.md`.
 - Resize events are debounced (100ms). Layout persists to DB only on mouseup, not during drag.
 - Empty `ptyId` in a layout node means "spawn PTY on first render". TerminalPane handles this and writes the real ID back into the layout.

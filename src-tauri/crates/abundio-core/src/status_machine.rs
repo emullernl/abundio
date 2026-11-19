@@ -764,7 +764,7 @@ mod tests {
     /// every event must match.
     #[test]
     fn matches_the_typescript_reducer() {
-        let raw = include_str!("../../src/lib/__tests__/fixtures/statusParity.json");
+        let raw = include_str!("../../../../src/lib/__tests__/fixtures/statusParity.json");
         let doc: serde_json::Value = serde_json::from_str(raw).unwrap();
         let mut checked = 0;
         for (i, run) in doc["runs"].as_array().unwrap().iter().enumerate() {

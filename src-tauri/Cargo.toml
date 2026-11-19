@@ -13,7 +13,12 @@ crate-type = ["lib", "cdylib", "staticlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[workspace]
+members = ["crates/abundio-core"]
+
 [dependencies]
+# Everything a Host runs with no window (docs/plans/remote-hosts.md phase 6).
+abundio-core = { path = "crates/abundio-core" }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-shell = "2"
 tauri-plugin-notification = "2"

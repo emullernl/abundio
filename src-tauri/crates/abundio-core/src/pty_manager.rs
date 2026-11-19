@@ -849,7 +849,7 @@ fn detect_shell_type(shell: &str) -> ShellType {
 /// never be consumed, and `ABUNDIO_ENV__*` plus `ABUNDIO_ENV_KEYS` would linger
 /// in the environment of that shell and every child — doubling the footprint in
 /// `env` output and crash dumps, and handing a reader the list of managed names.
-pub(crate) fn build_env_injection(
+pub fn build_env_injection(
     vars: &[(String, String)],
     budget_bytes: usize,
     emit_shadow: bool,
@@ -1229,7 +1229,7 @@ if (Get-Module -Name PSReadLine) {
 /// rebinding its port) may already have acted, so it is retried with
 /// `X-Abundio-Retry`: Rust then turns `prompt --wait` into a plain wait and
 /// refuses to repeat any other change. No `eval`: the arguments are data.
-pub(crate) const ABUNDIO_CLI_SH: &str = r#"#!/usr/bin/env bash
+pub const ABUNDIO_CLI_SH: &str = r#"#!/usr/bin/env bash
 # Abundio — control the panes and Agents of this Workspace. Run `abundio help`.
 set -uo pipefail
 
@@ -1327,7 +1327,7 @@ esac
 /// PowerShell twin of [`ABUNDIO_CLI_SH`]; the same protocol, exit codes and
 /// retry rules. PowerShell swallows a bare `--` given to a script, so the
 /// skill teaches `--agent-arg <arg>` (one per argument), which needs no `--`.
-pub(crate) const ABUNDIO_CLI_PS1: &str = r#"# Abundio — control the panes and Agents of this Workspace. Run `abundio help`.
+pub const ABUNDIO_CLI_PS1: &str = r#"# Abundio — control the panes and Agents of this Workspace. Run `abundio help`.
 if (-not $env:ABUNDIO_AGENT_TOKEN -or -not $env:ABUNDIO_HOOK_PORT) {
     [Console]::Error.WriteLine("abundio: not running inside an Abundio Workspace pane"); exit 1
 }

@@ -192,7 +192,7 @@ impl WaitGraph {
 }
 
 /// Whether `target` can be reached from `start` by following wait edges.
-pub(crate) fn reaches(edges: &HashMap<String, (String, String)>, start: &str, target: &str) -> bool {
+pub fn reaches(edges: &HashMap<String, (String, String)>, start: &str, target: &str) -> bool {
     let mut stack = vec![start.to_string()];
     let mut seen = std::collections::HashSet::new();
     while let Some(node) = stack.pop() {
@@ -466,7 +466,7 @@ pub fn handle_key(s: &str) -> String {
 }
 
 /// `p12` → 12. Anything else, including `p0` and `p`, is not a Pane number.
-pub(crate) fn parse_pane_number(s: &str) -> Option<u32> {
+pub fn parse_pane_number(s: &str) -> Option<u32> {
     let digits = s.strip_prefix('p').or_else(|| s.strip_prefix('P'))?;
     if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return None;
@@ -474,7 +474,7 @@ pub(crate) fn parse_pane_number(s: &str) -> Option<u32> {
     digits.parse().ok().filter(|n| *n > 0)
 }
 
-pub(crate) fn parse_target(s: &str) -> Result<Target, String> {
+pub fn parse_target(s: &str) -> Result<Target, String> {
     if let Some(n) = parse_pane_number(s) {
         return Ok(Target::Pane(n));
     }
@@ -501,7 +501,7 @@ pub fn valid_key(s: &str) -> bool {
     }
 }
 
-pub(crate) fn parse_direction(s: &str) -> Result<Direction, String> {
+pub fn parse_direction(s: &str) -> Result<Direction, String> {
     match s {
         "right" => Ok(Direction::Right),
         "down" => Ok(Direction::Down),
@@ -510,7 +510,7 @@ pub(crate) fn parse_direction(s: &str) -> Result<Direction, String> {
 }
 
 /// `--timeout <ms>`: `0` means no limit.
-pub(crate) fn parse_timeout(s: &str) -> Result<Option<u64>, String> {
+pub fn parse_timeout(s: &str) -> Result<Option<u64>, String> {
     match s.parse::<u64>() {
         Ok(0) => Ok(None),
         Ok(ms) => Ok(Some(ms)),
@@ -522,7 +522,7 @@ pub(crate) fn parse_timeout(s: &str) -> Result<Option<u64>, String> {
 /// `with_value` take the next argument; the rest are switches. After `--`,
 /// everything is positional and is returned separately. A flag in
 /// [`REPEATABLE`] may be given many times; its values are kept in order.
-pub(crate) struct Args<'a> {
+pub struct Args<'a> {
     positional: Vec<&'a str>,
     flags: HashMap<&'static str, Option<&'a str>>,
     repeated: Vec<&'a str>,
@@ -533,9 +533,9 @@ pub(crate) struct Args<'a> {
 /// that works in every shell. PowerShell consumes a bare `--` given to a
 /// script itself (its end-of-parameters token), so `-- <agent args>` cannot
 /// work there unless the `--` is quoted.
-pub(crate) const REPEATABLE: &str = "--agent-arg";
+pub const REPEATABLE: &str = "--agent-arg";
 
-pub(crate) fn split_args<'a>(
+pub fn split_args<'a>(
     args: &'a [String],
     with_value: &[&'static str],
     switches: &[&'static str],
@@ -548,7 +548,7 @@ pub(crate) fn split_args<'a>(
     }
 }
 
-pub(crate) fn split_args_inner<'a>(
+pub fn split_args_inner<'a>(
     args: &'a [String],
     with_value: &[&'static str],
     switches: &[&'static str],
@@ -597,7 +597,7 @@ pub(crate) fn split_args_inner<'a>(
     Ok(out)
 }
 
-pub(crate) fn expect_positionals(args: &Args, min: usize, max: usize, usage: &str) -> Result<(), String> {
+pub fn expect_positionals(args: &Args, min: usize, max: usize, usage: &str) -> Result<(), String> {
     let n = args.positional.len();
     if n < min || n > max {
         return Err(format!("usage: {usage}"));
@@ -656,7 +656,7 @@ pub fn parse_args(argv: &[String]) -> Result<Parsed, String> {
     }
 }
 
-pub(crate) fn parse_pane(command: &str, rest: &[String]) -> Result<Request, String> {
+pub fn parse_pane(command: &str, rest: &[String]) -> Result<Request, String> {
     match command {
         "list" | "current" => {
             let a = split_args(rest, &[], &[])?;
@@ -751,7 +751,7 @@ pub(crate) fn parse_pane(command: &str, rest: &[String]) -> Result<Request, Stri
     }
 }
 
-pub(crate) fn parse_agent(command: &str, rest: &[String]) -> Result<Request, String> {
+pub fn parse_agent(command: &str, rest: &[String]) -> Result<Request, String> {
     match command {
         "list" => {
             let a = split_args(rest, &[], &[])?;
@@ -893,7 +893,7 @@ pub const TAB_NAME_MAX: usize = 64;
 
 /// A Tab name an Agent gives: trimmed, one line, no control characters,
 /// 1–[`TAB_NAME_MAX`] characters.
-pub(crate) fn check_tab_name(name: &str) -> Result<String, String> {
+pub fn check_tab_name(name: &str) -> Result<String, String> {
     let name = name.trim();
     if name.is_empty() {
         return Err("the Tab name is empty".into());
@@ -907,7 +907,7 @@ pub(crate) fn check_tab_name(name: &str) -> Result<String, String> {
     Ok(name.to_string())
 }
 
-pub(crate) fn parse_tab(command: &str, rest: &[String]) -> Result<Request, String> {
+pub fn parse_tab(command: &str, rest: &[String]) -> Result<Request, String> {
     match command {
         "new" => {
             let a = split_args(rest, &["--name"], &["--focus"])?;
@@ -945,7 +945,7 @@ pub(crate) fn parse_tab(command: &str, rest: &[String]) -> Result<Request, Strin
 
 /// One line of text for the user: trimmed, no control characters, 1–`max`
 /// characters.
-pub(crate) fn one_line(what: &str, s: &str, max: usize) -> Result<String, String> {
+pub fn one_line(what: &str, s: &str, max: usize) -> Result<String, String> {
     let s = s.trim();
     if s.is_empty() {
         return Err(format!("the {what} is empty"));
@@ -961,7 +961,7 @@ pub(crate) fn one_line(what: &str, s: &str, max: usize) -> Result<String, String
 
 /// Text that may span lines: newlines and tabs allowed, other control
 /// characters (escape sequences) not.
-pub(crate) fn multi_line(what: &str, s: &str) -> Result<String, String> {
+pub fn multi_line(what: &str, s: &str) -> Result<String, String> {
     let s = s.trim();
     if s.is_empty() {
         return Err(format!("the {what} is empty"));
@@ -972,14 +972,14 @@ pub(crate) fn multi_line(what: &str, s: &str) -> Result<String, String> {
     Ok(s.replace("\r\n", "\n").replace('\r', "\n"))
 }
 
-pub(crate) fn wait_timeout(a: &Args) -> Result<Option<u64>, String> {
+pub fn wait_timeout(a: &Args) -> Result<Option<u64>, String> {
     match a.flags.get("--timeout").copied().flatten() {
         Some(v) => parse_timeout(v),
         None => Ok(Some(DEFAULT_WAIT_TIMEOUT_MS)),
     }
 }
 
-pub(crate) fn parse_notify(rest: &[String]) -> Result<Request, String> {
+pub fn parse_notify(rest: &[String]) -> Result<Request, String> {
     let a = split_args(rest, &[], &[])?;
     expect_positionals(&a, 1, 1, "abundio notify <message>")?;
     Ok(Request::Notify {
@@ -987,7 +987,7 @@ pub(crate) fn parse_notify(rest: &[String]) -> Result<Request, String> {
     })
 }
 
-pub(crate) fn parse_file_open(rest: &[String]) -> Result<Request, String> {
+pub fn parse_file_open(rest: &[String]) -> Result<Request, String> {
     let usage = "abundio file open <path> [--tab | --window] [--focus] [--line <n>] [--diff | --preview | --commit <sha>]";
     let a = split_args(
         rest,
@@ -1125,7 +1125,7 @@ pub fn resolve_workspace_file(
     Ok((absolute.to_string_lossy().into_owned(), slash(rel)))
 }
 
-pub(crate) fn parse_progress(rest: &[String]) -> Result<Request, String> {
+pub fn parse_progress(rest: &[String]) -> Result<Request, String> {
     let usage = "abundio progress <text> | abundio progress --clear";
     let a = split_args(rest, &[], &["--clear"])?;
     let clear = a.flags.contains_key("--clear");
@@ -1156,7 +1156,7 @@ pub fn valid_branch(b: &str) -> bool {
     !b.split('/').any(|c| c.starts_with('.') || c.ends_with(".lock"))
 }
 
-pub(crate) fn parse_worktree_new(rest: &[String]) -> Result<Request, String> {
+pub fn parse_worktree_new(rest: &[String]) -> Result<Request, String> {
     let usage = "abundio worktree new <branch> [--agent <kind> [--prompt <text>] [--handle <h>] [--agent-arg <arg>]...] [--focus]";
     let a = split_args(rest, &["--agent", "--prompt", "--handle", REPEATABLE], &["--focus"])?;
     expect_positionals(&a, 1, 1, usage)?;
@@ -1196,7 +1196,7 @@ pub(crate) fn parse_worktree_new(rest: &[String]) -> Result<Request, String> {
     })
 }
 
-pub(crate) fn parse_notes(command: &str, rest: &[String]) -> Result<Request, String> {
+pub fn parse_notes(command: &str, rest: &[String]) -> Result<Request, String> {
     match command {
         "read" => {
             let a = split_args(rest, &[], &[])?;
@@ -1248,13 +1248,13 @@ pub(crate) fn parse_notes(command: &str, rest: &[String]) -> Result<Request, Str
     }
 }
 
-pub(crate) fn invalid_handle(h: &str) -> String {
+pub fn invalid_handle(h: &str) -> String {
     format!(
         "{h:?} is not a valid Agent handle: up to 32 characters, starting with a letter, then letters, digits, spaces, '-' or '_', and not p followed by digits (that is a Pane number)"
     )
 }
 
-pub(crate) fn help(group: Option<&str>) -> String {
+pub fn help(group: Option<&str>) -> String {
     const PANE: &str = "\
 Panes (only those of your own Workspace):
   abundio pane list                       every pane, with its number, Agent and status
@@ -1432,7 +1432,7 @@ pub fn error_answer(status: u16, code: &str, message: &str) -> Answer {
 
 /// Turn a Window's reply into an answer. A reply is either `{ "result": … }`
 /// or `{ "error": { "code", "message" } }`.
-pub(crate) fn answer_from_reply(reply: Value) -> Answer {
+pub fn answer_from_reply(reply: Value) -> Answer {
     if let Some(err) = reply.get("error") {
         return Answer {
             status: 409,
@@ -1448,7 +1448,7 @@ pub(crate) fn answer_from_reply(reply: Value) -> Answer {
 /// Whether this request changes something, so a retry after a dropped
 /// connection could do it twice. Prompts are the exception the CLI handles:
 /// a retried `prompt --wait` becomes a plain wait.
-pub(crate) fn is_mutating(request: &Request) -> bool {
+pub fn is_mutating(request: &Request) -> bool {
     !matches!(
         request,
         Request::PaneList
@@ -1462,7 +1462,7 @@ pub(crate) fn is_mutating(request: &Request) -> bool {
     )
 }
 
-pub(crate) fn op_name(request: &Request) -> String {
+pub fn op_name(request: &Request) -> String {
     serde_json::to_value(request)
         .ok()
         .and_then(|v| v.get("op").and_then(|o| o.as_str()).map(str::to_string))
@@ -1586,7 +1586,7 @@ pub fn close_scope_for(
 
 /// The Workspace `name` names among those of the caller's own Profile. A
 /// Workspace of another Profile is never a candidate (ADR-0055).
-pub(crate) fn workspace_in_profile(
+pub fn workspace_in_profile(
     store: &crate::workspace_store::WorkspaceStore,
     caller: &Caller,
     name: &str,
@@ -1609,7 +1609,7 @@ pub(crate) fn workspace_in_profile(
 }
 
 /// Terminal panes of a layout in tree order, with their Agent and handle.
-pub(crate) fn terminal_panes(tree: &Value, out: &mut Vec<(String, Option<String>, Option<String>)>) {
+pub fn terminal_panes(tree: &Value, out: &mut Vec<(String, Option<String>, Option<String>)>) {
     match tree.get("type").and_then(|t| t.as_str()) {
         Some("terminal") => {
             if let Some(id) = tree.get("id").and_then(|v| v.as_str()) {
@@ -1705,7 +1705,7 @@ impl Scope {
 /// The request event a Window hears.
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ControlEvent<'a> {
+pub struct ControlEvent<'a> {
     pub id: &'a str,
     pub caller: &'a Caller,
     pub target: &'a Scope,
@@ -1713,10 +1713,10 @@ pub(crate) struct ControlEvent<'a> {
 }
 
 /// How often a waiting request checks that its Window still exists.
-pub(crate) const WINDOW_CHECK_EVERY: Duration = Duration::from_secs(2);
+pub const WINDOW_CHECK_EVERY: Duration = Duration::from_secs(2);
 
 #[derive(Debug, PartialEq)]
-pub(crate) enum Reply {
+pub enum Reply {
     Answer(Value),
     TimedOut,
     WindowGone,
@@ -1726,7 +1726,7 @@ pub(crate) enum Reply {
 /// `window_alive` every `check_every`. A destroyed Window never answers and
 /// nothing else would end the wait, so without this a `--timeout 0` wait
 /// whose Window closes would block its thread, and its CLI, for ever.
-pub(crate) fn wait_for_reply(
+pub fn wait_for_reply(
     rx: &Receiver<Value>,
     limit: Option<Duration>,
     check_every: Duration,
@@ -2029,7 +2029,7 @@ mod tests {
     #[test]
     fn handle_grammar_matches_the_shared_table() {
         let cases: HandleCases = serde_json::from_str(include_str!(
-            "../../src/lib/__tests__/fixtures/handleGrammar.json"
+            "../../../../src/lib/__tests__/fixtures/handleGrammar.json"
         ))
         .unwrap();
         for (input, normalized, key) in &cases.valid {
@@ -2161,7 +2161,7 @@ mod tests {
     #[test]
     fn branch_names_match_the_shared_table() {
         let cases: BranchCases =
-            serde_json::from_str(include_str!("../../src/lib/__tests__/fixtures/branchNames.json")).unwrap();
+            serde_json::from_str(include_str!("../../../../src/lib/__tests__/fixtures/branchNames.json")).unwrap();
         for b in &cases.valid {
             assert!(valid_branch(b), "{b:?} should be valid");
         }

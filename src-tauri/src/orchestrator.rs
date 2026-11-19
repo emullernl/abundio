@@ -814,7 +814,7 @@ mod tests {
              INSERT INTO orchestrator_tabs (id, preview) VALUES ('p', 1), ('q', 0);",
         )
         .unwrap();
-        conn.execute_batch(include_str!("../migrations/024_orchestrator_tab_view.sql"))
+        conn.execute_batch(include_str!("../crates/abundio-core/migrations/024_orchestrator_tab_view.sql"))
             .unwrap();
         let view = |id: &str| -> Option<String> {
             conn.query_row("SELECT view FROM orchestrator_tabs WHERE id = ?1", [id], |r| r.get(0))

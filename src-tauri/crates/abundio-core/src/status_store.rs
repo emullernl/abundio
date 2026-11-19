@@ -566,7 +566,7 @@ mod tests {
     /// may differ.
     #[test]
     fn replays_the_frontend_store_without_a_difference() {
-        let raw = include_str!("../../src/lib/__tests__/fixtures/statusShadowStore.json");
+        let raw = include_str!("../../../../src/lib/__tests__/fixtures/statusShadowStore.json");
         let doc: serde_json::Value = serde_json::from_str(raw).unwrap();
         let mut ops_seen = 0;
         for (i, run) in doc["runs"].as_array().unwrap().iter().enumerate() {
@@ -586,7 +586,7 @@ mod tests {
     #[test]
     fn as_the_authority_matches_the_frontend_store() {
         use crate::event_sink::ClientId;
-        let raw = include_str!("../../src/lib/__tests__/fixtures/statusShadowStore.json");
+        let raw = include_str!("../../../../src/lib/__tests__/fixtures/statusShadowStore.json");
         let doc: serde_json::Value = serde_json::from_str(raw).unwrap();
         let client = ClientId::from("window-1");
         let config = StatusConfig::default();

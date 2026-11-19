@@ -1173,7 +1173,7 @@ fn upsert_one(
 /// with the default umask (0644 on most systems), which leaves a Bundle of
 /// credentials readable by every local user. Set the mode at creation time so
 /// the plaintext is never momentarily world-readable.
-pub(crate) fn write_secret_file(path: &str, bytes: &[u8]) -> Result<(), AbundioError> {
+pub fn write_secret_file(path: &str, bytes: &[u8]) -> Result<(), AbundioError> {
     use std::io::Write;
 
     let mut options = std::fs::OpenOptions::new();

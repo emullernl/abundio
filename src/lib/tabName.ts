@@ -13,5 +13,5 @@ export function nextTabName(existingNames: readonly string[]): string {
 }
 
 /** The name of a Workspace's first Tab. Same literal as `FIRST_TAB_NAME`
- *  in `src-tauri/src/workspace_store.rs`; change both together. */
+ *  in `src-tauri/crates/abundio-core/src/workspace_store.rs`; change both together. */
 export const FIRST_TAB_NAME = "Tab 1";

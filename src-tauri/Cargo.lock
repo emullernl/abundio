@@ -6,6 +6,7 @@ version = 4
 name = "abundio"
 version = "3.1.0"
 dependencies = [
+ "abundio-core",
  "aes-gcm",
  "alacritty_terminal",
  "arboard",
@@ -53,6 +54,35 @@ dependencies = [
  "toml_edit 0.25.8+spec-1.1.0",
  "uuid",
  "windows 0.62.2",
+ "zeroize",
+]
+
+[[package]]
+name = "abundio-core"
+version = "3.1.0"
+dependencies = [
+ "aes-gcm",
+ "alacritty_terminal",
+ "base64 0.22.1",
+ "chrono",
+ "crossbeam-channel",
+ "dashmap",
+ "dirs 5.0.1",
+ "git2",
+ "keyring",
+ "log",
+ "nix 0.30.1",
+ "notify",
+ "portable-pty",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tiny_http",
+ "toml_edit 0.25.8+spec-1.1.0",
+ "uuid",
  "zeroize",
 ]
 

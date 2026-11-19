@@ -2,7 +2,7 @@ use rusqlite::Connection;
 use std::path::Path;
 use std::sync::OnceLock;
 
-pub(crate) const MIGRATIONS: &[(&str, &str)] = &[
+pub const MIGRATIONS: &[(&str, &str)] = &[
     ("001_init", include_str!("../migrations/001_init.sql")),
     ("002_add_tabs", include_str!("../migrations/002_add_tabs.sql")),
     (

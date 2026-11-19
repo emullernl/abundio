@@ -456,7 +456,7 @@ fn handle_env_request(app: &Host, path: &str, mut request: tiny_http::Request) {
 ///
 /// Public because the in-app **Export** writes the same format: one quoting
 /// rule for both doors, so an exported file and `abundio-env print` agree.
-pub(crate) fn quote_dotenv_value(value: &str) -> String {
+pub fn quote_dotenv_value(value: &str) -> String {
     let escaped = value
         .replace('\\', "\\\\")
         .replace('"', "\\\"")

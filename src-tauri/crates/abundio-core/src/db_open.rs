@@ -6,13 +6,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 /// The dialog's buttons, named in the failure message.
-pub(crate) const TRY_AGAIN: &str = "Try Again";
-pub(crate) const QUIT: &str = "Quit";
+pub const TRY_AGAIN: &str = "Try Again";
+pub const QUIT: &str = "Quit";
 
 /// Quiet retries before the user is asked: 5 tries, one second apart.
-pub(crate) const QUIET_ATTEMPTS: u32 = 5;
+pub const QUIET_ATTEMPTS: u32 = 5;
 
-pub(crate) const QUIET_DELAY: Duration = Duration::from_secs(1);
+pub const QUIET_DELAY: Duration = Duration::from_secs(1);
 
 /// Which step of opening the database failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,6 +109,6 @@ pub fn open_with_retries<T, E>(
 /// A failed migration is almost always the same on the next try (bad SQL, a
 /// constraint), and SQLite's busy timeout already waited out any lock, so
 /// quiet retries would only delay the dialog.
-pub(crate) fn is_quietly_retryable(err: &DbOpenError) -> bool {
+pub fn is_quietly_retryable(err: &DbOpenError) -> bool {
     err.stage != DbOpenStage::Migrate
 }

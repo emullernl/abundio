@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn replays_every_case_the_window_diffed() {
-        let raw = include_str!("../../src/lib/__tests__/fixtures/layoutOps.json");
+        let raw = include_str!("../../../../src/lib/__tests__/fixtures/layoutOps.json");
         let fixture: Fixture = serde_json::from_str(raw).unwrap();
         assert!(fixture.cases.len() >= 300);
         for (i, c) in fixture.cases.iter().enumerate() {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 // The Rust source that embeds the OpenCode 2.x TUI plugin.
-import agentHooksRs from "../../../src-tauri/src/agent_hooks.rs?raw";
+import agentHooksRs from "../../../src-tauri/crates/abundio-core/src/agent_hooks.rs?raw";
 import {
 	isOpenCodeV2Payload,
 	isTurnStartEvent,

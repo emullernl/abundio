@@ -1,5 +1,5 @@
 {
-	"_comment": "Git branch names an Agent may give `worktree new` (and the dialogs accept), shared by src-tauri/src/agent_control.rs and src/lib/worktreePath.ts tests so the two cannot drift.",
+	"_comment": "Git branch names an Agent may give `worktree new` (and the dialogs accept), shared by src-tauri/crates/abundio-core/src/control_protocol.rs and src/lib/worktreePath.ts tests so the two cannot drift.",
 	"valid": [
 		"main",
 		"feat/x",

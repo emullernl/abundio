@@ -1,5 +1,5 @@
 // The requests Rust forwards to this Window for **Agent control** (ADR-0054).
-// Mirrors `Request` in `src-tauri/src/agent_control.rs`: tagged by `op`,
+// Mirrors `Request` in `src-tauri/crates/abundio-core/src/control_protocol.rs`: tagged by `op`,
 // fields in camelCase. Rust has already parsed and checked the arguments.
 
 /** A pane addressed by an Agent: its **Pane number** or **Agent handle**. */
