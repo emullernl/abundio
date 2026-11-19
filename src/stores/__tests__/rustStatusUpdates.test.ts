@@ -188,6 +188,37 @@ describe("applying Rust's status updates", () => {
 		warn.mockRestore();
 	});
 
+	it("keeps a change held back while in flight when the answer comes in older", () => {
+		usePtyActivityStore.getState().initPty("p", "shell");
+		changes = [];
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const view = __statusViewForTests("p");
+		if (!view) throw new Error("no view");
+		// Enter is in flight; Rust answered it (seq N), then saw the command
+		// start (seq N+1), and N+1 arrives first.
+		pending.ids.add("p");
+		const answer = update("p", view);
+		const started = update(
+			"p",
+			{ ...view, state: "working", shellCommandRunning: true },
+			{
+				prev: { state: "idle", detectionMode: "shell", hookDriven: false },
+				next: { state: "working", detectionMode: "shell", hookDriven: false },
+				cause: { kind: "recordOutput", now: 7 },
+			},
+		);
+		applyRustUpdate(started, true);
+		expect(usePtyActivityStore.getState().activities.p.state).toBe("idle");
+		pending.ids.clear();
+		applyRustUpdate(answer, false);
+		expect(usePtyActivityStore.getState().activities.p.state).toBe("active");
+		expect(changes.map((c) => c.cause)).toEqual([
+			{ kind: "recordOutput", now: 7 },
+		]);
+		expect(warn).not.toHaveBeenCalled();
+		warn.mockRestore();
+	});
+
 	it("never applies an older update over a newer one", () => {
 		workingAgent(1);
 		const view = __statusViewForTests("p");

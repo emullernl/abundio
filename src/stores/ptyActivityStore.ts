@@ -832,6 +832,9 @@ const appliedSeq = new Map<string, number>();
 /** A scan change Rust sent while the pane still had changes in flight: the
  *  answer to those will carry its effect, and this names its cause. */
 const deferredScanCause = new Map<string, StatusEvent>();
+/** The newest update Rust made by itself that arrived while the pane had
+ *  changes in flight, per pane. */
+const deferredUpdates = new Map<string, StatusUpdate>();
 /** The newest change Rust made by itself that has reached this Window, per
  *  pane, whether it was applied, deferred or overtaken. */
 const heardHostSeq = new Map<string, number>();
@@ -886,23 +889,44 @@ function writeView(ptyId: string, v: StatusView): void {
  * Window's only source of those transitions and is always taken.
  * Exported for tests.
  */
-export function applyRustUpdate(u: StatusUpdate, fromScan: boolean): void {
+export function applyRustUpdate(
+	incoming: StatusUpdate,
+	incomingFromScan: boolean,
+): void {
+	let u = incoming;
+	let fromScan = incomingFromScan;
 	if (fromScan && u.change) {
 		heardHostSeq.set(u.ptyId, Math.max(heardHostSeq.get(u.ptyId) ?? 0, u.seq));
 	}
+	if (u.seq <= (appliedSeq.get(u.ptyId) ?? 0)) return;
+	if (hasPendingStatusOps(u.ptyId)) {
+		if (fromScan) {
+			// Kept, not dropped: an answer to the change in flight can still
+			// arrive with a lower seq (Rust answered it first), and then this
+			// is the newer view.
+			const held = deferredUpdates.get(u.ptyId);
+			if (!held || held.seq < u.seq) deferredUpdates.set(u.ptyId, u);
+			if (u.change) deferredScanCause.set(u.ptyId, u.change.cause);
+		} else {
+			appliedSeq.set(u.ptyId, u.seq);
+		}
+		return;
+	}
+	// Nothing in flight: of this and an update held back meanwhile, the one
+	// with the higher seq is Rust's latest view.
+	const held = deferredUpdates.get(u.ptyId);
+	deferredUpdates.delete(u.ptyId);
+	if (held && held.seq > u.seq) {
+		u = held;
+		fromScan = true;
+	}
+	appliedSeq.set(u.ptyId, u.seq);
 	// An answer can overtake the event that carries a change Rust made by
 	// itself: the answer already shows it, under the Window's own cause.
 	const unheardHost =
 		!fromScan &&
 		u.hostSeq != null &&
 		u.hostSeq > (heardHostSeq.get(u.ptyId) ?? 0);
-	const last = appliedSeq.get(u.ptyId) ?? 0;
-	if (u.seq <= last) return;
-	appliedSeq.set(u.ptyId, u.seq);
-	if (hasPendingStatusOps(u.ptyId)) {
-		if (fromScan && u.change) deferredScanCause.set(u.ptyId, u.change.cause);
-		return;
-	}
 	const local = statusView(u.ptyId);
 	if (viewsEqual(local, u.view)) {
 		deferredScanCause.delete(u.ptyId);
