@@ -7,6 +7,7 @@
 
 pub mod agent_hooks;
 pub mod agent_names;
+pub mod agent_skills;
 pub mod app_paths;
 pub mod change_hub;
 pub mod config;

@@ -35,6 +35,18 @@ fn starts_alone_on_its_data_folder_and_stops_on_sigterm() {
     wait_for(&mut log, "hook server on 127.0.0.1:");
     wait_for(&mut log, "waiting for a Client");
     assert!(dir.path().join("v2").join("abundio.db").exists());
+    // What a pane runs with is in the server's own folder.
+    assert!(dir.path().join("hooks").join("abundio-hook.sh").exists());
+    let integration = dir.path().join("v2").join("shell-integration");
+    for name in [".zshrc", "abundio", "abundio-env"] {
+        assert!(integration.join(name).exists(), "{name}");
+    }
+    let key = dir.path().join("env-master.key");
+    assert_eq!(std::fs::read(&key).unwrap().len(), 32);
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&key).unwrap().permissions().mode() & 0o777, 0o600);
+    }
 
     // A second server on the same folder is refused.
     let second = Command::new(env!("CARGO_BIN_EXE_abundio-server"))

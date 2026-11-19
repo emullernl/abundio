@@ -111,6 +111,10 @@ pub enum CryptoError {
     /// The credential store returned something that is not a 32-byte key.
     #[error("malformed key material in credential store")]
     BadKey,
+    /// The server's key file could not be read or written. Treated like an
+    /// unavailable credential store.
+    #[error("key file unavailable: {0}")]
+    KeyFile(String),
 }
 
 impl From<CryptoError> for AbundioError {
@@ -182,9 +186,69 @@ pub fn master_key() -> Result<MasterKey, CryptoError> {
         return Ok(key);
     }
 
-    let key = load_or_create_keyring_key()?;
+    let key = match KEY_FILE.get() {
+        Some(path) => load_or_create_file_key(path)?,
+        None => load_or_create_keyring_key()?,
+    };
     *cache = Some(key.clone());
     Ok(key)
+}
+
+static KEY_FILE: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Keep the master key in `path` instead of the OS credential store: the
+/// headless server does (its key file is in its data folder, readable by its
+/// user only). A server is reached over SSH, where a credential store is
+/// usually missing or locked, and one that is usable at one start but not
+/// the next would mint a second key and leave every sealed value unreadable;
+/// a file is the same at every start. Set once, before the first
+/// `master_key()`; `false` if it was already set.
+pub fn use_key_file(path: std::path::PathBuf) -> bool {
+    KEY_FILE.set(path).is_ok()
+}
+
+/// Read the key file, or create it (`0600` on Unix) with a new key.
+pub fn load_or_create_file_key(path: &std::path::Path) -> Result<MasterKey, CryptoError> {
+    use std::io::Write;
+    let unavailable = |e: std::io::Error| CryptoError::KeyFile(format!("{}: {e}", path.display()));
+    match std::fs::read(path) {
+        Ok(bytes) => {
+            let bytes = Zeroizing::new(bytes);
+            if bytes.len() != KEY_LEN {
+                return Err(CryptoError::BadKey);
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = std::fs::metadata(path).map_err(unavailable)?.permissions().mode();
+                if mode & 0o077 != 0 {
+                    log::warn!("[env] {} was readable by others; made it private (0600)", path.display());
+                    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(unavailable)?;
+                }
+            }
+            let mut arr = [0u8; KEY_LEN];
+            arr.copy_from_slice(&bytes);
+            Ok(MasterKey::from_bytes(arr))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir).map_err(unavailable)?;
+            }
+            let key = MasterKey::generate();
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options.open(path).map_err(unavailable)?;
+            file.write_all(&key.0).and_then(|_| file.sync_all()).map_err(unavailable)?;
+            log::info!("[env] created a new environment-variable master key in {}", path.display());
+            Ok(key)
+        }
+        Err(e) => Err(unavailable(e)),
+    }
 }
 
 /// Drop the cached key so the next `master_key()` re-reads the credential
@@ -371,6 +435,36 @@ pub fn validate_bundle_name(name: &str) -> Result<(), AbundioError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_key_file_is_made_private_once_and_read_back_the_same() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sub").join("env-master.key");
+        let first = load_or_create_file_key(&path).unwrap();
+        let again = load_or_create_file_key(&path).unwrap();
+        assert_eq!(first.0, again.0);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+            // Opened up by hand: made private again on the next read.
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            load_or_create_file_key(&path).unwrap();
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        // What one key seals, the same key read back opens.
+        let (nonce, sealed) = seal(&first, "TOKEN", b"s3cret").unwrap();
+        assert_eq!(&*open(&again, "TOKEN", &nonce, &sealed).unwrap(), b"s3cret");
+    }
+
+    #[test]
+    fn a_key_file_of_the_wrong_size_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("k");
+        std::fs::write(&path, b"short").unwrap();
+        assert!(matches!(load_or_create_file_key(&path), Err(CryptoError::BadKey)));
+    }
 
     /// Every test uses an injected key. Nothing here touches the real
     /// credential store — CI has none, and a `master_key()` call would hang on

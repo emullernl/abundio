@@ -1027,6 +1027,14 @@ fn shell_integration_dir() -> PathBuf {
     }).clone()
 }
 
+/// Write the shell-integration scripts (and the `abundio` and `abundio-env`
+/// helpers beside them) now, rather than at the first spawn: the headless
+/// server does at startup, so its data folder is complete before any Client.
+/// Returns their folder.
+pub fn prepare_shell_integration() -> PathBuf {
+    shell_integration_dir()
+}
+
 /// The re-export block shared in spirit by all three wrapper scripts.
 ///
 /// PRECEDENCE IS THE WHOLE POINT: this must run AFTER the user's rc has been

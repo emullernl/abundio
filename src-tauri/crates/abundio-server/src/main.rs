@@ -20,9 +20,8 @@ use abundio_core::event_sink::{ClientId, EventSink, Events};
 use abundio_core::events::AgentHookEvent;
 use abundio_core::hook_server::{HookHost, HookServer};
 use abundio_core::{
-    app_paths, db_open, env_vars, layout_store, migrations, pane_facts, pty_manager, status_machine,
-    status_store,
-    workspace_store,
+    agent_hooks, app_paths, db_open, env_crypto, env_vars, layout_store, migrations, pane_facts,
+    pty_manager, status_machine, status_store, workspace_store,
 };
 use serde_json::Value;
 
@@ -178,6 +177,29 @@ fn take_lock(root: &Path) -> Result<File, String> {
     Ok(file)
 }
 
+/// The environment-variable master key: a file in the data folder, never
+/// the OS credential store (see `env_crypto::use_key_file`).
+fn key_file(data_dir: &Path) -> PathBuf {
+    data_dir.join("env-master.key")
+}
+
+/// Everything a pane on this Host runs with, written into the data folder
+/// now: the hook relay scripts, the shell-integration wrappers with the
+/// `abundio` and `abundio-env` helpers, and the env key. None of it stops the
+/// server: a pane still opens without hooks or environment variables.
+fn prepare_data_folder(data_dir: &Path) {
+    match agent_hooks::refresh_relay_scripts() {
+        Ok(()) => log::info!("hook relay scripts in {}", app_paths::hooks_dir().display()),
+        Err(e) => log::warn!("cannot write the hook relay scripts: {e}"),
+    }
+    let integration = pty_manager::prepare_shell_integration();
+    log::info!("shell integration and the abundio command in {}", integration.display());
+    match env_crypto::master_key() {
+        Ok(_) => log::info!("environment variable key in {}", key_file(data_dir).display()),
+        Err(e) => log::warn!("environment variables are unavailable: {e}"),
+    }
+}
+
 fn open_db() -> Result<rusqlite::Connection, String> {
     db_open::open_with_retries(
         5,
@@ -208,8 +230,10 @@ fn run(data_dir: PathBuf) -> Result<(), String> {
     let stop = block_stop_signals();
 
     app_paths::set_shared_root(data_dir.clone());
+    env_crypto::use_key_file(key_file(&data_dir));
     let _lock = take_lock(&data_dir)?;
     log::info!("abundio-server {} with data in {}", env!("CARGO_PKG_VERSION"), data_dir.display());
+    prepare_data_folder(&data_dir);
 
     let workspaces = workspace_store::WorkspaceStore::new(open_db()?);
     let env = Arc::new(env_vars::EnvVarStore::new(open_db()?));

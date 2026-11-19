@@ -1,6 +1,7 @@
 pub mod agent_control;
 pub use abundio_core::agent_names;
-pub mod agent_skills;
+pub use abundio_core::agent_skills;
+pub mod agent_skills_commands;
 pub use abundio_core::agent_hooks;
 pub mod app_badge;
 pub use abundio_core::app_paths;
@@ -1635,9 +1636,9 @@ pub fn run() {
             agent_control::agent_control_pane_closed,
             agent_control::agent_handle_check,
             agent_control::agent_handle_default,
-            agent_skills::agent_skill_provision,
-            agent_skills::agent_skill_provision_startup,
-            agent_skills::agent_skill_status,
+            agent_skills_commands::agent_skill_provision,
+            agent_skills_commands::agent_skill_provision_startup,
+            agent_skills_commands::agent_skill_status,
             commands::workspace_set_restore_active,
             commands::pty_read_log,
             commands::pty_write_snapshot,
