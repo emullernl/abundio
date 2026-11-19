@@ -71,3 +71,53 @@ fn prints_its_version() {
     let out = Command::new(env!("CARGO_BIN_EXE_abundio-server")).arg("version").output().unwrap();
     assert!(String::from_utf8_lossy(&out.stdout).starts_with("abundio-server "));
 }
+
+struct Quiet;
+
+impl abundio_core::host_client::HostListener for Quiet {
+    fn event(&self, _client: Option<&str>, _name: &str, _payload: serde_json::Value) {}
+    fn pty(&self, _client: &str, _pty_id: &str, _bytes: &[u8]) {}
+    fn closed(&self, _why: &str) {}
+}
+
+fn connect_command(dir: &std::path::Path) -> Command {
+    let mut c = Command::new(env!("CARGO_BIN_EXE_abundio-server"));
+    c.args(["connect", "--data-dir"]).arg(dir);
+    c
+}
+
+#[test]
+fn the_app_reaches_the_server_through_connect() {
+    use abundio_core::host_client::HostProcess;
+    let dir = tempfile::tempdir().unwrap();
+
+    // No server yet: connect says so.
+    let Err(e) = HostProcess::spawn(connect_command(dir.path()), std::sync::Arc::new(Quiet)) else {
+        panic!("connected to no server");
+    };
+    assert!(e.contains("no Abundio server is running"), "{e}");
+
+    let mut server = server(dir.path());
+    let mut log = BufReader::new(server.stderr.take().unwrap()).lines().map_while(Result::ok);
+    wait_for(&mut log, "waiting for a Client");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&dir.path().join("server.sock")), 0o600);
+        assert_eq!(mode(dir.path()), 0o700);
+    }
+
+    let (client, process) = HostProcess::spawn(connect_command(dir.path()), std::sync::Arc::new(Quiet)).unwrap();
+    assert_eq!(client.server_version, env!("CARGO_PKG_VERSION"));
+    let pong = client
+        .request("window-1", "server_ping", serde_json::Value::Null, Some(Duration::from_secs(10)))
+        .unwrap();
+    assert_eq!(pong["version"], env!("CARGO_PKG_VERSION"));
+    wait_for(&mut log, "a Client connection opened");
+
+    // The app goes: the server notices and keeps running.
+    process.kill();
+    wait_for(&mut log, "a Client connection closed");
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(server.id() as i32), nix::sys::signal::Signal::SIGTERM).unwrap();
+    assert!(server.wait().unwrap().success());
+}

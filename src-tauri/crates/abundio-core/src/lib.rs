@@ -24,6 +24,8 @@ pub mod git_core;
 pub mod git_libgit2;
 pub mod git_scheduler;
 pub mod hook_apply;
+pub mod host_client;
+pub mod host_protocol;
 pub mod hook_route;
 pub mod hook_server;
 pub mod layout_ops;

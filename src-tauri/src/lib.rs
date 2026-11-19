@@ -2003,4 +2003,11 @@ mod menu_signature_tests {
         let i = inputs(&[("a", "Work")], &[("main", "b")]);
         assert_eq!(owner_of(&i.ownership, "a"), None);
     }
+
+    #[test]
+    fn the_app_and_its_core_are_one_build() {
+        // An Abundio server must be this build (`host_protocol::VERSION`);
+        // the release script bumps every crate.
+        assert_eq!(env!("CARGO_PKG_VERSION"), abundio_core::host_protocol::VERSION);
+    }
 }

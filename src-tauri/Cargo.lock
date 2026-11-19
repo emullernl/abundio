@@ -92,6 +92,7 @@ version = "3.1.0"
 dependencies = [
  "abundio-core",
  "chrono",
+ "crossbeam-channel",
  "log",
  "nix 0.30.1",
  "rusqlite",

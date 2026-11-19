@@ -3,32 +3,34 @@
 //! PTYs and Agents running, with their status, layouts and Agent control,
 //! whether or not a desktop Client is connected.
 //!
-//! This step starts the core services and waits: the database, the stores,
-//! the PTY manager, the status scan and the hook server. Clients connect in
-//! phase 7 (`abundio-server connect`, a framed protocol over SSH); until then
-//! events have nowhere to go and Agent control answers that no Client is
-//! connected.
+//! `run` starts the core services and waits: the database, the stores, the
+//! PTY manager, the status scan, the hook server, and the socket desktop
+//! apps connect to (`serve.rs`): `ssh <host> abundio-server connect` carries
+//! one app's connection over SSH to it.
 //!
-//! Usage: `abundio-server run [--data-dir DIR]`, `abundio-server version`.
+//! Usage: `abundio-server run [--data-dir DIR]`, `abundio-server connect
+//! [--data-dir DIR]`, `abundio-server version`.
 
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use abundio_core::event_sink::{ClientId, EventSink, Events};
+mod serve;
+
+use abundio_core::event_sink::{ClientId, Events};
 use abundio_core::events::AgentHookEvent;
 use abundio_core::hook_server::{HookHost, HookServer};
 use abundio_core::{
     agent_hooks, app_paths, db_open, env_crypto, env_vars, layout_store, migrations, pane_facts,
     pty_manager, status_machine, status_store, workspace_store,
 };
-use serde_json::Value;
 
 /// What the command line asked for.
 #[derive(Debug, PartialEq, Eq)]
 enum Command {
     Run { data_dir: Option<PathBuf> },
+    Connect { data_dir: Option<PathBuf> },
     Version,
     Help,
 }
@@ -37,7 +39,7 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
     match args.first().map(String::as_str) {
         None | Some("help" | "--help" | "-h") => Ok(Command::Help),
         Some("version" | "--version" | "-V") => Ok(Command::Version),
-        Some("run") => {
+        Some(cmd @ ("run" | "connect")) => {
             let mut data_dir = None;
             let mut rest = args[1..].iter();
             while let Some(a) = rest.next() {
@@ -49,7 +51,7 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
                     other => return Err(format!("unknown option {other:?}")),
                 }
             }
-            Ok(Command::Run { data_dir })
+            Ok(if cmd == "run" { Command::Run { data_dir } } else { Command::Connect { data_dir } })
         }
         Some(other) => Err(format!("unknown command {other:?}; try `abundio-server help`")),
     }
@@ -59,6 +61,9 @@ const HELP: &str = "abundio-server: Abundio on a Host with no window.
 
   abundio-server run [--data-dir DIR]   Run in the foreground (systemd, a LaunchAgent).
                                         Data goes in DIR, by default ~/.abundio-server/data.
+  abundio-server connect [--data-dir DIR]
+                                        Carry stdin and stdout to the running server: what the
+                                        desktop app runs over `ssh <host>`.
   abundio-server version                Print the version.
 
 Logs go to stderr; set ABUNDIO_LOG=debug for more.";
@@ -97,21 +102,6 @@ fn init_log() {
     };
     let _ = log::set_logger(Box::leak(Box::new(StderrLog { level })));
     log::set_max_level(level);
-}
-
-// ── Where events go while no Client is connected ──
-
-/// Events with no Client to receive them yet (phase 7 adds the connection).
-struct NoClients;
-
-impl EventSink for NoClients {
-    fn broadcast_value(&self, event: &str, _payload: Value) {
-        log::trace!("event {event} (no Client connected)");
-    }
-    fn to_client_value(&self, client: &ClientId, event: &str, _payload: Value) {
-        log::trace!("event {event} for {} (no Client connected)", client.as_str());
-    }
-    fn pty_output(&self, _pty_id: &str, _data: &[u8]) {}
 }
 
 /// The hook server's view of the server.
@@ -155,6 +145,12 @@ impl HookHost for ServerHookHost {
 /// folder would fight over its database and its PTYs.
 fn take_lock(root: &Path) -> Result<File, String> {
     std::fs::create_dir_all(root).map_err(|e| format!("cannot create {}: {e}", root.display()))?;
+    // The server's own: its socket, key and database are nobody else's.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700));
+    }
     let path = root.join("server.lock");
     let mut file = File::options()
         .create(true)
@@ -175,6 +171,11 @@ fn take_lock(root: &Path) -> Result<File, String> {
     let _ = file.set_len(0);
     let _ = writeln!(file, "{}", std::process::id());
     Ok(file)
+}
+
+/// The socket desktop apps connect to (through `connect`).
+fn socket_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("server.sock")
 }
 
 /// The environment-variable master key: a file in the data folder, never
@@ -241,7 +242,8 @@ fn run(data_dir: PathBuf) -> Result<(), String> {
     let status = Arc::new(status_store::StatusStore::new());
     let _layouts = layout_store::LayoutStore::new();
     let _facts = pane_facts::PaneFactsStore::new();
-    let events: Events = Arc::new(NoClients);
+    let connections = Arc::new(serve::Connections::default());
+    let events: Events = connections.clone();
     {
         // A PTY's exit reaches its status here, Window or not (phase 6d).
         let status = status.clone();
@@ -262,6 +264,15 @@ fn run(data_dir: PathBuf) -> Result<(), String> {
     let host = Arc::new(ServerHookHost { ptys: ptys.clone(), env, status: status.clone() });
     let hooks = HookServer::start(host)?;
     log::info!("hook server on 127.0.0.1:{}", hooks.port);
+    #[cfg(unix)]
+    {
+        // A Client going away never stops its PTYs: their status is kept,
+        // no longer sent to it.
+        let status = status.clone();
+        let gone: serve::ClientGone = Arc::new(move |c: &ClientId| status.release_client(c.as_str()));
+        serve::listen(&socket_path(&data_dir), connections, serve::builtin_handler(), gone)?;
+        log::info!("listening on {}", socket_path(&data_dir).display());
+    }
     log::info!(
         "{} Workspace(s) in this data folder; waiting for a Client",
         workspaces.count().unwrap_or(0)
@@ -294,6 +305,22 @@ fn main() {
     match command {
         Command::Help => println!("{HELP}"),
         Command::Version => println!("abundio-server {}", env!("CARGO_PKG_VERSION")),
+        Command::Connect { data_dir } => {
+            let dir = data_dir.unwrap_or_else(|| {
+                default_data_dir(&std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default())
+            });
+            #[cfg(unix)]
+            if let Err(e) = serve::connect(&socket_path(&dir)) {
+                eprintln!("abundio-server: {e}");
+                std::process::exit(4);
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = dir;
+                eprintln!("abundio-server: connect is not available on this platform yet");
+                std::process::exit(4);
+            }
+        }
         Command::Run { data_dir } => {
             init_log();
             let dir = data_dir.unwrap_or_else(|| {
@@ -320,6 +347,11 @@ mod tests {
         assert_eq!(parse_args(&args(&[])), Ok(Command::Help));
         assert_eq!(parse_args(&args(&["version"])), Ok(Command::Version));
         assert_eq!(parse_args(&args(&["run"])), Ok(Command::Run { data_dir: None }));
+        assert_eq!(parse_args(&args(&["connect"])), Ok(Command::Connect { data_dir: None }));
+        assert_eq!(
+            parse_args(&args(&["connect", "--data-dir", "/d"])),
+            Ok(Command::Connect { data_dir: Some(PathBuf::from("/d")) })
+        );
         assert_eq!(
             parse_args(&args(&["run", "--data-dir", "/srv/a"])),
             Ok(Command::Run { data_dir: Some(PathBuf::from("/srv/a")) })
@@ -327,6 +359,12 @@ mod tests {
         assert!(parse_args(&args(&["run", "--data-dir"])).is_err());
         assert!(parse_args(&args(&["run", "--port", "1"])).is_err());
         assert!(parse_args(&args(&["serve"])).is_err());
+    }
+
+    #[test]
+    fn is_the_apps_own_build() {
+        // The release script bumps every crate: the handshake compares these.
+        assert_eq!(env!("CARGO_PKG_VERSION"), abundio_core::host_protocol::VERSION);
     }
 
     #[test]

@@ -656,6 +656,13 @@ impl StatusStore {
         out
     }
 
+    /// A Client went away from a Host, whose PTYs keep running: their
+    /// status is kept, but no longer sent to it (phase 9 hands each PTY to
+    /// the next Client that shows it).
+    pub fn release_client(&self, client: &str) {
+        self.owners.retain(|_, owner| owner.as_str() != client);
+    }
+
     /// Every PTY a closed Window owned is forgotten with it.
     pub fn forget_client(&self, client: &str) {
         let ids: Vec<String> = self

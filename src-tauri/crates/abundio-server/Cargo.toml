@@ -15,6 +15,7 @@ path = "src/main.rs"
 abundio-core = { path = "../abundio-core" }
 log = "0.4"
 serde_json = "1"
+crossbeam-channel = "0.5"
 # The same versions as abundio-core, so one copy of each is built.
 rusqlite = { version = "0.31", features = ["bundled", "backup"] }
 tiny_http = "0.12"
