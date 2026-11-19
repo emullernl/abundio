@@ -14,6 +14,8 @@ pub mod dev_environments;
 pub mod env_crypto;
 pub mod env_vars;
 pub mod error;
+pub mod change_hub;
+pub mod event_sink;
 pub mod events;
 pub mod file_explorer;
 pub mod file_watcher;
@@ -940,9 +942,14 @@ pub fn run() {
             let pty_mgr = PtyManager::new();
             app.manage(pty_mgr);
 
-            // Initialize file watcher
-            app.manage(file_watcher::FileWatcher::new());
-            app.manage(git_scheduler::GitScheduler::new());
+            // Where core modules send events (docs/plans/remote-hosts.md).
+            app.manage::<event_sink::Events>(event_sink::TauriSink::shared(app.handle()));
+
+            // Initialize file watcher; it tells the git scheduler of changes
+            // through the hub.
+            let change_hub = std::sync::Arc::new(change_hub::ChangeHub::new());
+            app.manage(file_watcher::FileWatcher::new(change_hub.clone()));
+            app.manage(git_scheduler::GitScheduler::new(change_hub));
             // Per-repo live-sync watcher for git worktree add/remove. See ADR-0017.
             app.manage(worktree_watcher::WorktreeWatcher::new());
 
@@ -1168,7 +1175,9 @@ pub fn run() {
                 if let Some(ww) =
                     app_handle.try_state::<worktree_watcher::WorktreeWatcher>()
                 {
-                    ww.forget_window(&app_handle, &label);
+                    if let Some(events) = app_handle.try_state::<event_sink::Events>() {
+                        ww.forget_window(events.inner(), &label);
+                    }
                 }
                 // Same for this window's git schedulers and file watchers:
                 // React cleanup never runs when a webview is destroyed, so

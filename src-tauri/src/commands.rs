@@ -57,8 +57,19 @@ pub async fn pty_spawn(
     })
     .await
     .map_err(|e| AbundioError::InvalidOperation(format!("folder check failed: {e}")))??;
+    let hook_env = app
+        .try_state::<crate::hook_server::HookServer>()
+        .map(|h| crate::pty_manager::HookEnv {
+            port: h.port,
+            token: h.token.clone(),
+        });
+    let env_store = app.try_state::<crate::env_vars::EnvVarStore>();
     let pty_id = pty_mgr.spawn(
-        app.clone(),
+        crate::pty_manager::SpawnDeps {
+            events: app.state::<crate::event_sink::Events>().inner().clone(),
+            hook_env,
+            env_store: env_store.as_deref(),
+        },
         window.label(),
         &cwd,
         command.as_deref(),
@@ -622,11 +633,12 @@ pub async fn pty_cleanup_stale_logs(pane_ids: Vec<String>) -> Result<(), Abundio
 #[tauri::command]
 pub async fn fs_watch_start(
     app: AppHandle,
+    events: State<'_, crate::event_sink::Events>,
     window: Window,
     watcher: State<'_, FileWatcher>,
     root_path: String,
 ) -> Result<(), AbundioError> {
-    watcher.start_watching(app.clone(), window.label(), &root_path)?;
+    watcher.start_watching(events.inner().clone(), window.label(), &root_path)?;
     // A start the Window sent just before it closed can land after its
     // `Destroyed` handler released its holds, and would claim under a label
     // nothing releases again. Let go if the Window is already gone.
@@ -655,12 +667,12 @@ pub async fn fs_watch_stop(
 /// the workspace list or grouping changes. See ADR-0017.
 #[tauri::command]
 pub async fn worktree_watch_set(
-    app: AppHandle,
+    events: State<'_, crate::event_sink::Events>,
     window: Window,
     watcher: State<'_, WorktreeWatcher>,
     common_dirs: Vec<String>,
 ) -> Result<(), AbundioError> {
-    watcher.set_watched(&app, window.label(), common_dirs);
+    watcher.set_watched(events.inner(), window.label(), common_dirs);
     Ok(())
 }
 
@@ -675,6 +687,7 @@ pub async fn worktree_watch_set(
 #[tauri::command]
 pub async fn git_scheduler_start(
     app: AppHandle,
+    events: State<'_, crate::event_sink::Events>,
     window: Window,
     scheduler: State<'_, GitScheduler>,
     workspace_id: String,
@@ -682,7 +695,7 @@ pub async fn git_scheduler_start(
     base_branch: Option<String>,
 ) -> Result<(), AbundioError> {
     scheduler.start(
-        app.clone(),
+        events.inner().clone(),
         window.label(),
         workspace_id.clone(),
         root_path,

@@ -18,24 +18,17 @@ use crossbeam_channel::{bounded, Receiver, Sender};
 use dashmap::DashMap;
 
 use crate::owner_map::OwnerMap;
-use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Listener};
+use serde::Serialize;
+use std::sync::Arc;
+
+use crate::change_hub::ChangeHub;
+use crate::event_sink::{Events, EventsExt};
 
 use crate::error::AbundioError;
 use crate::git_commands::{
     compute_branch_info_sync, compute_changed_files_sync, compute_status_fingerprint_sync,
     GitFetchBundle,
 };
-
-/// Minimal deserializer for the existing `fs-change` / `git-change` event
-/// payloads — we only need the `root` field to filter. The full payloads
-/// are defined in `events.rs` as `Serialize`-only (frontend-bound); rather
-/// than retrofit `Deserialize` onto them just for this listener, decode just
-/// the field we use.
-#[derive(Deserialize)]
-struct RootOnly {
-    root: String,
-}
 
 /// Pushed to the frontend on every refresh — success or failure.
 ///
@@ -67,13 +60,16 @@ pub struct GitScheduler {
     entries: DashMap<String, SchedulerEntry>,
     /// Window labels holding each worker, so a closed Window's workers stop.
     owners: OwnerMap,
+    /// Where the file watcher announces changes.
+    hub: Arc<ChangeHub>,
 }
 
 impl GitScheduler {
-    pub fn new() -> Self {
+    pub fn new(hub: Arc<ChangeHub>) -> Self {
         Self {
             entries: DashMap::new(),
             owners: OwnerMap::new(),
+            hub,
         }
     }
 
@@ -85,7 +81,7 @@ impl GitScheduler {
     /// in place while another Window still held the workspace.
     pub fn start(
         &self,
-        app: AppHandle,
+        events: Events,
         owner: &str,
         workspace_id: String,
         root_path: String,
@@ -108,29 +104,10 @@ impl GitScheduler {
         let (trigger_tx, trigger_rx) = bounded::<()>(1);
         let (stop_tx, stop_rx) = bounded::<()>(1);
 
-        // Subscribe to the file watcher's existing events. We filter by
-        // `root_path` in the payload (same pattern the frontend's `onFsChange`
-        // / `onGitChange` use). Loose coupling: `file_watcher.rs` does not
-        // know the scheduler exists.
-        let trigger_for_fs = trigger_tx.clone();
-        let root_for_fs = root_path.clone();
-        let fs_listen_id = app.listen("fs-change", move |event| {
-            if let Ok(payload) = serde_json::from_str::<RootOnly>(event.payload()) {
-                if payload.root == root_for_fs {
-                    let _ = trigger_for_fs.try_send(());
-                }
-            }
-        });
-
-        let trigger_for_git = trigger_tx.clone();
-        let root_for_git = root_path.clone();
-        let git_listen_id = app.listen("git-change", move |event| {
-            if let Ok(payload) = serde_json::from_str::<RootOnly>(event.payload()) {
-                if payload.root == root_for_git {
-                    let _ = trigger_for_git.try_send(());
-                }
-            }
-        });
+        // Subscribe to the file watcher's change notices for this root
+        // (file and git changes alike). Loose coupling: `file_watcher.rs` does
+        // not know the scheduler exists.
+        let sub_id = self.hub.subscribe(&root_path, trigger_tx.clone());
 
         // Fire an initial trigger so the frontend has data immediately on
         // workspace open — no extra `invoke` from JS needed.
@@ -138,18 +115,17 @@ impl GitScheduler {
 
         // Worker thread. Owns its base_branch (immutable for its lifetime —
         // restarts on baseBranch change). On exit, unlistens both subscriptions.
-        let app_for_worker = app.clone();
+        let hub = self.hub.clone();
         std::thread::spawn(move || {
             worker_loop(
                 &workspace_id,
                 &root_path,
                 base_branch,
-                &app_for_worker,
+                &events,
                 &trigger_rx,
                 &stop_rx,
             );
-            app_for_worker.unlisten(fs_listen_id);
-            app_for_worker.unlisten(git_listen_id);
+            hub.unsubscribe(sub_id);
         });
 
         // Replacing an occupied entry drops the old one, which stops its worker.
@@ -181,7 +157,7 @@ fn worker_loop(
     workspace_id: &str,
     root_path: &str,
     base_branch: Option<String>,
-    app: &AppHandle,
+    events: &Events,
     trigger_rx: &Receiver<()>,
     stop_rx: &Receiver<()>,
 ) {
@@ -206,7 +182,7 @@ fn worker_loop(
                         }
                     }
                 };
-                let _ = app.emit(&event_name, &payload);
+                events.broadcast(&event_name, &payload);
             }
         }
     }

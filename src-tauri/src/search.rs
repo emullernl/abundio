@@ -6,10 +6,11 @@ use ignore::overrides::OverrideBuilder;
 use ignore::{WalkBuilder, WalkState};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use tauri::{Emitter, EventTarget, State};
+use tauri::State;
+
+use crate::event_sink::{ClientId, Events, EventsExt};
 
 use crate::error::AbundioError;
-use crate::window_management::is_profile_window_label;
 
 pub struct SearchManager {
     cancel_flags: DashMap<String, Arc<AtomicBool>>,
@@ -131,7 +132,8 @@ fn search_file_contents(path: &str, re: &Regex, max_remaining: usize) -> Result<
 
 #[tauri::command]
 pub async fn fs_search(
-    app: tauri::AppHandle,
+    events: State<'_, Events>,
+    window: tauri::Window,
     params: SearchQuery,
     manager: State<'_, SearchManager>,
 ) -> Result<SearchResult, AbundioError> {
@@ -139,6 +141,8 @@ pub async fn fs_search(
     manager.cancel_flags.insert(params.search_id.clone(), cancel.clone());
     let search_id = params.search_id.clone();
 
+    let events = events.inner().clone();
+    let client = ClientId::from(window.label());
     let result = tokio::task::spawn_blocking(move || {
         // Each matched file is streamed to the frontend on this channel as it is
         // found, so results populate incrementally instead of all at once.
@@ -184,7 +188,8 @@ pub async fn fs_search(
             let total_matches = Arc::clone(&total_matches);
             let truncated = Arc::clone(&truncated);
             let cancel = Arc::clone(&cancel);
-            let app = app.clone();
+            let events = events.clone();
+            let client = client.clone();
             let progress_channel = progress_channel.clone();
 
             Box::new(move |entry| {
@@ -212,17 +217,9 @@ pub async fn fs_search(
                     total_matches.fetch_add(file_result.matches.len(), Ordering::Relaxed);
                     // Stream this file to the UI immediately, then retain it for the
                     // authoritative (sorted) result returned when the walk finishes.
-                    // Skip the Settings window — it runs no searches, so it would
-                    // just deserialize-and-drop every streamed file.
-                    let _ = app.emit_filter(&progress_channel, &file_result, |target| {
-                        match target {
-                            EventTarget::Window { label }
-                            | EventTarget::Webview { label }
-                            | EventTarget::WebviewWindow { label }
-                            | EventTarget::AnyLabel { label } => is_profile_window_label(label),
-                            _ => true,
-                        }
-                    });
+                    // Only the Window that asked; the Settings window runs no
+                    // searches.
+                    events.to_client(&client, &progress_channel, &file_result);
                     files.lock().unwrap().push(file_result);
                 }
 

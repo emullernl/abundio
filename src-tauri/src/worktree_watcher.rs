@@ -12,7 +12,7 @@ use std::time::Duration;
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use dashmap::DashMap;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
-use tauri::{AppHandle, Emitter};
+use crate::event_sink::{Events, EventsExt};
 
 use crate::error::AbundioError;
 
@@ -52,20 +52,20 @@ impl WorktreeWatcher {
 
     /// Record this Window's desired watch set and reconcile the live watchers
     /// to the union across all Windows.
-    pub fn set_watched(&self, app: &AppHandle, window_label: &str, common_dirs: Vec<String>) {
+    pub fn set_watched(&self, events: &Events, window_label: &str, common_dirs: Vec<String>) {
         self.per_window
             .insert(window_label.to_string(), common_dirs.into_iter().collect());
-        self.reconcile(app);
+        self.reconcile(events);
     }
 
     /// Drop a closed Window's contribution and reconcile.
-    pub fn forget_window(&self, app: &AppHandle, window_label: &str) {
+    pub fn forget_window(&self, events: &Events, window_label: &str) {
         if self.per_window.remove(window_label).is_some() {
-            self.reconcile(app);
+            self.reconcile(events);
         }
     }
 
-    fn reconcile(&self, app: &AppHandle) {
+    fn reconcile(&self, events: &Events) {
         let union: HashSet<String> = self
             .per_window
             .iter()
@@ -84,13 +84,13 @@ impl WorktreeWatcher {
             if self.watchers.contains_key(&dir) {
                 continue;
             }
-            if let Err(e) = self.start_one(app.clone(), &dir) {
+            if let Err(e) = self.start_one(events.clone(), &dir) {
                 eprintln!("[abundio] worktree watch failed for {dir}: {e}");
             }
         }
     }
 
-    fn start_one(&self, app: AppHandle, common_dir: &str) -> Result<(), AbundioError> {
+    fn start_one(&self, events: Events, common_dir: &str) -> Result<(), AbundioError> {
         let path = Path::new(common_dir);
         if !path.exists() {
             return Ok(());
@@ -123,7 +123,7 @@ impl WorktreeWatcher {
 
         let common = common_dir.to_string();
         std::thread::spawn(move || {
-            debounce_loop(&common, &app, &event_rx, &stop_rx);
+            debounce_loop(&common, &events, &event_rx, &stop_rx);
         });
 
         self.watchers.insert(
@@ -155,7 +155,7 @@ fn is_worktree_admin_event(event: &Event) -> bool {
 
 fn debounce_loop(
     common_dir: &str,
-    app: &AppHandle,
+    events: &Events,
     event_rx: &Receiver<Event>,
     stop_rx: &Receiver<()>,
 ) {
@@ -185,7 +185,7 @@ fn debounce_loop(
         }
 
         if relevant {
-            let _ = app.emit(
+            events.broadcast(
                 "worktrees-changed",
                 WorktreesChanged {
                     common_dir: common_dir.to_string(),

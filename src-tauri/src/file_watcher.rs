@@ -8,7 +8,10 @@ use dashmap::DashMap;
 use crate::owner_map::OwnerMap;
 use notify::event::{ModifyKind, RenameMode};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use tauri::{AppHandle, Emitter};
+use std::sync::Arc;
+
+use crate::change_hub::ChangeHub;
+use crate::event_sink::{Events, EventsExt};
 
 use crate::error::AbundioError;
 use crate::events::{FsChange, GitChange};
@@ -110,32 +113,35 @@ pub struct FileWatcher {
     watchers: DashMap<String, WatcherEntry>,
     /// Window labels holding each watch, so a closed Window's watches stop.
     owners: OwnerMap,
+    /// Told of every change too, for backend listeners (the git scheduler).
+    hub: Arc<ChangeHub>,
 }
 
 impl FileWatcher {
-    pub fn new() -> Self {
+    pub fn new(hub: Arc<ChangeHub>) -> Self {
         Self {
             watchers: DashMap::new(),
             owners: OwnerMap::new(),
+            hub,
         }
     }
 
     /// Watch `root_path` on behalf of Window `owner`.
     pub fn start_watching(
         &self,
-        app: AppHandle,
+        events: Events,
         owner: &str,
         root_path: &str,
     ) -> Result<(), AbundioError> {
         self.owners.claim(root_path, owner);
-        let result = self.start_watcher(app, root_path);
+        let result = self.start_watcher(events, root_path);
         if result.is_err() {
             self.owners.release(root_path, owner);
         }
         result
     }
 
-    fn start_watcher(&self, app: AppHandle, root_path: &str) -> Result<(), AbundioError> {
+    fn start_watcher(&self, events: Events, root_path: &str) -> Result<(), AbundioError> {
         // Atomic check-and-insert to avoid TOCTOU race condition
         use dashmap::mapref::entry::Entry;
         let entry = self.watchers.entry(root_path.to_string());
@@ -175,9 +181,9 @@ impl FileWatcher {
 
         // Spawn debounce thread
         let root = root_path.to_string();
-        let app_handle = app.clone();
+        let hub = self.hub.clone();
         std::thread::spawn(move || {
-            debounce_loop(&root, &app_handle, &event_rx, &stop_rx);
+            debounce_loop(&root, &events, &hub, &event_rx, &stop_rx);
         });
 
         vacant.insert(WatcherEntry {
@@ -208,7 +214,8 @@ impl FileWatcher {
 
 fn debounce_loop(
     root_path: &str,
-    app: &AppHandle,
+    events: &Events,
+    hub: &ChangeHub,
     event_rx: &crossbeam_channel::Receiver<Event>,
     stop_rx: &crossbeam_channel::Receiver<()>,
 ) {
@@ -268,7 +275,8 @@ fn debounce_loop(
             }
             let changed: Vec<String> = changed_files.drain().collect();
             let removed: Vec<String> = removed_files.drain().collect();
-            let _ = app.emit(
+            hub.notify(root_path);
+            events.broadcast(
                 "fs-change",
                 FsChange {
                     root: root_path.to_string(),
@@ -283,7 +291,8 @@ fn debounce_loop(
         // The frontend debounce coalesces them, so no double-fetch occurs.
         if git_changed {
             git_changed = false;
-            let _ = app.emit(
+            hub.notify(root_path);
+            events.broadcast(
                 "git-change",
                 GitChange {
                     root: root_path.to_string(),

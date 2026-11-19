@@ -11,14 +11,31 @@ use base64::Engine;
 use crossbeam_channel::{self, Receiver, Sender};
 use dashmap::DashMap;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
-use tauri::{AppHandle, Emitter, Manager};
 
 use crate::error::AbundioError;
-use crate::events::{PtyActivity, PtyOutput, PtyStatus};
+use crate::event_sink::{Events, EventsExt};
+use crate::events::{PtyActivity, PtyStatus};
 use crate::process_monitor;
 use crate::shell_env;
 
 const MAX_LOG_SIZE: u64 = 5 * 1024 * 1024; // 5 MB
+
+/// What a spawn needs from the rest of the app, passed in rather than looked
+/// up through Tauri state so the PTY manager works without Tauri (an Abundio
+/// server, tests).
+pub struct SpawnDeps<'a> {
+    pub events: Events,
+    /// The hook server's port and token, placed in the child's environment.
+    pub hook_env: Option<HookEnv>,
+    /// Where the Workspace's injected Environment Bundle is read from.
+    pub env_store: Option<&'a crate::env_vars::EnvVarStore>,
+}
+
+/// The hook server's address as a PTY sees it.
+pub struct HookEnv {
+    pub port: u16,
+    pub token: String,
+}
 
 /// Commands sent from the main thread to a PTY's dedicated thread.
 enum PtyCommand {
@@ -78,7 +95,7 @@ pub struct PtyManager {
     /// without this every shell and Agent of a closed Window ran until quit.
     owner_windows: DashMap<String, String>,
     /// Per-PTY **Agent control** tokens (ADR-0054), issued at spawn.
-    control_tokens: crate::agent_control::ControlTokens,
+    control_tokens: Arc<crate::agent_control::ControlTokens>,
 }
 
 impl PtyManager {
@@ -116,7 +133,7 @@ impl PtyManager {
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         &self,
-        app: AppHandle,
+        deps: SpawnDeps<'_>,
         owner_window: &str,
         cwd: &str,
         command: Option<&str>,
@@ -156,7 +173,7 @@ impl PtyManager {
             Some(s) if Path::new(s).exists() => s.to_string(),
             Some(s) => {
                 let fallback = shell_env::default_shell();
-                let _ = app.emit(
+                deps.events.broadcast(
                     &format!("pty-status-{}", pty_id),
                     PtyStatus::ShellNotFound {
                         configured: s.to_string(),
@@ -255,7 +272,7 @@ impl PtyManager {
 
         // Agent hook correlation: the agent and its hook commands inherit these,
         // letting the abundio-hook relay attribute hook events to this PTY.
-        if let Some(hook_server) = app.try_state::<crate::hook_server::HookServer>() {
+        if let Some(hook_server) = deps.hook_env.as_ref() {
             cmd.env("ABUNDIO_PTY_ID", &pty_id);
             cmd.env("ABUNDIO_HOOK_PORT", hook_server.port.to_string());
             cmd.env("ABUNDIO_HOOK_TOKEN", &hook_server.token);
@@ -290,7 +307,7 @@ impl PtyManager {
         // event the UI turns into a banner — the terminal still opens.
         let injected: Vec<(String, String)> = match (
             workspace_id,
-            app.try_state::<crate::env_vars::EnvVarStore>(),
+            deps.env_store,
         ) {
             // Probe for rows BEFORE asking for the key. Touching the credential
             // store here would pop a Keychain prompt on the very first terminal
@@ -309,7 +326,7 @@ impl PtyManager {
                         .collect(),
                     Err(e) => {
                         log::warn!("[pty] workspace environment unavailable for {ws}: {e}");
-                        let _ = app.emit(
+                        deps.events.broadcast(
                             "env-vars-unavailable",
                             serde_json::json!({ "workspaceId": ws, "reason": e.to_string() }),
                         );
@@ -420,15 +437,14 @@ impl PtyManager {
         let id_clone = pty_id.clone();
         let master = pair.master;
 
-        let app_for_exit = app.clone();
+        let tokens = self.control_tokens.clone();
+        let events = deps.events;
         thread::spawn(move || {
-            pty_thread(id_clone, master, child, rx, alive, app, log_file, shell_type);
+            pty_thread(id_clone, master, child, rx, alive, events, log_file, shell_type);
             // The PTY is gone: its token must not outlive it (a background
             // process it left behind still has the token in its environment).
             if let Some(t) = control_token {
-                if let Some(mgr) = app_for_exit.try_state::<PtyManager>() {
-                    mgr.control_tokens.revoke_token(&t);
-                }
+                tokens.revoke_token(&t);
             }
         });
 
@@ -1711,7 +1727,7 @@ fn pty_thread(
     mut child: Box<dyn portable_pty::Child + Send + Sync>,
     rx: Receiver<PtyCommand>,
     alive: Arc<AtomicBool>,
-    app: AppHandle,
+    events: Events,
     log_file: Option<(File, PathBuf)>,
     shell_type: ShellType,
 ) {
@@ -1734,7 +1750,7 @@ fn pty_thread(
     // Spawn a sub-thread for reading PTY output → emitting events
     let read_pty_id = pty_id.clone();
     let read_alive = alive.clone();
-    let read_app = app.clone();
+    let read_events = events.clone();
 
     // Output coalescing: a dedicated reader thread sends raw chunks through a
     // bounded channel.  The coalescing loop drains all immediately-available
@@ -1743,9 +1759,7 @@ fn pty_thread(
     // during interactive use the try_recv drain returns immediately so latency
     // is unaffected.
     let read_thread = thread::spawn(move || {
-        let engine = base64::engine::general_purpose::STANDARD;
         let mut log = log_file;
-        let event_name = format!("pty-output-{}", read_pty_id);
 
         // Bounded channel: 32 slots × 4 KB = 128 KB max buffered before
         // back-pressure slows the reader — prevents unbounded memory growth.
@@ -1800,8 +1814,7 @@ fn pty_thread(
             }
 
             // Emit the coalesced batch as a single event
-            let encoded = engine.encode(&accum);
-            let _ = read_app.emit(&event_name, PtyOutput { data: encoded });
+            read_events.pty_output(&read_pty_id, &accum);
             accum.clear();
         }
 
@@ -1811,8 +1824,7 @@ fn pty_thread(
             accum.extend_from_slice(&chunk);
         }
         if !accum.is_empty() {
-            let encoded = engine.encode(&accum);
-            let _ = read_app.emit(&event_name, PtyOutput { data: encoded });
+            read_events.pty_output(&read_pty_id, &accum);
         }
 
         let _ = inner.join();
@@ -1828,7 +1840,7 @@ fn pty_thread(
             alive.store(false, Ordering::Relaxed);
             let code = Some(status.exit_code());
             let event_name = format!("pty-status-{}", pty_id);
-            let _ = app.emit(&event_name, PtyStatus::Exited { code });
+            events.broadcast(&event_name, PtyStatus::Exited { code });
             break;
         }
 
@@ -1841,11 +1853,11 @@ fn pty_thread(
                 if has_children && !command_running {
                     command_running = true;
                     let event_name = format!("pty-activity-{}", pty_id);
-                    let _ = app.emit(&event_name, PtyActivity::CommandStarted);
+                    events.broadcast(&event_name, PtyActivity::CommandStarted);
                 } else if !has_children && command_running {
                     command_running = false;
                     let event_name = format!("pty-activity-{}", pty_id);
-                    let _ = app.emit(&event_name, PtyActivity::CommandFinished);
+                    events.broadcast(&event_name, PtyActivity::CommandFinished);
                 }
             }
         }
@@ -1913,7 +1925,7 @@ fn pty_thread(
                 alive.store(false, Ordering::Relaxed);
                 let _ = child.kill();
                 let event_name = format!("pty-status-{}", pty_id);
-                let _ = app.emit(&event_name, PtyStatus::Exited { code: None });
+                events.broadcast(&event_name, PtyStatus::Exited { code: None });
                 break;
             }
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
