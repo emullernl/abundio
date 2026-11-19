@@ -1055,6 +1055,30 @@ impl WorkspaceStore {
         self.conn.lock().unwrap()
     }
 
+    /// A Tab's stored layout and the Profile its Workspace belongs to, or
+    /// `None` when there is no such Tab.
+    pub fn tab_layout(&self, tab_id: &str) -> Result<Option<(String, String)>, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT t.layout_json, w.profile_id FROM tabs t JOIN workspaces w ON w.id = t.workspace_id
+              WHERE t.id = ?1",
+            [tab_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(AbundioError::Db)
+    }
+
+    /// Store a Tab's layout. `false` when the Tab is gone.
+    pub fn set_tab_layout(&self, tab_id: &str, layout_json: &str) -> Result<bool, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute(
+            "UPDATE tabs SET layout_json = ?1, updated_at = unixepoch() WHERE id = ?2",
+            rusqlite::params![layout_json, tab_id],
+        )?;
+        Ok(n > 0)
+    }
+
     /// The Profile a Workspace belongs to.
     pub fn profile_of(&self, workspace_id: &str) -> Result<Option<String>, AbundioError> {
         let conn = self.conn.lock().unwrap();

@@ -13,6 +13,12 @@ import {
 	workspaces as workspacesApi,
 	worktrees as worktreesApi,
 } from "../lib/ipc";
+import {
+	commitLayout,
+	forgetLayout,
+	isRustLayoutAuthority,
+	onLayoutFromRust,
+} from "../lib/layoutSync";
 import { isOrchestratorPane } from "../lib/orchestrator";
 import {
 	collectPaneIds,
@@ -416,7 +422,7 @@ function seedFocalPane(
 			const stamped = setAgentId(layout, firstPaneId, opts.agent.id);
 			const stampedJson = JSON.stringify(stamped);
 			firstTab.layoutJson = stampedJson;
-			tabsApi.update(firstTab.id, { layoutJson: stampedJson }).catch(() => {});
+			saveLayout(firstTab.id, stampedJson).catch(() => {});
 		}
 	} catch {
 		/* malformed layout — skip seeding */
@@ -472,6 +478,16 @@ export function restoreTabFocus(
 	const remembered = focusedPaneByTab[tabId];
 	if (remembered && containsPane(layout, remembered)) return remembered;
 	return collectPaneIds(layout)[0] ?? null;
+}
+
+/**
+ * Save a Tab's layout. In the app Rust owns layouts (ADR-0063): the edit goes
+ * there as ops (`lib/layoutSync.ts`). Tests and the browser demo have no
+ * Rust and save it whole with `tab_update`.
+ */
+function saveLayout(tabId: string, layoutJson: string): Promise<void> {
+	if (!isRustLayoutAuthority()) return tabsApi.update(tabId, { layoutJson });
+	return commitLayout(tabId, layoutJson);
 }
 
 /** Update a tab's layoutJson in the workspaces array (immutable). */
@@ -1129,7 +1145,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			finalLayout = seedLayout;
 			const layoutJson = JSON.stringify(finalLayout);
 			tab.layoutJson = layoutJson;
-			tabsApi.update(tab.id, { layoutJson }).catch(() => {});
+			saveLayout(tab.id, layoutJson).catch(() => {});
 		} else {
 			finalLayout = parseTabLayout(tab.layoutJson) ?? defaultLayout();
 		}
@@ -1154,7 +1170,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				const stamped = setAgentId(finalLayout, terminalFocus, agent.id);
 				const stampedJson = JSON.stringify(stamped);
 				tab.layoutJson = stampedJson;
-				tabsApi.update(tab.id, { layoutJson: stampedJson }).catch(() => {});
+				saveLayout(tab.id, stampedJson).catch(() => {});
 				initialFocus = terminalFocus;
 			}
 		}
@@ -1175,7 +1191,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				});
 				tab.layoutJson = JSON.stringify(owned);
 			}
-			tabsApi.update(tab.id, { layoutJson: tab.layoutJson }).catch(() => {});
+			saveLayout(tab.id, tab.layoutJson).catch(() => {});
 		}
 
 		if (!activate) {
@@ -1233,6 +1249,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		if (workspace.tabs.length <= 1) {
 			const newTab = await tabsApi.create(workspace.id, FIRST_TAB_NAME);
 			await tabsApi.delete(tabId);
+			forgetLayout(tabId);
 			set((state) => ({
 				workspaces: state.workspaces.map((s) =>
 					s.id === workspace.id ? { ...s, tabs: [newTab] } : s,
@@ -1250,6 +1267,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		}
 
 		await tabsApi.delete(tabId);
+		forgetLayout(tabId);
 
 		// Pick the next active tab
 		const remainingTabs = workspace.tabs.filter((t) => t.id !== tabId);
@@ -1331,9 +1349,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				result.layoutJson,
 			),
 		}));
-		tabsApi
-			.update(result.tabId, { layoutJson: result.layoutJson })
-			.catch(() => {});
+		saveLayout(result.tabId, result.layoutJson).catch(() => {});
 	},
 
 	stampAgentSessionOnPane: (paneId, agentId, sessionId) => {
@@ -1348,9 +1364,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				result.layoutJson,
 			),
 		}));
-		tabsApi
-			.update(result.tabId, { layoutJson: result.layoutJson })
-			.catch(() => {});
+		saveLayout(result.tabId, result.layoutJson).catch(() => {});
 	},
 
 	setAgentHandle: async (paneId, handle) => {
@@ -1404,9 +1418,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 					result.layoutJson,
 				),
 			}));
-			tabsApi
-				.update(result.tabId, { layoutJson: result.layoutJson })
-				.catch(() => {});
+			saveLayout(result.tabId, result.layoutJson).catch(() => {});
 		}
 		// Every Agent has a handle: clearing one hands out a default.
 		if (handle === null) await get().ensureDefaultHandle(paneId);
@@ -1450,9 +1462,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				result.layoutJson,
 			),
 		}));
-		tabsApi
-			.update(result.tabId, { layoutJson: result.layoutJson })
-			.catch(() => {});
+		saveLayout(result.tabId, result.layoutJson).catch(() => {});
 	},
 
 	stampCwdOnPane: (paneId, cwd) => {
@@ -1467,18 +1477,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				result.layoutJson,
 			),
 		}));
-		tabsApi
-			.update(result.tabId, { layoutJson: result.layoutJson })
-			.catch(() => {});
+		saveLayout(result.tabId, result.layoutJson).catch(() => {});
 	},
 
 	// Full update: local state + persist to SQLite
 	updateLayout: async (tabId, layout) => {
 		const layoutJson = JSON.stringify(layout);
-		await tabsApi.update(tabId, { layoutJson });
+		// Shown at once; Rust's answer wins if it differs (layoutSync.ts).
 		set((state) => ({
 			workspaces: updateTabInWorkspaces(state.workspaces, tabId, layoutJson),
 		}));
+		await saveLayout(tabId, layoutJson);
 	},
 
 	// Local-only update (no IPC) — used during drag resize for smooth visuals
@@ -1498,7 +1507,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			if (tab) break;
 		}
 		if (!tab) return;
-		await tabsApi.update(tabId, { layoutJson: tab.layoutJson });
+		await saveLayout(tabId, tab.layoutJson);
 	},
 
 	setPtyStatus: (ptyId, status) =>
@@ -1568,8 +1577,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 				if (sourceRemaining) {
 					const srcJson = JSON.stringify(sourceRemaining);
-					await tabsApi.update(sourceTabId, { layoutJson: srcJson });
-					await tabsApi.update(destTabId, { layoutJson: destJson });
+					await saveLayout(sourceTabId, srcJson);
+					await saveLayout(destTabId, destJson);
 					set((s) => ({
 						workspaces: s.workspaces.map((ws) =>
 							ws.id !== workspace.id
@@ -1595,8 +1604,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 					// Source tab becomes empty — do NOT call closeTab (it would
 					// pty.deleteLog the moved pane). Do all DB writes first, then
 					// a single atomic set so the pane is never in both layouts.
-					await tabsApi.update(destTabId, { layoutJson: destJson });
+					await saveLayout(destTabId, destJson);
 					await tabsApi.delete(sourceTabId);
+					forgetLayout(sourceTabId);
 
 					set((s) => ({
 						workspaces: s.workspaces.map((ws) =>
@@ -1632,11 +1642,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			const newTab = await tabsApi.create(workspace.id, tabName);
 			const movedJson = JSON.stringify(movedNode);
 			newTab.layoutJson = movedJson;
-			await tabsApi.update(newTab.id, { layoutJson: movedJson });
+			await saveLayout(newTab.id, movedJson);
 
 			if (sourceRemaining) {
 				const srcJson = JSON.stringify(sourceRemaining);
-				await tabsApi.update(sourceTabId, { layoutJson: srcJson });
+				await saveLayout(sourceTabId, srcJson);
 
 				// Single atomic set: source shrinks + new tab appears
 				set((s) => ({
@@ -1663,6 +1673,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				// Source tab had only the moved pane — delete it.
 				// Do NOT call closeTab (which would pty.deleteLog the moved pane).
 				await tabsApi.delete(sourceTabId);
+				forgetLayout(sourceTabId);
 
 				set((s) => ({
 					workspaces: s.workspaces.map((ws) =>
@@ -1729,3 +1740,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		return workspace?.tabs ?? [];
 	},
 }));
+
+// Rust's layout, when it differs from what this Window predicted or another
+// Window changed it (ADR-0063).
+onLayoutFromRust((tabId, layoutJson) => {
+	useWorkspaceStore.setState((state) => ({
+		workspaces: updateTabInWorkspaces(state.workspaces, tabId, layoutJson),
+	}));
+});

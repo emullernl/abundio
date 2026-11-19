@@ -9,6 +9,8 @@ import { decodeBase64 } from "./base64";
 import { isDemoMode } from "./demo";
 import { mockInvoke } from "./demo/mockInvoke";
 import { mockListen } from "./demo/mockListen";
+import type { LayoutOp } from "./layoutOps";
+import type { LayoutState } from "./layoutSync";
 import type { StatusOp, StatusUpdate } from "./statusSync";
 import type {
 	AgentHookEvent,
@@ -193,6 +195,12 @@ const ptyOutputHub = (() => {
 /** The Rust status store, the authority for pane status (`lib/statusSync.ts`). */
 export const statusApi = {
 	apply: (ops: StatusOp[]) => invoke<StatusUpdate[]>("status_apply", { ops }),
+};
+
+export const layoutApi = {
+	/** Apply edits to a Tab's layout in Rust, the authority (`layoutSync.ts`). */
+	apply: (tabId: string, ops: LayoutOp[]) =>
+		invoke<LayoutState>("layout_apply", { tabId, ops }),
 };
 
 export const pty = {

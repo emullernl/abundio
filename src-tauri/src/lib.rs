@@ -19,6 +19,7 @@ pub mod event_sink;
 pub mod screen;
 pub mod status_machine;
 mod layout_ops;
+pub mod layout_store;
 pub mod status_store;
 pub mod events;
 pub mod file_explorer;
@@ -949,6 +950,8 @@ pub fn run() {
             // scan starts once the event sink exists, below.
             let status_store = std::sync::Arc::new(status_store::StatusStore::new());
             app.manage(status_store.clone());
+            // Every Tab's layout, the authority (ADR-0063, phase 4).
+            app.manage(std::sync::Arc::new(layout_store::LayoutStore::new()));
 
             // Where core modules send events (docs/plans/remote-hosts.md).
             let pty_channels = std::sync::Arc::new(event_sink::PtyChannels::default());
@@ -1528,6 +1531,7 @@ pub fn run() {
             commands::pty_read_screen,
             commands::pty_set_scrollback,
             commands::status_apply,
+            commands::layout_apply,
             commands::pty_write,
             commands::pty_resize,
             commands::pty_redraw,

@@ -7,9 +7,6 @@
 //! The layout stays a `serde_json::Value`: every field a pane carries is kept,
 //! including ones this file has never heard of.
 
-// Used by the layout store in 4b.
-#![allow(dead_code)]
-
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 

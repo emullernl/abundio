@@ -92,6 +92,8 @@ Done in three steps: **3a** the reducer ported (`status_machine.rs`, parity fixt
 
 #### 4. Layouts owned by Rust
 
+Done in steps: **4a** layout edits as node-level ops (`set` / `replace` / `patch`, keyed by node id), computed by diffing the Window's old and new tree (`layoutOps.ts`) and applied the same in Rust (`layout_ops.rs`, `fixtures/layoutOps.json`); none of `paneTree.ts`'s edit functions needs a Rust twin, and edits to different panes from two Clients both land. **4b** Rust the authority for every Tab's layout (`layout_store.rs`, `layout_apply`): it applies, saves, numbers (in memory, so no migration) and sends `layout-changed` to the Profile's other Windows; the Window predicts (`layoutSync.ts`) and takes Rust's answer when it differs. A Tab's first edit in a Window is sent whole. Still Window-only: a newly spawned PTY's id is written into the layout locally and reaches Rust with the next edit; a Host Client attaching to live PTYs (phase 7) needs it sent at once.
+
 - Pane-tree edits (`paneTree.ts` operations used by stores and Agent control) become Rust commands; Rust saves and broadcasts; Windows apply broadcasts.
 - Split shared state (layouts, Tabs, Opened workspaces, handles, notes) from per-Window view state (Active workspace, Focused pane, panels).
 

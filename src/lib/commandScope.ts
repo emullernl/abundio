@@ -130,6 +130,7 @@ const HOST = [
 	"git_stage_path",
 	"git_status_fingerprint",
 	"git_workspaces_summary",
+	"layout_apply",
 	"list_available_shells",
 	"list_installed_agent_commands",
 	"list_repo_worktrees",

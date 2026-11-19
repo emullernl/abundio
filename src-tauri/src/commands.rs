@@ -564,18 +564,56 @@ pub async fn tab_list(
 #[tauri::command]
 pub async fn tab_update(
     store: State<'_, WorkspaceStore>,
+    layouts: State<'_, std::sync::Arc<crate::layout_store::LayoutStore>>,
     id: String,
     updates: TabUpdate,
 ) -> Result<(), AbundioError> {
+    // A layout written here bypasses the layout store: let it read afresh.
+    if updates.layout_json.is_some() {
+        layouts.forget(&id);
+    }
     store.update_tab(&id, updates)
 }
 
 #[tauri::command]
 pub async fn tab_delete(
     store: State<'_, WorkspaceStore>,
+    layouts: State<'_, std::sync::Arc<crate::layout_store::LayoutStore>>,
     id: String,
 ) -> Result<(), AbundioError> {
+    layouts.forget(&id);
     store.delete_tab(&id)
+}
+
+/// Apply a Window's edits to a Tab's layout: Rust is the authority
+/// (ADR-0063). Saves the result and sends it to the Profile's other Windows
+/// as `layout-changed`; answers with the layout as it now stands. The
+/// Window sends one batch at a time, so batches never overtake each other.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn layout_apply(
+    window: Window,
+    store: State<'_, WorkspaceStore>,
+    layouts: State<'_, std::sync::Arc<crate::layout_store::LayoutStore>>,
+    pty_mgr: State<'_, PtyManager>,
+    profiles: State<'_, crate::profile_store::ActiveProfileState>,
+    events: State<'_, crate::event_sink::Events>,
+    tab_id: String,
+    ops: Vec<crate::layout_ops::LayoutOp>,
+) -> Result<crate::layout_store::LayoutState, AbundioError> {
+    use crate::event_sink::EventsExt;
+    let applied = layouts.apply(&store, &tab_id, &ops, &|id| pty_mgr.is_live(id))?;
+    if applied.changed {
+        let origin = crate::event_sink::ClientId::from(window.label());
+        for client in crate::layout_store::broadcast_targets(
+            &profiles.snapshot(),
+            &applied.profile_id,
+            &origin,
+        ) {
+            events.to_client(&client, "layout-changed", &applied.state);
+        }
+    }
+    Ok(applied.state)
 }
 
 // ── Note commands ──
