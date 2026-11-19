@@ -16,7 +16,10 @@ vi.mock("../../terminalManager", () => ({
 	startPtyUnlessShown: () => () => {},
 }));
 
-import { useControlBadgeStore } from "../../../stores/controlBadgeStore";
+import {
+	BADGE_MIN_VISIBLE_MS,
+	useControlBadgeStore,
+} from "../../../stores/controlBadgeStore";
 import { usePtyActivityStore } from "../../../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../../../stores/workspaceStore";
 import type { WorkspaceWithTabs } from "../../types";
@@ -111,8 +114,11 @@ describe("a call Rust answers", () => {
 		expect(useControlBadgeStore.getState().badges.b).toMatchObject({
 			by: "p1",
 		});
+		vi.useFakeTimers();
 		applyControlEffect({ type: "end", id: "e1" });
 		applyControlEffect({ type: "end", id: "e1" });
+		vi.advanceTimersByTime(BADGE_MIN_VISIBLE_MS);
+		vi.useRealTimers();
 		expect(useControlBadgeStore.getState().badges.b).toBeUndefined();
 	});
 });
@@ -131,7 +137,10 @@ describe("agent rename", () => {
 		unsub();
 		expect(r).toMatchObject({ pane: "p2", handle: "tester" });
 		expect(seen).toContain("p1");
-		expect(useControlBadgeStore.getState().badges.b).toBeUndefined();
+		await vi.waitFor(
+			() => expect(useControlBadgeStore.getState().badges.b).toBeUndefined(),
+			{ timeout: 3000 },
+		);
 		const tabs = useWorkspaceStore.getState().workspaces[0].tabs;
 		expect(tabs[0].layoutJson).toContain('"agentHandle":"tester"');
 	});

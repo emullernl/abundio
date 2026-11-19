@@ -16,9 +16,14 @@ interface ControlBadgeState {
 	begin: (paneId: string, by: string) => () => void;
 }
 
+/** A call shows its badge at least this long. Most calls (a read, a key
+ *  press) are over in milliseconds, before the badge could be painted. */
+export const BADGE_MIN_VISIBLE_MS = 1500;
+
 export const useControlBadgeStore = create<ControlBadgeState>((set) => ({
 	badges: {},
 	begin: (paneId, by) => {
+		const began = Date.now();
 		set((s) => ({
 			badges: {
 				...s.badges,
@@ -26,9 +31,7 @@ export const useControlBadgeStore = create<ControlBadgeState>((set) => ({
 			},
 		}));
 		let ended = false;
-		return () => {
-			if (ended) return;
-			ended = true;
+		const remove = () =>
 			set((s) => {
 				const cur = s.badges[paneId];
 				if (!cur) return s;
@@ -40,6 +43,12 @@ export const useControlBadgeStore = create<ControlBadgeState>((set) => ({
 							: rest,
 				};
 			});
+		return () => {
+			if (ended) return;
+			ended = true;
+			const left = BADGE_MIN_VISIBLE_MS - (Date.now() - began);
+			if (left > 0) setTimeout(remove, left);
+			else remove();
 		};
 	},
 }));
