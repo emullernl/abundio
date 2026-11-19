@@ -139,6 +139,66 @@ impl HookHost for ServerHookHost {
     fn control_serve(&self, _request: tiny_http::Request) {}
 }
 
+// ── The host commands ──
+
+/// What the server's Clients are: the Windows of the desktop apps connected
+/// to it, each showing one of its Profiles.
+struct ServerClients {
+    connections: Arc<serve::Connections>,
+    /// Client → the Profile it shows (phase 7d: set when a Window opens one).
+    profiles: std::sync::Mutex<std::collections::HashMap<String, String>>,
+}
+
+impl abundio_core::host_api::HostClients for ServerClients {
+    fn profiles(&self) -> std::collections::HashMap<String, String> {
+        self.profiles.lock().unwrap().clone()
+    }
+    fn is_alive(&self, client: &ClientId) -> bool {
+        self.connections.has_client(client.as_str())
+    }
+}
+
+/// Everything the host commands reach on this server.
+struct ServerHost {
+    workspaces: Arc<workspace_store::WorkspaceStore>,
+    env: Arc<env_vars::EnvVarStore>,
+    ptys: Arc<pty_manager::PtyManager>,
+    status: Arc<status_store::StatusStore>,
+    layouts: layout_store::LayoutStore,
+    facts: pane_facts::PaneFactsStore,
+    agents: Arc<abundio_core::shell_integration::AgentCommands>,
+    events: Events,
+    hook_env: pty_manager::HookEnv,
+    clients: ServerClients,
+}
+
+impl ServerHost {
+    /// Each request runs the same host command a local Profile's Window
+    /// runs (`host_api`), or one of the server's own (`serve.rs`).
+    fn handler(self: Arc<Self>) -> serve::Handler {
+        let builtin = serve::builtin_handler();
+        Arc::new(move |client, command, args| {
+            let host = abundio_core::host_api::Host {
+                workspaces: &self.workspaces,
+                ptys: &self.ptys,
+                status: &self.status,
+                layouts: &self.layouts,
+                facts: &self.facts,
+                agents: &self.agents,
+                env: Some(&self.env),
+                hook_env: Some(self.hook_env.clone()),
+                events: &self.events,
+                clients: &self.clients,
+            };
+            match abundio_core::host_api::dispatch(&host, client, command, args.clone()) {
+                Some(result) => result
+                    .map_err(|e| serde_json::to_value(&e).unwrap_or_else(|_| serde_json::Value::String(e.to_string()))),
+                None => builtin(client, command, args),
+            }
+        })
+    }
+}
+
 // ── Running ──
 
 /// Holds the data folder for this process: a second server on the same
@@ -236,41 +296,50 @@ fn run(data_dir: PathBuf) -> Result<(), String> {
     log::info!("abundio-server {} with data in {}", env!("CARGO_PKG_VERSION"), data_dir.display());
     prepare_data_folder(&data_dir);
 
-    let workspaces = workspace_store::WorkspaceStore::new(open_db()?);
+    let workspaces = Arc::new(workspace_store::WorkspaceStore::new(open_db()?));
     let env = Arc::new(env_vars::EnvVarStore::new(open_db()?));
     let ptys = Arc::new(pty_manager::PtyManager::new());
     let status = Arc::new(status_store::StatusStore::new());
-    let _layouts = layout_store::LayoutStore::new();
-    let _facts = pane_facts::PaneFactsStore::new();
+    let agents = Arc::new(abundio_core::shell_integration::AgentCommands::default());
     let connections = Arc::new(serve::Connections::default());
     let events: Events = connections.clone();
     {
         // A PTY's exit reaches its status here, Window or not (phase 6d).
-        let status = status.clone();
+        let (status, events) = (status.clone(), events.clone());
         ptys.on_exit(Arc::new(move |pty, code| {
-            let _ = status.exit_update(pty, code, &status_machine::StatusConfig::default());
+            use abundio_core::event_sink::EventsExt;
+            if let Some((owner, update)) = status.exit_update(pty, code, &status_machine::StatusConfig::default()) {
+                events.to_client(&owner, "status-updates", vec![update]);
+            }
         }));
     }
     status_store::listen_activity(&ptys, status.clone(), events.clone());
-    abundio_core::shell_integration::listen(
-        &ptys,
-        status.clone(),
-        Arc::new(abundio_core::shell_integration::AgentCommands::default()),
-        events.clone(),
-    );
+    abundio_core::shell_integration::listen(&ptys, status.clone(), agents.clone(), events.clone());
     abundio_core::title_status::listen(&ptys, status.clone(), events.clone());
-    status_store::start_ticker(status.clone(), events);
+    status_store::start_ticker(status.clone(), events.clone());
 
-    let host = Arc::new(ServerHookHost { ptys: ptys.clone(), env, status: status.clone() });
-    let hooks = HookServer::start(host)?;
+    let hook_host = Arc::new(ServerHookHost { ptys: ptys.clone(), env: env.clone(), status: status.clone() });
+    let hooks = HookServer::start(hook_host)?;
     log::info!("hook server on 127.0.0.1:{}", hooks.port);
+    let host = Arc::new(ServerHost {
+        workspaces: workspaces.clone(),
+        env,
+        ptys: ptys.clone(),
+        status: status.clone(),
+        layouts: layout_store::LayoutStore::new(),
+        facts: pane_facts::PaneFactsStore::new(),
+        agents,
+        events,
+        hook_env: pty_manager::HookEnv { port: hooks.port, token: hooks.token.clone() },
+        clients: ServerClients { connections: connections.clone(), profiles: Default::default() },
+    });
     #[cfg(unix)]
     {
         // A Client going away never stops its PTYs: their status is kept,
         // no longer sent to it.
         let status = status.clone();
         let gone: serve::ClientGone = Arc::new(move |c: &ClientId| status.release_client(c.as_str()));
-        serve::listen(&socket_path(&data_dir), connections, serve::builtin_handler(), gone)?;
+        serve::listen(&socket_path(&data_dir), connections, host.handler(), gone)?;
         log::info!("listening on {}", socket_path(&data_dir).display());
     }
     log::info!(

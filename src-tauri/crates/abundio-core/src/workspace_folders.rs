@@ -10,8 +10,18 @@ use std::path::{Component, Path, PathBuf};
 use serde::Serialize;
 
 use crate::error::AbundioError;
-use crate::orchestrator::{default_parent, MARKER};
 use crate::workspace_store::{FolderRow, WorkspaceStore};
+
+/// The marker Abundio leaves in an **Orchestrator folder** (ADR-0059): only an
+/// empty folder, or one carrying this, may be chosen as one. Holds the
+/// Profile's id.
+pub const MARKER: &str = ".abundio-orchestrator";
+
+/// Where default Orchestrator folders live, inside `root`
+/// (`app_paths::shared_root()` in the app).
+pub fn default_parent(root: &Path) -> PathBuf {
+    root.join("orchestrator")
+}
 
 /// `path` as one comparable key: the real path when it exists (symlinks
 /// resolved), else lexically cleaned; no trailing separator; folded to lower
@@ -164,14 +174,6 @@ pub fn holds_work(rows: &[FolderRow], folder: &Path) -> bool {
         .any(|r| r.kind != "orchestrator" && is_within(Path::new(&r.root_folder), folder))
 }
 
-#[tauri::command]
-pub async fn workspace_folder_check(
-    store: tauri::State<'_, WorkspaceStore>,
-    root_folder: String,
-    profile_id: String,
-) -> Result<FolderCheck, AbundioError> {
-    check(&store, &crate::app_paths::shared_root(), &root_folder, &profile_id, None)
-}
 
 #[cfg(test)]
 mod tests {

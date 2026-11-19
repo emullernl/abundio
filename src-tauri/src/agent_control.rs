@@ -779,9 +779,9 @@ impl crate::control_local::Live for AppLive<'_> {
             crate::workspace_store::TabUpdate { name: Some(name.to_string()), ..Default::default() },
         )?;
         if let Some(profile) = self.store.profile_of(workspace_id)? {
-            crate::commands::send_tabs_changed(
+            crate::host_api::send_tabs_changed(
                 self.store,
-                &self.app.state::<crate::profile_store::ActiveProfileState>(),
+                &self.app.state::<crate::profile_store::ActiveProfileState>().snapshot(),
                 &self.app.state::<crate::event_sink::Events>(),
                 None,
                 workspace_id,

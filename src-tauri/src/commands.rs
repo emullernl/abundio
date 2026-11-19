@@ -6,99 +6,13 @@ use crate::git_scheduler::GitScheduler;
 use crate::profile_store::{
     ActiveProfileState, BusyCounts, BusyCountsState, Profile, ProfileStore, ProfileUpdate,
 };
-use crate::pty_manager::PtyManager;
 use crate::workspace_store::{
-    AgentTurnBucket, AgentTurnRecord, AgentTurnTotals, Bucket, GroupBy, Tab, TabUpdate,
-    WorkspaceStore, WorkspaceUpdate, WorkspaceWithTabs,
+    AgentTurnBucket, AgentTurnRecord, AgentTurnTotals, Bucket, GroupBy, WorkspaceStore,
 };
 use crate::worktree_watcher::WorktreeWatcher;
-use crate::shell_env;
 
 // ── PTY commands ──
 
-#[tauri::command]
-pub async fn pty_spawn(
-    app: AppHandle,
-    window: Window,
-    pty_mgr: State<'_, PtyManager>,
-    cwd: String,
-    cols: u16,
-    rows: u16,
-    command: Option<String>,
-    shell: Option<String>,
-    log_id: Option<String>,
-    pty_id: Option<String>,
-    workspace_name: Option<String>,
-    window_label: Option<String>,
-    // `workspace_id` selects whose injected Environment Bundle lands in the
-    // child's environment. `inherit_from_workspace_id` is the main-worktree
-    // Workspace, resolved by the frontend (`inheritSourceWorkspaceId`) —
-    // worktree grouping is not recomputed in Rust.
-    workspace_id: Option<String>,
-    inherit_from_workspace_id: Option<String>,
-    // A **New task** launch (ADR-0042): the shell runs the Agent with the
-    // Task prompt as a positional argument instead of a typed command.
-    task: Option<crate::pty_manager::TaskLaunch>,
-    store: State<'_, WorkspaceStore>,
-) -> Result<String, AbundioError> {
-    // Never start a Workspace pane in the wrong folder (ADR-0053): refuse a
-    // Missing folder, and start in the Workspace folder when only the pane's
-    // own remembered folder is gone. The lookup releases the store lock
-    // before the disk is touched.
-    let root = match workspace_id.as_deref() {
-        Some(id) => store.root_folder(id)?,
-        None => None,
-    };
-    // Off the async runtime: a `stat` on a hung mount can block for long.
-    let cwd = tauri::async_runtime::spawn_blocking(move || {
-        crate::pty_manager::resolve_spawn_cwd(&cwd, root.as_deref(), |p| {
-            std::path::Path::new(p).is_dir()
-        })
-    })
-    .await
-    .map_err(|e| AbundioError::InvalidOperation(format!("folder check failed: {e}")))??;
-    let hook_env = app
-        .try_state::<crate::hook_server::HookServer>()
-        .map(|h| crate::pty_manager::HookEnv {
-            port: h.port,
-            token: h.token.clone(),
-        });
-    let env_store = app.try_state::<crate::env_vars::EnvVarStore>();
-    let pty_id = pty_mgr.spawn(
-        crate::pty_manager::SpawnDeps {
-            events: app.state::<crate::event_sink::Events>().inner().clone(),
-            hook_env,
-            env_store: env_store.as_deref(),
-        },
-        window.label(),
-        &cwd,
-        command.as_deref(),
-        shell.as_deref(),
-        cols,
-        rows,
-        log_id.as_deref(),
-        pty_id.as_deref(),
-        workspace_name.as_deref(),
-        window_label.as_deref(),
-        workspace_id.as_deref(),
-        inherit_from_workspace_id.as_deref(),
-        task.as_ref(),
-    )?;
-    // A spawn the Window sent just before it closed can land after its
-    // `Destroyed` handler killed its PTYs. Kill it too if the Window is gone.
-    //
-    // This closes the gap only because Tauri drops the Window from its list
-    // *before* running our `Destroyed` handler: tauri-runtime-wry 2.11.2 calls
-    // the run-loop callback (whose `on_event_loop_event` runs
-    // `manager.on_window_close`) and only then the per-window listeners that
-    // `Builder::on_window_event` registers. So a spawn either inserts its owner
-    // before `kill_for_window` sweeps, or sees the Window gone here. Re-check
-    // this ordering when upgrading Tauri.
-    if app.get_webview_window(window.label()).is_none() {
-        let _ = pty_mgr.kill(&pty_id);
-    }
-    Ok(pty_id)
-}
 
 /// Give this Window's channel for every PTY's output (raw bytes, framed by
 /// `event_sink::frame_pty_output`). Replaces an earlier one from the same
@@ -112,114 +26,16 @@ pub fn pty_output_subscribe(
     channels.set(window.label(), channel);
 }
 
-#[tauri::command]
-pub async fn list_available_shells() -> Result<Vec<shell_env::AvailableShell>, AbundioError> {
-    Ok(shell_env::list_available_shells())
-}
 
-/// The shell a PTY spawns with when the user hasn't picked one (`shellPath`
-/// null). The resolution lives in Rust (on Windows it prefers Git Bash, else
-/// cmd.exe), so the frontend can't derive it — it calls this to learn what the
-/// "System Default" resolves to (used by file-drop to pick the right path style).
-#[tauri::command]
-pub async fn default_shell() -> Result<String, AbundioError> {
-    Ok(shell_env::default_shell())
-}
 
-#[tauri::command]
-pub async fn pty_write(
-    pty_mgr: State<'_, PtyManager>,
-    pty_id: String,
-    data: String,
-) -> Result<(), AbundioError> {
-    // data comes as a UTF-8 string from xterm.js onData
-    pty_mgr.write(&pty_id, data.into_bytes())
-}
 
-#[tauri::command]
-pub async fn pty_resize(
-    pty_mgr: State<'_, PtyManager>,
-    pty_id: String,
-    cols: u16,
-    rows: u16,
-) -> Result<(), AbundioError> {
-    pty_mgr.resize(&pty_id, cols, rows)
-}
 
-/// The text of a PTY's screen, from its Rust emulator (ADR-0063). The same
-/// rules as `readBuffer.ts`; see `screen::Screen::read`.
-#[tauri::command]
-pub async fn pty_read_screen(
-    pty_mgr: State<'_, PtyManager>,
-    pty_id: String,
-    visible: bool,
-    lines: Option<usize>,
-) -> Result<Vec<String>, AbundioError> {
-    pty_mgr.read_screen(&pty_id, visible, lines)
-}
 
-/// How many lines of scrollback every PTY's screen keeps: the terminal
-/// setting, pushed by the frontend at start and on every change.
-#[tauri::command]
-pub async fn pty_set_scrollback(pty_mgr: State<'_, PtyManager>, lines: usize) -> Result<(), AbundioError> {
-    pty_mgr.set_scrollback(lines);
-    Ok(())
-}
 
-/// Run status operations from this Window in the Rust status store, the
-/// authority (ADR-0063), in order; return what the Window should show.
-/// Synchronous, so batches never overtake each other.
-#[tauri::command]
-pub fn status_apply(
-    window: Window,
-    store: State<'_, std::sync::Arc<crate::status_store::StatusStore>>,
-    ops: Vec<crate::status_store::StatusOp>,
-) -> Vec<crate::status_store::StatusUpdate> {
-    let client = crate::event_sink::ClientId::from(window.label());
-    let config = store.config();
-    ops.into_iter()
-        .filter_map(|op| store.run_op(&client, op, &config))
-        .collect()
-}
 
-/// The **Activity byte threshold** setting, for the output heuristic Rust
-/// runs (phase 6d-5). Every Window sends it on a change.
-#[tauri::command]
-pub fn status_byte_threshold_set(
-    store: State<'_, std::sync::Arc<crate::status_store::StatusStore>>,
-    bytes: i64,
-) {
-    store.set_byte_threshold(bytes);
-}
 
-/// The Agents a command typed at a prompt is matched against (the user's
-/// list: custom Agents, disabled ones), so Rust sees a typed Agent start
-/// (shell integration, phase 6d-4). Every Window sends it on a change.
-#[tauri::command]
-pub fn agent_commands_set(
-    agents: State<'_, std::sync::Arc<crate::shell_integration::AgentCommands>>,
-    list: Vec<crate::shell_integration::AgentCommand>,
-) {
-    agents.set(list);
-}
 
-/// Ask the program in a PTY to redraw at its current size (SIGWINCH to the
-/// foreground process group). `false` where unsupported (Windows).
-#[tauri::command]
-pub async fn pty_redraw(
-    pty_mgr: State<'_, PtyManager>,
-    pty_id: String,
-) -> Result<bool, AbundioError> {
-    pty_mgr.redraw(&pty_id)
-}
 
-#[tauri::command]
-pub async fn pty_kill(
-    pty_mgr: State<'_, PtyManager>,
-    pty_id: String,
-) -> Result<(), AbundioError> {
-    pty_mgr.kill(&pty_id)
-}
 
 // ── Menu ──
 
@@ -458,263 +274,24 @@ pub async fn create_untitled_profile_in_new_window(
 
 // ── Workspace commands ──
 
-#[tauri::command]
-pub async fn workspace_create(
-    store: State<'_, WorkspaceStore>,
-    name: String,
-    root_folder: String,
-    profile_id: String,
-) -> Result<WorkspaceWithTabs, AbundioError> {
-    // One folder per Profile, never an Orchestrator folder (GLOSSARY.md).
-    crate::workspace_folders::enforce(&crate::workspace_folders::check(
-        &store,
-        &crate::app_paths::shared_root(),
-        &root_folder,
-        &profile_id,
-        None,
-    )?)?;
-    store.create(&name, &root_folder, &profile_id)
-}
 
-#[tauri::command]
-pub async fn workspace_list(
-    store: State<'_, WorkspaceStore>,
-    profile_id: String,
-) -> Result<Vec<WorkspaceWithTabs>, AbundioError> {
-    store.list(&profile_id)
-}
 
-#[tauri::command]
-pub async fn workspace_update(
-    store: State<'_, WorkspaceStore>,
-    id: String,
-    updates: WorkspaceUpdate,
-) -> Result<(), AbundioError> {
-    if let Some(folder) = &updates.root_folder {
-        if let Some(profile_id) = store.profile_of(&id)? {
-            crate::workspace_folders::enforce(&crate::workspace_folders::check(
-                &store,
-                &crate::app_paths::shared_root(),
-                folder,
-                &profile_id,
-                Some(&id),
-            )?)?;
-        }
-    }
-    store.update(&id, updates)
-}
 
-#[tauri::command]
-pub async fn workspace_delete(
-    store: State<'_, WorkspaceStore>,
-    id: String,
-) -> Result<(), AbundioError> {
-    store.delete(&id)
-}
 
-/// Ids of the Profile's Workspaces whose folder is missing (ADR-0053).
-#[tauri::command]
-pub async fn workspace_missing_folders(
-    store: State<'_, WorkspaceStore>,
-    profile_id: String,
-) -> Result<Vec<String>, AbundioError> {
-    let rows = store.folder_rows(&profile_id)?;
-    // `stat` on a hung network mount can block for tens of seconds; keep it
-    // off the async runtime's worker threads. Runs on every Window focus.
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::workspace_store::missing_ids(rows, |p| std::path::Path::new(p).is_dir())
-    })
-    .await
-    .map_err(|e| AbundioError::InvalidOperation(format!("folder check failed: {e}")))
-}
 
-/// A Profile's **Workspace restore** list (ADR-0052).
-#[tauri::command]
-pub async fn workspace_restore_set(
-    store: State<'_, WorkspaceStore>,
-    profile_id: String,
-) -> Result<crate::workspace_store::RestoreSet, AbundioError> {
-    store.restore_set(&profile_id)
-}
 
-#[tauri::command]
-pub async fn workspace_set_restore_opened(
-    store: State<'_, WorkspaceStore>,
-    id: String,
-    opened: bool,
-) -> Result<(), AbundioError> {
-    store.set_restore_opened(&id, opened)
-}
 
-#[tauri::command]
-pub async fn workspace_set_restore_active(
-    store: State<'_, WorkspaceStore>,
-    profile_id: String,
-    id: Option<String>,
-) -> Result<(), AbundioError> {
-    store.set_restore_active(&profile_id, id.as_deref())
-}
 
-#[tauri::command]
-pub async fn workspace_reorder(
-    store: State<'_, WorkspaceStore>,
-    ids: Vec<String>,
-) -> Result<(), AbundioError> {
-    store.reorder_workspaces(&ids)
-}
 
 // ── Tab commands ──
 
-/// A Workspace's Tabs, as sent to the Profile's other Windows when one is
-/// created, closed, renamed or moved (`tabs-changed`, ADR-0063).
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TabsChanged {
-    workspace_id: String,
-    tabs: Vec<Tab>,
-}
 
-/// Tell the Windows of `profile_id` the Workspace's Tabs now: every one but
-/// `origin`, which made the change itself (`None`: Rust did, tell them all).
-pub(crate) fn send_tabs_changed(
-    store: &WorkspaceStore,
-    profiles: &crate::profile_store::ActiveProfileState,
-    events: &crate::event_sink::Events,
-    origin: Option<&crate::event_sink::ClientId>,
-    workspace_id: &str,
-    profile_id: &str,
-) {
-    use crate::event_sink::EventsExt;
-    let nobody = crate::event_sink::ClientId(String::new());
-    let targets = crate::layout_store::broadcast_targets(
-        &profiles.snapshot(),
-        profile_id,
-        origin.unwrap_or(&nobody),
-    );
-    if targets.is_empty() {
-        return;
-    }
-    let tabs = match store.list_tabs(workspace_id) {
-        Ok(tabs) => tabs,
-        Err(e) => {
-            log::warn!("[tabs] cannot list {workspace_id}'s Tabs to send: {e}");
-            return;
-        }
-    };
-    let payload = TabsChanged { workspace_id: workspace_id.to_string(), tabs };
-    for client in targets {
-        events.to_client(&client, "tabs-changed", &payload);
-    }
-}
 
-#[tauri::command]
-pub async fn tab_create(
-    window: Window,
-    store: State<'_, WorkspaceStore>,
-    profiles: State<'_, crate::profile_store::ActiveProfileState>,
-    events: State<'_, crate::event_sink::Events>,
-    workspace_id: String,
-    name: String,
-) -> Result<Tab, AbundioError> {
-    let tab = store.create_tab(&workspace_id, &name)?;
-    if let Some(profile_id) = store.profile_of(&workspace_id)? {
-        send_tabs_changed(&store, &profiles, &events, Some(&crate::event_sink::ClientId::from(window.label())), &workspace_id, &profile_id);
-    }
-    Ok(tab)
-}
 
-#[tauri::command]
-pub async fn tab_list(
-    store: State<'_, WorkspaceStore>,
-    workspace_id: String,
-) -> Result<Vec<Tab>, AbundioError> {
-    store.list_tabs(&workspace_id)
-}
 
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
-pub async fn tab_update(
-    window: Window,
-    store: State<'_, WorkspaceStore>,
-    layouts: State<'_, std::sync::Arc<crate::layout_store::LayoutStore>>,
-    profiles: State<'_, crate::profile_store::ActiveProfileState>,
-    events: State<'_, crate::event_sink::Events>,
-    id: String,
-    updates: TabUpdate,
-) -> Result<(), AbundioError> {
-    // A layout written here bypasses the layout store: let it read afresh.
-    if updates.layout_json.is_some() {
-        layouts.forget(&id);
-    }
-    let tab_level = updates.name.is_some() || updates.position.is_some();
-    store.update_tab(&id, updates)?;
-    if tab_level {
-        if let Some((workspace_id, profile_id)) = store.tab_owner(&id)? {
-            send_tabs_changed(&store, &profiles, &events, Some(&crate::event_sink::ClientId::from(window.label())), &workspace_id, &profile_id);
-        }
-    }
-    Ok(())
-}
 
-#[tauri::command]
-pub async fn tab_delete(
-    window: Window,
-    store: State<'_, WorkspaceStore>,
-    layouts: State<'_, std::sync::Arc<crate::layout_store::LayoutStore>>,
-    profiles: State<'_, crate::profile_store::ActiveProfileState>,
-    events: State<'_, crate::event_sink::Events>,
-    id: String,
-) -> Result<(), AbundioError> {
-    layouts.forget(&id);
-    let owner = store.tab_owner(&id)?;
-    store.delete_tab(&id)?;
-    if let Some((workspace_id, profile_id)) = owner {
-        send_tabs_changed(&store, &profiles, &events, Some(&crate::event_sink::ClientId::from(window.label())), &workspace_id, &profile_id);
-    }
-    Ok(())
-}
 
-/// The Window's facts about its panes that Rust does not see yet (title,
-/// live folder, running command, detected Agent, Progress line), for Agent
-/// control to describe them (`pane_facts.rs`).
-#[tauri::command]
-pub fn pane_facts_report(
-    facts: State<'_, crate::pane_facts::PaneFactsStore>,
-    reports: Vec<crate::pane_facts::PaneFactsReport>,
-) {
-    facts.apply(reports);
-}
 
-/// Apply a Window's edits to a Tab's layout: Rust is the authority
-/// (ADR-0063). Saves the result and sends it to the Profile's other Windows
-/// as `layout-changed`; answers with the layout as it now stands. The
-/// Window sends one batch at a time, so batches never overtake each other.
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
-pub async fn layout_apply(
-    window: Window,
-    store: State<'_, WorkspaceStore>,
-    layouts: State<'_, std::sync::Arc<crate::layout_store::LayoutStore>>,
-    pty_mgr: State<'_, PtyManager>,
-    profiles: State<'_, crate::profile_store::ActiveProfileState>,
-    events: State<'_, crate::event_sink::Events>,
-    tab_id: String,
-    ops: Vec<crate::layout_ops::LayoutOp>,
-) -> Result<crate::layout_store::LayoutState, AbundioError> {
-    use crate::event_sink::EventsExt;
-    let applied = layouts.apply(&store, &tab_id, &ops, &|id| pty_mgr.is_live(id))?;
-    if applied.changed {
-        let origin = crate::event_sink::ClientId::from(window.label());
-        for client in crate::layout_store::broadcast_targets(
-            &profiles.snapshot(),
-            &applied.profile_id,
-            &origin,
-        ) {
-            events.to_client(&client, "layout-changed", &applied.state);
-        }
-    }
-    Ok(applied.state)
-}
 
 // ── Note commands ──
 
@@ -789,30 +366,10 @@ pub async fn telemetry_list_turns(
 
 // ── PTY log commands ──
 
-#[tauri::command]
-pub async fn pty_read_log(log_id: String) -> Result<Option<String>, AbundioError> {
-    PtyManager::read_log(&log_id)
-}
 
-#[tauri::command]
-pub async fn pty_write_snapshot(pane_id: String, data: String) -> Result<(), AbundioError> {
-    PtyManager::write_snapshot(&pane_id, &data)
-}
 
-#[tauri::command]
-pub async fn pty_read_snapshot(pane_id: String) -> Result<Option<String>, AbundioError> {
-    PtyManager::read_snapshot(&pane_id)
-}
 
-#[tauri::command]
-pub async fn pty_delete_log(log_id: String) -> Result<(), AbundioError> {
-    PtyManager::delete_log(&log_id)
-}
 
-#[tauri::command]
-pub async fn pty_cleanup_stale_logs(pane_ids: Vec<String>) -> Result<(), AbundioError> {
-    PtyManager::cleanup_stale_logs(&pane_ids)
-}
 
 // ── File watcher commands ──
 

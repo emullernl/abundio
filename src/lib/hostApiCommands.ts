@@ -1,0 +1,46 @@
+/**
+ * The host commands that run through the one host-command handler (Rust's
+ * `host_api.rs`, docs/plans/remote-hosts.md phase 7b): the desktop app's
+ * `host_call` for a local Profile, an Abundio server for a remote one.
+ * `ipc.ts` routes these there; the rest still go to their own Tauri
+ * command until they move. Rust's tests hold this list to its handler.
+ */
+export const HOST_API_COMMANDS: ReadonlySet<string> = new Set([
+	// Terminals
+	"pty_spawn",
+	"pty_write",
+	"pty_resize",
+	"pty_kill",
+	"pty_redraw",
+	"pty_read_screen",
+	"pty_set_scrollback",
+	"pty_read_log",
+	"pty_delete_log",
+	"pty_cleanup_stale_logs",
+	"pty_write_snapshot",
+	"pty_read_snapshot",
+	"default_shell",
+	"list_available_shells",
+	// Status
+	"status_apply",
+	"status_byte_threshold_set",
+	"agent_commands_set",
+	"pane_facts_report",
+	// Layouts and Tabs
+	"layout_apply",
+	"tab_list",
+	"tab_create",
+	"tab_delete",
+	"tab_update",
+	// Workspaces
+	"workspace_list",
+	"workspace_create",
+	"workspace_update",
+	"workspace_delete",
+	"workspace_folder_check",
+	"workspace_missing_folders",
+	"workspace_reorder",
+	"workspace_restore_set",
+	"workspace_set_restore_active",
+	"workspace_set_restore_opened",
+]);

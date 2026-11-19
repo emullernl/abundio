@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { COMMAND_SCOPE, commandScope } from "../commandScope";
+import { HOST_API_COMMANDS } from "../hostApiCommands";
 
 const raw = import.meta.glob<string>(
 	["/src/lib/ipc.ts", "/src-tauri/src/lib.rs"],
@@ -34,7 +35,11 @@ describe("command scope", () => {
 	});
 
 	it("has no label for a command that no longer exists", () => {
-		const known = new Set([...ipcCommands(), ...rustHandlers()]);
+		const known = new Set([
+			...ipcCommands(),
+			...rustHandlers(),
+			...HOST_API_COMMANDS,
+		]);
 		expect([...COMMAND_SCOPE.keys()].filter((c) => !known.has(c))).toEqual([]);
 	});
 
@@ -43,6 +48,12 @@ describe("command scope", () => {
 		expect(commandScope("updater_check")).toBe("desktop");
 		expect(commandScope("pty_spawn")).toBe("host");
 		expect(commandScope("fs_read_file")).toBe("host");
+	});
+
+	it("routes only host commands through the host handler", () => {
+		expect(
+			[...HOST_API_COMMANDS].filter((c) => commandScope(c) !== "host"),
+		).toEqual([]);
 	});
 
 	it("treats an unknown command as host", () => {

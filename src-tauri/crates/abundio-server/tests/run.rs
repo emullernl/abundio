@@ -115,6 +115,41 @@ fn the_app_reaches_the_server_through_connect() {
     assert_eq!(pong["version"], env!("CARGO_PKG_VERSION"));
     wait_for(&mut log, "a Client connection opened");
 
+    // The host commands run on the server: a Workspace, then a terminal in it.
+    let call = |command: &str, args: serde_json::Value| {
+        client.request("window-1", command, args, Some(Duration::from_secs(10)))
+    };
+    let profile = "00000000-0000-0000-0000-000000000001";
+    let folder = tempfile::tempdir().unwrap();
+    let ws = call(
+        "workspace_create",
+        serde_json::json!({ "name": "Remote", "rootFolder": folder.path(), "profileId": profile }),
+    )
+    .unwrap();
+    let listed = call("workspace_list", serde_json::json!({ "profileId": profile })).unwrap();
+    assert_eq!(listed[0]["id"], ws["id"]);
+    let pty = call(
+        "pty_spawn",
+        serde_json::json!({
+            "cwd": folder.path(), "cols": 80, "rows": 24,
+            "command": "/bin/echo made-on-the-host", "workspaceId": ws["id"],
+        }),
+    )
+    .unwrap();
+    let pty = pty.as_str().unwrap().to_string();
+    let start = Instant::now();
+    loop {
+        let screen = call("pty_read_screen", serde_json::json!({ "ptyId": pty, "visible": true })).unwrap();
+        if screen.as_array().unwrap().iter().any(|l| l.as_str().unwrap_or("").contains("made-on-the-host")) {
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(10), "no output: {screen}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // A host command's error reaches the app as the command's own.
+    let err = call("pty_resize", serde_json::json!({ "ptyId": "nope", "cols": 1, "rows": 1 })).unwrap_err();
+    assert!(format!("{err:?}").contains("PTY not found"), "{err:?}");
+
     // The app goes: the server notices and keeps running.
     process.kill();
     wait_for(&mut log, "a Client connection closed");

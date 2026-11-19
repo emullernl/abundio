@@ -45,6 +45,11 @@ impl Connections {
         }
     }
 
+    /// Whether `client` speaks on an open connection.
+    pub fn has_client(&self, client: &str) -> bool {
+        self.conn_of(client).is_some()
+    }
+
     fn conn_of(&self, client: &str) -> Option<u64> {
         self.clients.lock().unwrap().get(client).copied()
     }

@@ -32,6 +32,7 @@ pub struct SpawnDeps<'a> {
 }
 
 /// The hook server's address as a PTY sees it.
+#[derive(Clone)]
 pub struct HookEnv {
     pub port: u16,
     pub token: String,

@@ -17,19 +17,12 @@ use crate::workspace_store::{
 /// The file the user may edit. Created once, never rewritten.
 pub const USER_FILE: &str = "my-instructions.md";
 
-/// The marker Abundio leaves in an **Orchestrator folder** (ADR-0059): only an
-/// empty folder, or one carrying this, may be chosen as one. Holds the
-/// Profile's id.
-pub const MARKER: &str = ".abundio-orchestrator";
+pub use crate::workspace_folders::MARKER;
 
 /// Files an "empty" folder may still hold: the OS's own, and the marker.
 const IGNORED: &[&str] = &[".DS_Store", "Thumbs.db", "desktop.ini", MARKER];
 
-/// Where default Orchestrator folders live, inside `root`
-/// (`app_paths::shared_root()` in the app).
-pub fn default_parent(root: &Path) -> PathBuf {
-    root.join("orchestrator")
-}
+pub use crate::workspace_folders::default_parent;
 
 /// Whether `folder` is a default one (inside `default_parent`, never that
 /// folder itself): Abundio's to delete with its Profile. A folder the user

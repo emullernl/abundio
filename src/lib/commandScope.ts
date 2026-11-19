@@ -174,6 +174,8 @@ const HOST = [
 	"pty_write",
 	"pty_write_snapshot",
 	"status_apply",
+	// The door to the host commands above for a local Profile (phase 7b).
+	"host_call",
 	"agent_commands_set",
 	"status_byte_threshold_set",
 	"tab_create",

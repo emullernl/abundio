@@ -9,6 +9,7 @@ import { decodeBase64 } from "./base64";
 import { isDemoMode } from "./demo";
 import { mockInvoke } from "./demo/mockInvoke";
 import { mockListen } from "./demo/mockListen";
+import { HOST_API_COMMANDS } from "./hostApiCommands";
 import type { LayoutOp } from "./layoutOps";
 import type { LayoutState } from "./layoutSync";
 import type { StatusOp, StatusUpdate } from "./statusSync";
@@ -50,7 +51,13 @@ import type {
 // in-memory fixtures so the whole app renders fictional data. Every IPC call
 // in this file funnels through these, so no call site below needs to change.
 function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-	return isDemoMode() ? mockInvoke<T>(cmd, args) : realInvoke<T>(cmd, args);
+	if (isDemoMode()) return mockInvoke<T>(cmd, args);
+	// The host commands run through one handler (`host_api.rs`), the same
+	// code an Abundio server runs for a remote Profile (phase 7b).
+	if (HOST_API_COMMANDS.has(cmd)) {
+		return realInvoke<T>("host_call", { command: cmd, args: args ?? {} });
+	}
+	return realInvoke<T>(cmd, args);
 }
 /** Subscribe to a Tauri event — demo-aware, like `invoke` above. Exported for
  *  the few app-level listeners that live outside this file (App/Settings

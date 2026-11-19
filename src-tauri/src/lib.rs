@@ -2,6 +2,7 @@ pub mod agent_control;
 pub use abundio_core::agent_names;
 pub use abundio_core::agent_skills;
 pub mod agent_skills_commands;
+pub mod host_commands;
 pub use abundio_core::agent_hooks;
 pub mod app_badge;
 pub use abundio_core::app_paths;
@@ -39,6 +40,7 @@ pub mod git_commands;
 pub use abundio_core::git_libgit2;
 pub use abundio_core::git_scheduler;
 pub use abundio_core::hook_apply;
+pub use abundio_core::host_api;
 pub use abundio_core::hook_route;
 pub use abundio_core::hook_server;
 pub use abundio_core::migrations;
@@ -58,8 +60,8 @@ pub mod window_placement;
 pub mod window_frame;
 pub mod desktop;
 pub mod window_raise;
-pub mod workspace_folders;
 pub use abundio_core::workspace_store;
+pub use abundio_core::workspace_folders;
 pub mod worktree_commands;
 pub use abundio_core::worktree_watcher;
 pub use abundio_core::shell_env;
@@ -1580,19 +1582,8 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            commands::pty_spawn,
+            host_commands::host_call,
             commands::pty_output_subscribe,
-            commands::pty_read_screen,
-            commands::pty_set_scrollback,
-            commands::status_apply,
-            commands::agent_commands_set,
-            commands::status_byte_threshold_set,
-            commands::layout_apply,
-            commands::pane_facts_report,
-            commands::pty_write,
-            commands::pty_resize,
-            commands::pty_redraw,
-            commands::pty_kill,
             commands::profile_list,
             commands::profile_create,
             commands::profile_update,
@@ -1609,9 +1600,7 @@ pub fn run() {
             commands::create_untitled_profile_in_new_window,
             commands::open_settings_window,
             commands::focus_window,
-            commands::workspace_create,
             orchestrator::orchestrator_ensure,
-            workspace_folders::workspace_folder_check,
             orchestrator::orchestrator_folder_get,
             orchestrator::orchestrator_folder_set,
             orchestrator::orchestrator_agent_get,
@@ -1621,13 +1610,6 @@ pub fn run() {
             orchestrator::orchestrator_tab_remove,
             orchestrator::orchestrator_tab_select,
             orchestrator::orchestrator_tab_set_view,
-            commands::workspace_list,
-            commands::workspace_update,
-            commands::workspace_delete,
-            commands::workspace_reorder,
-            commands::workspace_restore_set,
-            commands::workspace_missing_folders,
-            commands::workspace_set_restore_opened,
             agent_control::agent_control_reply,
             agent_control::agent_control_enabled,
             agent_control::agent_control_set_enabled,
@@ -1639,16 +1621,6 @@ pub fn run() {
             agent_skills_commands::agent_skill_provision,
             agent_skills_commands::agent_skill_provision_startup,
             agent_skills_commands::agent_skill_status,
-            commands::workspace_set_restore_active,
-            commands::pty_read_log,
-            commands::pty_write_snapshot,
-            commands::pty_read_snapshot,
-            commands::pty_delete_log,
-            commands::pty_cleanup_stale_logs,
-            commands::tab_create,
-            commands::tab_list,
-            commands::tab_update,
-            commands::tab_delete,
             commands::note_get,
             commands::note_set,
             commands::telemetry_record_turn,
@@ -1695,8 +1667,6 @@ pub fn run() {
             git_commands::git_snapshot_worktree,
             git_commands::git_diff_trees,
             commands::list_system_fonts,
-            commands::list_available_shells,
-            commands::default_shell,
             search::fs_search,
             search::fs_search_cancel,
             dev_environments::list_dev_environments,
