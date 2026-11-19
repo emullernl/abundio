@@ -571,6 +571,14 @@ impl PtyManager {
     /// Kill every PTY spawned by Window `label`. Called when the Window is
     /// destroyed. Logs are kept, so the panes restore their scrollback when the
     /// Profile is opened again (a fresh load never reattaches to a live PTY).
+    /// Kill every PTY (the server shutting down).
+    pub fn kill_all(&self) {
+        let ids: Vec<String> = self.entries.iter().map(|e| e.key().clone()).collect();
+        for id in ids {
+            let _ = self.kill(&id);
+        }
+    }
+
     pub fn kill_for_window(&self, label: &str) {
         let owned: Vec<String> = self
             .owner_windows

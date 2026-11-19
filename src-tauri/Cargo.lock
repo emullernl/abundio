@@ -87,6 +87,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "abundio-server"
+version = "3.1.0"
+dependencies = [
+ "abundio-core",
+ "chrono",
+ "log",
+ "nix 0.30.1",
+ "rusqlite",
+ "serde_json",
+ "tempfile",
+ "tiny_http",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

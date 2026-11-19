@@ -43,9 +43,22 @@ pub const DATA_EPOCH: &str = "v2";
 
 /// State shared with every other installed Abundio version.
 pub fn shared_root() -> PathBuf {
+    if let Some(root) = ROOT_OVERRIDE.get() {
+        return root.clone();
+    }
     dirs::data_dir()
         .unwrap_or_else(|| Path::new("~").to_path_buf())
         .join("abundio")
+}
+
+static ROOT_OVERRIDE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Put every path under `root` instead of the platform data folder: the
+/// headless server keeps its own (`~/.abundio-server/data` by default), so on
+/// a Mac that also runs the app the two never share a database. Set once,
+/// before anything reads a path; `false` if it was already set.
+pub fn set_shared_root(root: PathBuf) -> bool {
+    ROOT_OVERRIDE.set(root).is_ok()
 }
 
 /// State private to builds of this data epoch.

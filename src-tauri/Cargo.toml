@@ -14,7 +14,7 @@ crate-type = ["lib", "cdylib", "staticlib"]
 tauri-build = { version = "2", features = [] }
 
 [workspace]
-members = ["crates/abundio-core"]
+members = ["crates/abundio-core", "crates/abundio-server"]
 
 [dependencies]
 # Everything a Host runs with no window (docs/plans/remote-hosts.md phase 6).

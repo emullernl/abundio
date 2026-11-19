@@ -1054,6 +1054,12 @@ impl WorkspaceStore {
         self.conn.lock().unwrap()
     }
 
+    /// How many Workspaces there are, in every Profile.
+    pub fn count(&self) -> Result<u64, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.query_row("SELECT COUNT(*) FROM workspaces", [], |r| r.get::<_, i64>(0))? as u64)
+    }
+
     /// A Tab's stored layout and the Profile its Workspace belongs to, or
     /// `None` when there is no such Tab.
     pub fn tab_layout(&self, tab_id: &str) -> Result<Option<(String, String)>, AbundioError> {
