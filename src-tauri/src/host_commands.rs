@@ -39,6 +39,10 @@ fn with_host<R>(app: &AppHandle, f: impl FnOnce(&Host) -> R) -> R {
         .try_state::<crate::hook_server::HookServer>()
         .map(|h| crate::pty_manager::HookEnv { port: h.port, token: h.token.clone() });
     let clients = DesktopClients(app.clone());
+    let files = app.state::<crate::file_watcher::FileWatcher>();
+    let git = app.state::<crate::git_scheduler::GitScheduler>();
+    let worktrees = app.state::<crate::worktree_watcher::WorktreeWatcher>();
+    let search = app.state::<crate::search::SearchManager>();
     f(&Host {
         workspaces: &workspaces,
         ptys: &ptys,
@@ -50,6 +54,10 @@ fn with_host<R>(app: &AppHandle, f: impl FnOnce(&Host) -> R) -> R {
         hook_env,
         events: &events,
         clients: &clients,
+        files: &files,
+        git: &git,
+        worktrees: &worktrees,
+        search: &search,
     })
 }
 

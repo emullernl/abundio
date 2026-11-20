@@ -1,15 +1,12 @@
 use tauri::{AppHandle, Emitter, Manager, State, Window};
 
 use crate::error::AbundioError;
-use crate::file_watcher::FileWatcher;
-use crate::git_scheduler::GitScheduler;
 use crate::profile_store::{
     ActiveProfileState, BusyCounts, BusyCountsState, Profile, ProfileStore, ProfileUpdate,
 };
 use crate::workspace_store::{
     AgentTurnBucket, AgentTurnRecord, AgentTurnTotals, Bucket, GroupBy, WorkspaceStore,
 };
-use crate::worktree_watcher::WorktreeWatcher;
 
 // ── PTY commands ──
 
@@ -373,51 +370,10 @@ pub async fn telemetry_list_turns(
 
 // ── File watcher commands ──
 
-#[tauri::command]
-pub async fn fs_watch_start(
-    app: AppHandle,
-    events: State<'_, crate::event_sink::Events>,
-    window: Window,
-    watcher: State<'_, FileWatcher>,
-    root_path: String,
-) -> Result<(), AbundioError> {
-    watcher.start_watching(events.inner().clone(), window.label(), &root_path)?;
-    // A start the Window sent just before it closed can land after its
-    // `Destroyed` handler released its holds, and would claim under a label
-    // nothing releases again. Let go if the Window is already gone.
-    if app.get_webview_window(window.label()).is_none() {
-        watcher.stop_watching(window.label(), &root_path);
-    }
-    Ok(())
-}
 
-#[tauri::command]
-pub async fn fs_watch_stop(
-    window: Window,
-    watcher: State<'_, FileWatcher>,
-    root_path: String,
-) -> Result<(), AbundioError> {
-    watcher.stop_watching(window.label(), &root_path);
-    Ok(())
-}
 
 // ── Worktree live-sync watcher ──
 
-/// Set the calling Window's desired set of watched repository common dirs.
-/// The Rust watcher reconciles the union across Windows and emits
-/// `worktrees-changed` when a `git worktree add/remove` touches one. The
-/// frontend recomputes `common_dirs` from its workspace git summaries whenever
-/// the workspace list or grouping changes. See ADR-0017.
-#[tauri::command]
-pub async fn worktree_watch_set(
-    events: State<'_, crate::event_sink::Events>,
-    window: Window,
-    watcher: State<'_, WorktreeWatcher>,
-    common_dirs: Vec<String>,
-) -> Result<(), AbundioError> {
-    watcher.set_watched(events.inner(), window.label(), common_dirs);
-    Ok(())
-}
 
 // ── Git scheduler commands ──
 //
@@ -427,39 +383,7 @@ pub async fn worktree_watch_set(
 // meaningful change. This replaces the JS-side `fetchChanges`-on-every-event
 // pattern that froze the main thread during `git stash` (see git_scheduler.rs).
 
-#[tauri::command]
-pub async fn git_scheduler_start(
-    app: AppHandle,
-    events: State<'_, crate::event_sink::Events>,
-    window: Window,
-    scheduler: State<'_, GitScheduler>,
-    workspace_id: String,
-    root_path: String,
-    base_branch: Option<String>,
-) -> Result<(), AbundioError> {
-    scheduler.start(
-        events.inner().clone(),
-        window.label(),
-        workspace_id.clone(),
-        root_path,
-        base_branch,
-    );
-    // See `fs_watch_start`: undo a claim that landed after the Window closed.
-    if app.get_webview_window(window.label()).is_none() {
-        scheduler.stop(window.label(), &workspace_id);
-    }
-    Ok(())
-}
 
-#[tauri::command]
-pub async fn git_scheduler_stop(
-    window: Window,
-    scheduler: State<'_, GitScheduler>,
-    workspace_id: String,
-) -> Result<(), AbundioError> {
-    scheduler.stop(window.label(), &workspace_id);
-    Ok(())
-}
 
 // ── Font commands ──
 
@@ -545,4 +469,29 @@ pub async fn agent_hook_status(
     tauri::async_runtime::spawn_blocking(crate::agent_hooks::agent_hook_status)
         .await
         .map_err(|e| AbundioError::Io(std::io::Error::other(e.to_string())))?
+}
+
+/// Show a file in the desktop's file manager: always this computer's
+/// (a remote Workspace hides it).
+#[tauri::command]
+pub async fn fs_reveal_in_folder(path: String) -> Result<(), AbundioError> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open").args(["-R", &path]).spawn()?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(format!("/select,{}", path))
+            .spawn()?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let parent = std::path::Path::new(&path)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "/".to_string());
+        std::process::Command::new("xdg-open").arg(&parent).spawn()?;
+    }
+    Ok(())
 }

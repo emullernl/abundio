@@ -146,6 +146,13 @@ fn the_app_reaches_the_server_through_connect() {
         assert!(start.elapsed() < Duration::from_secs(10), "no output: {screen}");
         std::thread::sleep(Duration::from_millis(50));
     }
+    // Files on the Host.
+    let file = folder.path().join("notes.md");
+    call("fs_write_file", serde_json::json!({ "path": file, "content": "# on the host" })).unwrap();
+    let read = call("fs_read_file", serde_json::json!({ "path": file })).unwrap();
+    assert_eq!(read["content"], "# on the host");
+    let listed = call("fs_list_dir", serde_json::json!({ "path": folder.path() })).unwrap();
+    assert_eq!(listed[0]["name"], "notes.md");
     // A host command's error reaches the app as the command's own.
     let err = call("pty_resize", serde_json::json!({ "ptyId": "nope", "cols": 1, "rows": 1 })).unwrap_err();
     assert!(format!("{err:?}").contains("PTY not found"), "{err:?}");

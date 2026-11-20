@@ -612,11 +612,8 @@ pub fn parse_issues(all_json: &str, mine_json: &str) -> Result<Vec<GithubIssue>,
 	Ok(issues)
 }
 
-#[tauri::command]
-pub async fn gh_list_issues(cwd: String) -> Result<Vec<GithubIssue>, AbundioError> {
-	tokio::task::spawn_blocking(move || list_issues(&cwd))
-		.await
-		.map_err(|e| AbundioError::InvalidOperation(format!("issue list task failed: {e}")))?
+pub fn gh_list_issues(cwd: String) -> Result<Vec<GithubIssue>, AbundioError> {
+	list_issues(&cwd)
 }
 
 

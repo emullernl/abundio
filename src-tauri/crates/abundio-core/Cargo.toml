@@ -23,6 +23,7 @@ crossbeam-channel = "0.5"
 thiserror = "2"
 log = "0.4"
 notify = "7"
+ignore = "0.4"
 git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2"] }
 regex = "1"
 tiny_http = "0.12"

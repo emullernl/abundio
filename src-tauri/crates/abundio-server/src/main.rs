@@ -22,8 +22,9 @@ use abundio_core::event_sink::{ClientId, Events};
 use abundio_core::events::AgentHookEvent;
 use abundio_core::hook_server::{HookHost, HookServer};
 use abundio_core::{
-    agent_hooks, app_paths, db_open, env_crypto, env_vars, layout_store, migrations, pane_facts,
-    pty_manager, status_machine, status_store, workspace_store,
+    agent_hooks, app_paths, change_hub, db_open, env_crypto, env_vars, file_watcher, git_scheduler,
+    layout_store, migrations, pane_facts, pty_manager, search, status_machine, status_store,
+    workspace_store, worktree_watcher,
 };
 
 /// What the command line asked for.
@@ -170,6 +171,10 @@ struct ServerHost {
     events: Events,
     hook_env: pty_manager::HookEnv,
     clients: ServerClients,
+    files: file_watcher::FileWatcher,
+    git: git_scheduler::GitScheduler,
+    worktrees: worktree_watcher::WorktreeWatcher,
+    search: search::SearchManager,
 }
 
 impl ServerHost {
@@ -189,6 +194,10 @@ impl ServerHost {
                 hook_env: Some(self.hook_env.clone()),
                 events: &self.events,
                 clients: &self.clients,
+                files: &self.files,
+                git: &self.git,
+                worktrees: &self.worktrees,
+                search: &self.search,
             };
             match abundio_core::host_api::dispatch(&host, client, command, args.clone()) {
                 Some(result) => result
@@ -318,6 +327,8 @@ fn run(data_dir: PathBuf) -> Result<(), String> {
     abundio_core::title_status::listen(&ptys, status.clone(), events.clone());
     status_store::start_ticker(status.clone(), events.clone());
 
+    // File changes reach the git scheduler inside the server, as in the app.
+    let change_hub = Arc::new(change_hub::ChangeHub::new());
     let hook_host = Arc::new(ServerHookHost { ptys: ptys.clone(), env: env.clone(), status: status.clone() });
     let hooks = HookServer::start(hook_host)?;
     log::info!("hook server on 127.0.0.1:{}", hooks.port);
@@ -332,6 +343,10 @@ fn run(data_dir: PathBuf) -> Result<(), String> {
         events,
         hook_env: pty_manager::HookEnv { port: hooks.port, token: hooks.token.clone() },
         clients: ServerClients { connections: connections.clone(), profiles: Default::default() },
+        files: file_watcher::FileWatcher::new(change_hub.clone()),
+        git: git_scheduler::GitScheduler::new(change_hub),
+        worktrees: worktree_watcher::WorktreeWatcher::new(),
+        search: search::SearchManager::new(),
     });
     #[cfg(unix)]
     {

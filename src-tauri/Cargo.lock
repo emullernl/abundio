@@ -69,6 +69,7 @@ dependencies = [
  "dashmap",
  "dirs 5.0.1",
  "git2",
+ "ignore",
  "keyring",
  "log",
  "nix 0.30.1",

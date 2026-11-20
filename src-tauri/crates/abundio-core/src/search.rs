@@ -6,7 +6,6 @@ use ignore::overrides::OverrideBuilder;
 use ignore::{WalkBuilder, WalkState};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use tauri::State;
 
 use crate::event_sink::{ClientId, Events, EventsExt};
 
@@ -130,20 +129,32 @@ fn search_file_contents(path: &str, re: &Regex, max_remaining: usize) -> Result<
     }
 }
 
-#[tauri::command]
-pub async fn fs_search(
-    events: State<'_, Events>,
-    window: tauri::Window,
+/// `fs_search`: search a folder's files, streaming each matched file to
+/// `client` (`search-progress-<id>`) as it is found, then the whole result.
+/// Blocks until the walk ends or `fs_search_cancel` stops it.
+pub fn fs_search(
+    manager: &SearchManager,
+    events: &Events,
+    client: &ClientId,
     params: SearchQuery,
-    manager: State<'_, SearchManager>,
 ) -> Result<SearchResult, AbundioError> {
     let cancel = Arc::new(AtomicBool::new(false));
     manager.cancel_flags.insert(params.search_id.clone(), cancel.clone());
     let search_id = params.search_id.clone();
 
-    let events = events.inner().clone();
-    let client = ClientId::from(window.label());
-    let result = tokio::task::spawn_blocking(move || {
+    let result = walk(events, client, params, cancel);
+    manager.cancel_flags.remove(&search_id);
+    result
+}
+
+/// The search itself: every file under the root, in parallel.
+fn walk(
+    events: &Events,
+    client: &ClientId,
+    params: SearchQuery,
+    cancel: Arc<AtomicBool>,
+) -> Result<SearchResult, AbundioError> {
+    {
         // Each matched file is streamed to the frontend on this channel as it is
         // found, so results populate incrementally instead of all at once.
         let progress_channel = format!("search-progress-{}", params.search_id);
@@ -239,20 +250,11 @@ pub async fn fs_search(
             total_matches,
             truncated,
         })
-    })
-    .await
-    .map_err(|e| AbundioError::Search(format!("Search task failed: {}", e)))?;
-
-    manager.cancel_flags.remove(&search_id);
-    result
+    }
 }
 
-#[tauri::command]
-pub async fn fs_search_cancel(
-    search_id: String,
-    manager: State<'_, SearchManager>,
-) -> Result<(), AbundioError> {
-    if let Some(flag) = manager.cancel_flags.get(&search_id) {
+pub fn fs_search_cancel(manager: &SearchManager, search_id: &str) -> Result<(), AbundioError> {
+    if let Some(flag) = manager.cancel_flags.get(search_id) {
         flag.store(true, Ordering::Relaxed);
     }
     Ok(())

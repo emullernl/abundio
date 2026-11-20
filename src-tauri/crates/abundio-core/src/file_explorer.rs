@@ -5,7 +5,6 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io;
 use std::path::Path;
-use std::process::Command;
 
 use crate::error::AbundioError;
 
@@ -42,7 +41,7 @@ pub struct FileContent {
 
 /// Image extensions and their MIME types. Shared with the frontend's
 /// `src/lib/fileWindowKind.ts`; a test in `file_windows.rs` checks they match.
-pub(crate) const IMAGE_MIMES: &[(&str, &str)] = &[
+pub const IMAGE_MIMES: &[(&str, &str)] = &[
 	("png", "image/png"),
 	("jpg", "image/jpeg"),
 	("jpeg", "image/jpeg"),
@@ -55,7 +54,7 @@ pub(crate) const IMAGE_MIMES: &[(&str, &str)] = &[
 
 /// Extensions read as binary without looking at the bytes. Shared with the
 /// frontend like `IMAGE_MIMES`.
-pub(crate) const BINARY_EXTS: &[&str] = &[
+pub const BINARY_EXTS: &[&str] = &[
 	"exe", "o", "so", "dylib", "a", "wasm", "zip", "tar", "gz", "bz2", "xz", "7z", "rar", "pdf",
 	"doc", "docx", "xls", "xlsx", "ppt", "pptx", "class", "pyc", "pyo", "dll", "lib", "bin",
 	"dat", "db", "sqlite", "sqlite3", "ttf", "otf", "woff", "woff2", "eot", "mp3", "mp4", "avi",
@@ -66,11 +65,11 @@ fn extension_to_mime(ext: &str) -> Option<&'static str> {
 	IMAGE_MIMES.iter().find(|(e, _)| *e == ext).map(|(_, m)| *m)
 }
 
-pub(crate) fn is_image_ext(ext: &str) -> bool {
+pub fn is_image_ext(ext: &str) -> bool {
 	extension_to_mime(ext).is_some()
 }
 
-pub(crate) fn is_binary_ext(ext: &str) -> bool {
+pub fn is_binary_ext(ext: &str) -> bool {
 	BINARY_EXTS.contains(&ext)
 }
 
@@ -78,8 +77,7 @@ fn has_null_bytes(data: &[u8]) -> bool {
 	data.iter().any(|&b| b == 0)
 }
 
-#[tauri::command]
-pub async fn fs_list_dir(path: String) -> Result<Vec<DirEntry>, AbundioError> {
+pub fn fs_list_dir(path: String) -> Result<Vec<DirEntry>, AbundioError> {
 	let dir = Path::new(&path);
 	let mut entries = Vec::new();
 
@@ -113,8 +111,7 @@ pub async fn fs_list_dir(path: String) -> Result<Vec<DirEntry>, AbundioError> {
 	Ok(entries)
 }
 
-#[tauri::command]
-pub async fn fs_read_file(path: String) -> Result<FileContent, AbundioError> {
+pub fn fs_read_file(path: String) -> Result<FileContent, AbundioError> {
 	let file_path = Path::new(&path);
 	let metadata = fs::metadata(file_path)?;
 	let size = metadata.len();
@@ -207,26 +204,21 @@ pub async fn fs_read_file(path: String) -> Result<FileContent, AbundioError> {
 	})
 }
 
-#[tauri::command]
-pub async fn fs_write_file(path: String, content: String) -> Result<(), AbundioError> {
+pub fn fs_write_file(path: String, content: String) -> Result<(), AbundioError> {
 	fs::write(&path, content)?;
 	Ok(())
 }
 
-#[tauri::command]
-pub async fn fs_file_exists(path: String) -> Result<bool, AbundioError> {
+pub fn fs_file_exists(path: String) -> Result<bool, AbundioError> {
 	Ok(Path::new(&path).exists())
 }
 
-#[tauri::command]
-pub async fn fs_list_files(
+pub fn fs_list_files(
 	root_path: String,
 	max_files: Option<usize>,
 ) -> Result<Vec<FileEntry>, AbundioError> {
 	let max = max_files.unwrap_or(DEFAULT_MAX_FILES);
-	tokio::task::spawn_blocking(move || list_files_inner(&root_path, max))
-		.await
-		.map_err(|e| AbundioError::Search(format!("File listing task failed: {}", e)))?
+	list_files_inner(&root_path, max)
 }
 
 fn list_files_inner(root_path: &str, max_files: usize) -> Result<Vec<FileEntry>, AbundioError> {
@@ -279,13 +271,10 @@ fn list_files_inner(root_path: &str, max_files: usize) -> Result<Vec<FileEntry>,
 /// each one in a JS `Set`; once the cap is hit, the link provider just
 /// returns no link for paths past the boundary (graceful degradation —
 /// hover stays silent rather than slowly OOM-ing the renderer).
-#[tauri::command]
-pub async fn fs_index_workspace_files(
+pub fn fs_index_workspace_files(
 	root_path: String,
 ) -> Result<Vec<String>, AbundioError> {
-	tokio::task::spawn_blocking(move || index_workspace_files_inner(&root_path, DEFAULT_MAX_FILES))
-		.await
-		.map_err(|e| AbundioError::Search(format!("Index task failed: {}", e)))?
+	index_workspace_files_inner(&root_path, DEFAULT_MAX_FILES)
 }
 
 fn index_workspace_files_inner(
@@ -334,8 +323,7 @@ fn index_workspace_files_inner(
 	Ok(out)
 }
 
-#[tauri::command]
-pub async fn fs_create_file(path: String) -> Result<(), AbundioError> {
+pub fn fs_create_file(path: String) -> Result<(), AbundioError> {
     if Path::new(&path).exists() {
         return Err(AbundioError::Io(io::Error::new(
             io::ErrorKind::AlreadyExists,
@@ -349,8 +337,7 @@ pub async fn fs_create_file(path: String) -> Result<(), AbundioError> {
     Ok(())
 }
 
-#[tauri::command]
-pub async fn fs_create_folder(path: String) -> Result<(), AbundioError> {
+pub fn fs_create_folder(path: String) -> Result<(), AbundioError> {
     if Path::new(&path).exists() {
         return Err(AbundioError::Io(io::Error::new(
             io::ErrorKind::AlreadyExists,
@@ -361,8 +348,7 @@ pub async fn fs_create_folder(path: String) -> Result<(), AbundioError> {
     Ok(())
 }
 
-#[tauri::command]
-pub async fn fs_rename(from: String, to: String) -> Result<(), AbundioError> {
+pub fn fs_rename(from: String, to: String) -> Result<(), AbundioError> {
     let from_path = Path::new(&from);
     let to_path = Path::new(&to);
 
@@ -389,8 +375,7 @@ pub async fn fs_rename(from: String, to: String) -> Result<(), AbundioError> {
     Ok(())
 }
 
-#[tauri::command]
-pub async fn fs_delete(path: String) -> Result<(), AbundioError> {
+pub fn fs_delete(path: String) -> Result<(), AbundioError> {
     // Use symlink_metadata to avoid following symlinks.
     let meta = fs::symlink_metadata(&path)?;
     if meta.file_type().is_dir() {
@@ -401,28 +386,6 @@ pub async fn fs_delete(path: String) -> Result<(), AbundioError> {
     Ok(())
 }
 
-#[tauri::command]
-pub async fn fs_reveal_in_folder(path: String) -> Result<(), AbundioError> {
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open").args(["-R", &path]).spawn()?;
-    }
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("explorer")
-            .arg(format!("/select,{}", path))
-            .spawn()?;
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let parent = Path::new(&path)
-            .parent()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "/".to_string());
-        Command::new("xdg-open").arg(&parent).spawn()?;
-    }
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {
@@ -616,70 +579,70 @@ mod tests {
 
 	// ── fs_create_file tests ──
 
-	#[tokio::test]
-	async fn create_file_creates_empty_file() {
+	#[test]
+	fn create_file_creates_empty_file() {
 		let tmp = tempfile::TempDir::new().unwrap();
 		let path = tmp.path().join("new.txt").to_string_lossy().to_string();
-		fs_create_file(path.clone()).await.unwrap();
+		fs_create_file(path.clone()).unwrap();
 		assert!(Path::new(&path).exists());
 		assert_eq!(fs::read_to_string(&path).unwrap(), "");
 	}
 
-	#[tokio::test]
-	async fn create_file_rejects_existing() {
+	#[test]
+	fn create_file_rejects_existing() {
 		let tmp = tempfile::TempDir::new().unwrap();
 		let path = tmp.path().join("existing.txt").to_string_lossy().to_string();
 		fs::write(&path, "content").unwrap();
-		let result = fs_create_file(path).await;
+		let result = fs_create_file(path);
 		assert!(result.is_err());
 	}
 
-	#[tokio::test]
-	async fn create_file_rejects_under_missing_parent() {
+	#[test]
+	fn create_file_rejects_under_missing_parent() {
 		let tmp = tempfile::TempDir::new().unwrap();
 		let path = tmp
 			.path()
 			.join("missing_dir/new.txt")
 			.to_string_lossy()
 			.to_string();
-		let result = fs_create_file(path).await;
+		let result = fs_create_file(path);
 		assert!(result.is_err());
 	}
 
 	// ── fs_create_folder tests ──
 
-	#[tokio::test]
-	async fn create_folder_creates_dir() {
+	#[test]
+	fn create_folder_creates_dir() {
 		let tmp = tempfile::TempDir::new().unwrap();
 		let path = tmp.path().join("newdir").to_string_lossy().to_string();
-		fs_create_folder(path.clone()).await.unwrap();
+		fs_create_folder(path.clone()).unwrap();
 		assert!(Path::new(&path).is_dir());
 	}
 
-	#[tokio::test]
-	async fn create_folder_rejects_existing() {
+	#[test]
+	fn create_folder_rejects_existing() {
 		let tmp = tempfile::TempDir::new().unwrap();
 		let path = tmp.path().join("existing").to_string_lossy().to_string();
 		fs::create_dir(&path).unwrap();
-		let result = fs_create_folder(path).await;
+		let result = fs_create_folder(path);
 		assert!(result.is_err());
 	}
 
 	// ── fs_rename tests ──
 
-	#[tokio::test]
-	async fn rename_file_moves_content() {
+	#[test]
+	fn rename_file_moves_content() {
 		let tmp = tempfile::TempDir::new().unwrap();
 		let from = tmp.path().join("old.txt").to_string_lossy().to_string();
 		let to = tmp.path().join("new.txt").to_string_lossy().to_string();
 		fs::write(&from, "hello").unwrap();
-		fs_rename(from.clone(), to.clone()).await.unwrap();
+		fs_rename(from.clone(), to.clone()).unwrap();
 		assert!(!Path::new(&from).exists());
 		assert_eq!(fs::read_to_string(&to).unwrap(), "hello");
 	}
 
-	#[tokio::test]
-	async fn rename_folder_with_contents() {
+	#[test]
+	fn rename_folder_with_contents() {
 		let tmp = tempfile::TempDir::new().unwrap();
 		let from_dir = tmp.path().join("oldfolder");
 		let to_dir = tmp.path().join("newfolder");
@@ -689,54 +652,54 @@ mod tests {
 			from_dir.to_string_lossy().to_string(),
 			to_dir.to_string_lossy().to_string(),
 		)
-		.await
+		
 		.unwrap();
 		assert!(!from_dir.exists());
 		assert!(to_dir.join("child.txt").exists());
 	}
 
-	#[tokio::test]
-	async fn rename_rejects_when_target_exists() {
+	#[test]
+	fn rename_rejects_when_target_exists() {
 		let tmp = tempfile::TempDir::new().unwrap();
 		let from = tmp.path().join("a.txt").to_string_lossy().to_string();
 		let to = tmp.path().join("b.txt").to_string_lossy().to_string();
 		fs::write(&from, "a").unwrap();
 		fs::write(&to, "b").unwrap();
-		let result = fs_rename(from, to).await;
+		let result = fs_rename(from, to);
 		assert!(result.is_err());
 	}
 
 	// ── fs_delete tests ──
 
-	#[tokio::test]
-	async fn delete_file_removes_it() {
+	#[test]
+	fn delete_file_removes_it() {
 		let tmp = tempfile::TempDir::new().unwrap();
 		let path = tmp.path().join("del.txt").to_string_lossy().to_string();
 		fs::write(&path, "x").unwrap();
-		fs_delete(path.clone()).await.unwrap();
+		fs_delete(path.clone()).unwrap();
 		assert!(!Path::new(&path).exists());
 	}
 
-	#[tokio::test]
-	async fn delete_folder_recursive() {
+	#[test]
+	fn delete_folder_recursive() {
 		let tmp = tempfile::TempDir::new().unwrap();
 		let dir = tmp.path().join("subtree");
 		fs::create_dir_all(dir.join("nested")).unwrap();
 		fs::write(dir.join("nested/file.txt"), "x").unwrap();
-		fs_delete(dir.to_string_lossy().to_string()).await.unwrap();
+		fs_delete(dir.to_string_lossy().to_string()).unwrap();
 		assert!(!dir.exists());
 	}
 
 	#[cfg(unix)]
-	#[tokio::test]
-	async fn delete_symlink_removes_link_not_target() {
+	#[test]
+	fn delete_symlink_removes_link_not_target() {
 		use std::os::unix::fs::symlink;
 		let tmp = tempfile::TempDir::new().unwrap();
 		let target = tmp.path().join("target.txt");
 		let link = tmp.path().join("link.txt");
 		fs::write(&target, "real").unwrap();
 		symlink(&target, &link).unwrap();
-		fs_delete(link.to_string_lossy().to_string()).await.unwrap();
+		fs_delete(link.to_string_lossy().to_string()).unwrap();
 		assert!(!link.exists());
 		assert!(target.exists());
 	}

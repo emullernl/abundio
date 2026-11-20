@@ -40,6 +40,10 @@ pub struct Host<'a> {
     pub hook_env: Option<crate::pty_manager::HookEnv>,
     pub events: &'a Events,
     pub clients: &'a dyn HostClients,
+    pub files: &'a crate::file_watcher::FileWatcher,
+    pub git: &'a crate::git_scheduler::GitScheduler,
+    pub worktrees: &'a crate::worktree_watcher::WorktreeWatcher,
+    pub search: &'a crate::search::SearchManager,
 }
 
 fn bad_args(command: &str, e: serde_json::Error) -> AbundioError {
@@ -112,7 +116,10 @@ pub fn dispatch(host: &Host, client: &ClientId, command: &str, raw: Value) -> Op
 }
 
 fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Option<Value>, AbundioError> {
+    use crate::file_explorer as fe;
+    use crate::git_commands as gc;
     use crate::pty_manager::PtyManager;
+    use crate::worktree_commands as wt;
     let c = command;
     let out = match command {
         // ── Terminals ──
@@ -252,6 +259,122 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
             let a = a!(c, raw, { id: String, opened: bool });
             json(host.workspaces.set_restore_opened(&a.id, a.opened)?)?
         }
+        // ── Files ──
+        "fs_list_dir" => json(fe::fs_list_dir(a!(c, raw, { path: String }).path)?)?,
+        "fs_list_files" => {
+            let a = a!(c, raw, { root_path: String, max_files: Option<usize> });
+            json(fe::fs_list_files(a.root_path, a.max_files)?)?
+        }
+        "fs_index_workspace_files" => {
+            json(fe::fs_index_workspace_files(a!(c, raw, { root_path: String }).root_path)?)?
+        }
+        "fs_read_file" => json(fe::fs_read_file(a!(c, raw, { path: String }).path)?)?,
+        "fs_write_file" => {
+            let a = a!(c, raw, { path: String, content: String });
+            json(fe::fs_write_file(a.path, a.content)?)?
+        }
+        "fs_file_exists" => json(fe::fs_file_exists(a!(c, raw, { path: String }).path)?)?,
+        "fs_create_file" => json(fe::fs_create_file(a!(c, raw, { path: String }).path)?)?,
+        "fs_create_folder" => json(fe::fs_create_folder(a!(c, raw, { path: String }).path)?)?,
+        "fs_rename" => {
+            let a = a!(c, raw, { from: String, to: String });
+            json(fe::fs_rename(a.from, a.to)?)?
+        }
+        "fs_delete" => json(fe::fs_delete(a!(c, raw, { path: String }).path)?)?,
+        "fs_search" => {
+            let params = a!(c, raw, { params: crate::search::SearchQuery }).params;
+            json(crate::search::fs_search(host.search, host.events, client, params)?)?
+        }
+        "fs_search_cancel" => {
+            json(crate::search::fs_search_cancel(host.search, &a!(c, raw, { search_id: String }).search_id)?)?
+        }
+        "fs_watch_start" => {
+            let root = a!(c, raw, { root_path: String }).root_path;
+            host.files.start_watching(host.events.clone(), client.as_str(), &root)?;
+            // A start sent just before the Window closed would hold a watch
+            // nothing releases: let go if the Window is already gone.
+            if !host.clients.is_alive(client) {
+                host.files.stop_watching(client.as_str(), &root);
+            }
+            Value::Null
+        }
+        "fs_watch_stop" => {
+            host.files.stop_watching(client.as_str(), &a!(c, raw, { root_path: String }).root_path);
+            Value::Null
+        }
+
+        // ── Git ──
+        "git_changed_files" => {
+            let a = a!(c, raw, { cwd: String, base_branch: Option<String> });
+            json(gc::git_changed_files(a.cwd, a.base_branch)?)?
+        }
+        "git_repo_slug" => json(gc::git_repo_slug(a!(c, raw, { cwd: String }).cwd)?)?,
+        "git_snapshot_worktree" => json(gc::git_snapshot_worktree(a!(c, raw, { cwd: String }).cwd)?)?,
+        "git_diff_trees" => {
+            let a = a!(c, raw, { cwd: String, start_oid: String, end_oid: String });
+            json(gc::git_diff_trees(a.cwd, a.start_oid, a.end_oid)?)?
+        }
+        "git_fetch_bundle" => {
+            let a = a!(c, raw, { cwd: String, base_branch: Option<String> });
+            json(gc::git_fetch_bundle(a.cwd, a.base_branch)?)?
+        }
+        "git_file_diff" => {
+            let a = a!(c, raw, { cwd: String, file_path: String, section: String, base_branch: Option<String> });
+            json(gc::git_file_diff(a.cwd, a.file_path, a.section, a.base_branch)?)?
+        }
+        "git_commit_files" => {
+            let a = a!(c, raw, { cwd: String, oid: String });
+            json(gc::git_commit_files(a.cwd, a.oid)?)?
+        }
+        "git_commit_file_diff" => {
+            let a = a!(c, raw, { cwd: String, oid: String, file_path: String });
+            json(gc::git_commit_file_diff(a.cwd, a.oid, a.file_path)?)?
+        }
+        "git_conflict_file" => {
+            let a = a!(c, raw, { cwd: String, file_path: String });
+            json(gc::git_conflict_file(a.cwd, a.file_path)?)?
+        }
+        "git_stage_path" => {
+            let a = a!(c, raw, { cwd: String, file_path: String });
+            json(gc::git_stage_path(a.cwd, a.file_path)?)?
+        }
+        "git_branch_info" => json(gc::git_branch_info(a!(c, raw, { cwd: String }).cwd)?)?,
+        "git_status_fingerprint" => json(gc::git_status_fingerprint(a!(c, raw, { cwd: String }).cwd)?)?,
+        "git_list_branches" => json(gc::git_list_branches(a!(c, raw, { cwd: String }).cwd)?)?,
+        "git_workspaces_summary" => {
+            json(gc::git_workspaces_summary(a!(c, raw, { requests: Vec<gc::WorkspaceGitRequest> }).requests))?
+        }
+        "git_scheduler_start" => {
+            let a = a!(c, raw, { workspace_id: String, root_path: String, base_branch: Option<String> });
+            host.git.start(host.events.clone(), client.as_str(), a.workspace_id.clone(), a.root_path, a.base_branch);
+            // See `fs_watch_start`.
+            if !host.clients.is_alive(client) {
+                host.git.stop(client.as_str(), &a.workspace_id);
+            }
+            Value::Null
+        }
+        "git_scheduler_stop" => {
+            host.git.stop(client.as_str(), &a!(c, raw, { workspace_id: String }).workspace_id);
+            Value::Null
+        }
+        "gh_list_issues" => json(crate::gh_commands::gh_list_issues(a!(c, raw, { cwd: String }).cwd)?)?,
+
+        // ── Worktrees ──
+        "list_repo_worktrees" => json(wt::list_repo_worktrees(a!(c, raw, { cwd: String }).cwd)?)?,
+        "worktree_add" => {
+            let a = a!(c, raw, { primary_cwd: String, branch: String, path: String });
+            json(wt::worktree_add(a.primary_cwd, a.branch, a.path)?)?
+        }
+        "worktree_remove" => {
+            let a = a!(c, raw, { primary_cwd: String, worktree_path: String });
+            json(wt::worktree_remove(a.primary_cwd, a.worktree_path)?)?
+        }
+        "worktree_dirty" => json(wt::worktree_dirty(a!(c, raw, { cwd: String }).cwd)?)?,
+        "worktree_watch_set" => {
+            let dirs = a!(c, raw, { common_dirs: Vec<String> }).common_dirs;
+            host.worktrees.set_watched(host.events, client.as_str(), dirs);
+            Value::Null
+        }
         _ => return Ok(None),
     };
     Ok(Some(out))
@@ -333,6 +456,11 @@ fn pty_spawn(host: &Host, client: &ClientId, a: SpawnArgs) -> Result<String, Abu
 /// mount): the desktop runs them off its async runtime.
 pub fn may_block(command: &str) -> bool {
     matches!(command, "pty_spawn" | "workspace_missing_folders" | "workspace_create" | "workspace_update" | "workspace_folder_check")
+        || command.starts_with("fs_")
+        || command.starts_with("git_")
+        || command.starts_with("gh_")
+        || command.starts_with("worktree_")
+        || command == "list_repo_worktrees"
 }
 
 #[cfg(test)]
@@ -371,6 +499,10 @@ mod tests {
         sink: Arc<Sink>,
         events: Events,
         clients: Clients,
+        files: crate::file_watcher::FileWatcher,
+        git: crate::git_scheduler::GitScheduler,
+        worktrees: crate::worktree_watcher::WorktreeWatcher,
+        search: crate::search::SearchManager,
     }
 
     const PID: &str = "00000000-0000-0000-0000-000000000001";
@@ -389,6 +521,10 @@ mod tests {
             events: sink.clone(),
             sink,
             clients: Clients(HashMap::from([("w1".into(), PID.into()), ("w2".into(), PID.into())])),
+            files: crate::file_watcher::FileWatcher::new(Default::default()),
+            git: crate::git_scheduler::GitScheduler::new(Default::default()),
+            worktrees: crate::worktree_watcher::WorktreeWatcher::new(),
+            search: crate::search::SearchManager::new(),
         }
     }
 
@@ -404,6 +540,10 @@ mod tests {
             hook_env: None,
             events: &w.events,
             clients: &w.clients,
+            files: &w.files,
+            git: &w.git,
+            worktrees: &w.worktrees,
+            search: &w.search,
         };
         dispatch(&host, &ClientId::from(client), command, a).expect("a host command")
     }
@@ -457,6 +597,10 @@ mod tests {
             hook_env: None,
             events: &w.events,
             clients: &w.clients,
+            files: &w.files,
+            git: &w.git,
+            worktrees: &w.worktrees,
+            search: &w.search,
         };
         assert!(dispatch(&host, &ClientId::from("w1"), "open_settings_window", Value::Null).is_none());
     }
@@ -483,6 +627,10 @@ mod tests {
             hook_env: None,
             events: &w.events,
             clients: &w.clients,
+            files: &w.files,
+            git: &w.git,
+            worktrees: &w.worktrees,
+            search: &w.search,
         };
         for name in listed {
             // Missing arguments: a host command says so; any other is `None`.

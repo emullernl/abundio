@@ -1,6 +1,6 @@
-//! Tauri command layer for git worktrees. All git work delegates to
-//! `git_libgit2`; these wrappers run it on `spawn_blocking` so the tokio
-//! runtime is never blocked, mirroring `git_commands.rs`. See ADR-0017.
+//! The git worktree host commands (`host_api`). All git work delegates to
+//! `git_libgit2`; the desktop runs them off its async runtime
+//! (`host_api::may_block`). See ADR-0017.
 
 
 use crate::error::AbundioError;
@@ -9,47 +9,35 @@ pub use crate::git_libgit2::WorktreeEntry;
 
 
 /// List every worktree of the repository that `cwd` belongs to (primary first).
-#[tauri::command]
-pub async fn list_repo_worktrees(cwd: String) -> Result<Vec<WorktreeEntry>, AbundioError> {
-    tokio::task::spawn_blocking(move || git_libgit2::list_repo_worktrees(&cwd))
-        .await
-        .map_err(|e| AbundioError::Git(format!("worktree task failed: {e}")))?
+pub fn list_repo_worktrees(cwd: String) -> Result<Vec<WorktreeEntry>, AbundioError> {
+    git_libgit2::list_repo_worktrees(&cwd)
 }
 
 /// Create a new worktree of the primary's repository, checking out `branch`
 /// (created from the primary's HEAD if it doesn't exist) at the absolute `path`.
-#[tauri::command]
-pub async fn worktree_add(
+pub fn worktree_add(
     primary_cwd: String,
     branch: String,
     path: String,
 ) -> Result<WorktreeEntry, AbundioError> {
-    tokio::task::spawn_blocking(move || git_libgit2::add_worktree(&primary_cwd, &branch, &path))
-        .await
-        .map_err(|e| AbundioError::Git(format!("worktree task failed: {e}")))?
+    git_libgit2::add_worktree(&primary_cwd, &branch, &path)
 }
 
 /// Remove the worktree whose folder is `worktree_path` (deletes the folder,
 /// prunes git's admin link, keeps the branch).
-#[tauri::command]
-pub async fn worktree_remove(
+pub fn worktree_remove(
     primary_cwd: String,
     worktree_path: String,
 ) -> Result<(), AbundioError> {
-    tokio::task::spawn_blocking(move || {
+    {
         git_libgit2::remove_worktree(&primary_cwd, &worktree_path)
-    })
-    .await
-    .map_err(|e| AbundioError::Git(format!("worktree task failed: {e}")))?
+    }
 }
 
 /// True if the worktree at `cwd` has uncommitted or untracked changes — drives
 /// the dirty-aware Remove confirmation.
-#[tauri::command]
-pub async fn worktree_dirty(cwd: String) -> Result<bool, AbundioError> {
-    tokio::task::spawn_blocking(move || git_libgit2::worktree_is_dirty(&cwd))
-        .await
-        .map_err(|e| AbundioError::Git(format!("worktree task failed: {e}")))
+pub fn worktree_dirty(cwd: String) -> Result<bool, AbundioError> {
+    Ok(git_libgit2::worktree_is_dirty(&cwd))
 }
 
 #[cfg(test)]

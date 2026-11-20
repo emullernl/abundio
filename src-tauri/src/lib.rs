@@ -32,11 +32,11 @@ pub mod tauri_sink;
 pub use abundio_core::status_store;
 pub use abundio_core::title_status;
 pub use abundio_core::events;
-pub mod file_explorer;
+pub use abundio_core::file_explorer;
 pub use abundio_core::file_watcher;
 pub mod file_windows;
-pub mod gh_commands;
-pub mod git_commands;
+pub use abundio_core::gh_commands;
+pub use abundio_core::git_commands;
 pub use abundio_core::git_libgit2;
 pub use abundio_core::git_scheduler;
 pub use abundio_core::hook_apply;
@@ -52,7 +52,7 @@ pub use abundio_core::profile_store;
 pub mod prompt_actions;
 pub mod prompt_attachments;
 pub use abundio_core::pty_manager;
-pub mod search;
+pub use abundio_core::search;
 pub mod updater;
 pub mod window_management;
 pub mod window_persistence;
@@ -62,7 +62,7 @@ pub mod desktop;
 pub mod window_raise;
 pub use abundio_core::workspace_store;
 pub use abundio_core::workspace_folders;
-pub mod worktree_commands;
+pub use abundio_core::worktree_commands;
 pub use abundio_core::worktree_watcher;
 pub use abundio_core::shell_env;
 pub use abundio_core::shell_integration;
@@ -1627,48 +1627,12 @@ pub fn run() {
             commands::telemetry_buckets,
             commands::telemetry_totals,
             commands::telemetry_list_turns,
-            file_explorer::fs_list_dir,
-            file_explorer::fs_list_files,
-            file_explorer::fs_index_workspace_files,
-            file_explorer::fs_read_file,
-            file_explorer::fs_write_file,
-            file_explorer::fs_file_exists,
-            file_explorer::fs_create_file,
-            file_explorer::fs_create_folder,
-            file_explorer::fs_rename,
-            file_explorer::fs_delete,
-            file_explorer::fs_reveal_in_folder,
-            commands::fs_watch_start,
-            commands::fs_watch_stop,
-            commands::git_scheduler_start,
-            commands::git_scheduler_stop,
-            git_commands::git_changed_files,
-            git_commands::git_fetch_bundle,
-            git_commands::git_file_diff,
-            git_commands::git_commit_files,
-            git_commands::git_commit_file_diff,
-            git_commands::git_conflict_file,
-            git_commands::git_stage_path,
-            git_commands::git_branch_info,
-            git_commands::git_list_branches,
-            git_commands::git_status_fingerprint,
-            git_commands::git_workspaces_summary,
-            worktree_commands::list_repo_worktrees,
-            worktree_commands::worktree_add,
-            worktree_commands::worktree_remove,
-            worktree_commands::worktree_dirty,
-            commands::worktree_watch_set,
+            commands::fs_reveal_in_folder,
             pr_poller::pr_poller_set_config,
             pr_poller::pr_poller_refresh,
             pr_poller::pr_poller_snapshot,
             pr_poller::pr_mark_read,
-            gh_commands::gh_list_issues,
-            git_commands::git_repo_slug,
-            git_commands::git_snapshot_worktree,
-            git_commands::git_diff_trees,
             commands::list_system_fonts,
-            search::fs_search,
-            search::fs_search_cancel,
             dev_environments::list_dev_environments,
             dev_environments::launch_dev_environment,
             prompt_attachments::prompt_attachment_from_clipboard,

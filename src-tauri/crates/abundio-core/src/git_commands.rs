@@ -5,46 +5,34 @@ use std::path::Path;
 pub use crate::git_core::*;
 
 
-#[tauri::command]
-pub async fn git_changed_files(
+pub fn git_changed_files(
     cwd: String,
     base_branch: Option<String>,
 ) -> Result<Vec<GitChangedFile>, AbundioError> {
-    tokio::task::spawn_blocking(move || compute_changed_files_sync(&cwd, base_branch))
-        .await
-        .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
+    compute_changed_files_sync(&cwd, base_branch)
 }
 
 /// The GitHub `owner/repo` for a workspace folder, or None if it has no github
 /// remote. Drives the client-side All-vs-Repo PR filter (see ADR-0019).
-#[tauri::command]
-pub async fn git_repo_slug(cwd: String) -> Result<Option<String>, AbundioError> {
-    tokio::task::spawn_blocking(move || crate::git_libgit2::github_repo_slug(&cwd))
-        .await
-        .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))
+pub fn git_repo_slug(cwd: String) -> Result<Option<String>, AbundioError> {
+    Ok(crate::git_libgit2::github_repo_slug(&cwd))
 }
 
 /// Snapshot the worktree to a tree OID for per-Turn churn measurement (ADR-0021).
 /// Best-effort: returns null for a non-git workspace. Never touches the on-disk
 /// staging area (see `git_libgit2::snapshot_worktree_tree`).
-#[tauri::command]
-pub async fn git_snapshot_worktree(cwd: String) -> Result<Option<String>, AbundioError> {
-    tokio::task::spawn_blocking(move || git_libgit2::snapshot_worktree_tree(&cwd))
-        .await
-        .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
+pub fn git_snapshot_worktree(cwd: String) -> Result<Option<String>, AbundioError> {
+    git_libgit2::snapshot_worktree_tree(&cwd)
 }
 
 /// Line/file churn between two worktree tree snapshots (per-Turn working-tree
 /// diff). See ADR-0021.
-#[tauri::command]
-pub async fn git_diff_trees(
+pub fn git_diff_trees(
     cwd: String,
     start_oid: String,
     end_oid: String,
 ) -> Result<TreeDiffStats, AbundioError> {
-    tokio::task::spawn_blocking(move || git_libgit2::diff_tree_stats(&cwd, &start_oid, &end_oid))
-        .await
-        .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
+    git_libgit2::diff_tree_stats(&cwd, &start_oid, &end_oid)
 }
 
 /// Single-IPC bundle for the git-tab refresh. Returns the three pieces of
@@ -53,12 +41,11 @@ pub async fn git_diff_trees(
 /// in parallel via scoped threads inside one `spawn_blocking`, so wall
 /// time is max() of the three, and there is exactly one WKWebView IPC
 /// round-trip per refresh — which is the dominant cost on macOS.
-#[tauri::command]
-pub async fn git_fetch_bundle(
+pub fn git_fetch_bundle(
     cwd: String,
     base_branch: Option<String>,
 ) -> Result<GitFetchBundle, AbundioError> {
-    tokio::task::spawn_blocking(move || {
+    {
         let (changed_files_res, branch_info_res, fingerprint_res, op_res, commits_res) =
             std::thread::scope(|s| {
             let h_changed =
@@ -94,19 +81,16 @@ pub async fn git_fetch_bundle(
             operation_in_progress: op_res.unwrap_or(None),
             commit_history: commits_res.ok(),
         })
-    })
-    .await
-    .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
+    }
 }
 
-#[tauri::command]
-pub async fn git_file_diff(
+pub fn git_file_diff(
     cwd: String,
     file_path: String,
     section: String,
     base_branch: Option<String>,
 ) -> Result<GitFileDiff, AbundioError> {
-    tokio::task::spawn_blocking(move || {
+    {
         let base = resolve_base_branch(&cwd, base_branch.clone())?;
 
         validate_repo_relative(&file_path)?;
@@ -158,29 +142,23 @@ pub async fn git_file_diff(
             modified,
             file_path,
         })
-    })
-    .await
-    .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
+    }
 }
 
 /// The files one commit touched, against its first parent (a root commit
 /// against the empty tree). Commits are immutable, so the frontend caches this.
-#[tauri::command]
-pub async fn git_commit_files(cwd: String, oid: String) -> Result<Vec<CommitFile>, AbundioError> {
-    tokio::task::spawn_blocking(move || git_libgit2::commit_files_sync(&cwd, &oid))
-        .await
-        .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
+pub fn git_commit_files(cwd: String, oid: String) -> Result<Vec<CommitFile>, AbundioError> {
+    git_libgit2::commit_files_sync(&cwd, &oid)
 }
 
 /// One file as a single commit changed it: first parent → commit. Feeds the
 /// read-only **Commit diff pane**, which is never re-read from disk.
-#[tauri::command]
-pub async fn git_commit_file_diff(
+pub fn git_commit_file_diff(
     cwd: String,
     oid: String,
     file_path: String,
 ) -> Result<GitFileDiff, AbundioError> {
-    tokio::task::spawn_blocking(move || {
+    {
         validate_repo_relative(&file_path)?;
         let (original, modified) = git_libgit2::commit_file_diff_sync(&cwd, &oid, &file_path)?;
         Ok(GitFileDiff {
@@ -188,9 +166,7 @@ pub async fn git_commit_file_diff(
             modified,
             file_path,
         })
-    })
-    .await
-    .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
+    }
 }
 
 /// The conflict stages of an unmerged path.
@@ -199,17 +175,14 @@ pub async fn git_commit_file_diff(
 /// carries both sides in its markers. This exists for what the markers cannot
 /// answer: the conflict *kind* (delete/modify, add/add), binary detection, and
 /// the side content the Merge view shows.
-#[tauri::command]
-pub async fn git_conflict_file(
+pub fn git_conflict_file(
     cwd: String,
     file_path: String,
 ) -> Result<GitConflictFile, AbundioError> {
-    tokio::task::spawn_blocking(move || {
+    {
         validate_repo_relative(&file_path)?;
         git_libgit2::compute_conflict_file_sync(&cwd, &file_path)
-    })
-    .await
-    .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
+    }
 }
 
 /// `git add <path>` — Abundio's only write to git.
@@ -217,35 +190,23 @@ pub async fn git_conflict_file(
 /// Note the caller must refresh the Git changes tab itself: `.git/index` is
 /// deliberately excluded from the file watcher's meaningful-change set (read-only
 /// git commands touch it constantly), so the scheduler will not observe this.
-#[tauri::command]
-pub async fn git_stage_path(cwd: String, file_path: String) -> Result<(), AbundioError> {
-    tokio::task::spawn_blocking(move || {
+pub fn git_stage_path(cwd: String, file_path: String) -> Result<(), AbundioError> {
+    {
         validate_repo_relative(&file_path)?;
         git_libgit2::stage_path_sync(&cwd, &file_path)
-    })
-    .await
-    .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
+    }
 }
 
-#[tauri::command]
-pub async fn git_branch_info(cwd: String) -> Result<BranchInfo, AbundioError> {
-    tokio::task::spawn_blocking(move || compute_branch_info_sync(&cwd))
-        .await
-        .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
+pub fn git_branch_info(cwd: String) -> Result<BranchInfo, AbundioError> {
+    compute_branch_info_sync(&cwd)
 }
 
-#[tauri::command]
-pub async fn git_status_fingerprint(cwd: String) -> Result<String, AbundioError> {
-    tokio::task::spawn_blocking(move || compute_status_fingerprint_sync(&cwd))
-        .await
-        .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
+pub fn git_status_fingerprint(cwd: String) -> Result<String, AbundioError> {
+    compute_status_fingerprint_sync(&cwd)
 }
 
-#[tauri::command]
-pub async fn git_list_branches(cwd: String) -> Result<Vec<String>, AbundioError> {
-    tokio::task::spawn_blocking(move || git_libgit2::list_branches(&cwd))
-        .await
-        .map_err(|e| AbundioError::Git(format!("git task failed: {}", e)))?
+pub fn git_list_branches(cwd: String) -> Result<Vec<String>, AbundioError> {
+    git_libgit2::list_branches(&cwd)
 }
 
 /// Fetch the cheap git facts for every workspace in a single IPC call: branch,
@@ -255,29 +216,22 @@ pub async fn git_list_branches(cwd: String) -> Result<Vec<String>, AbundioError>
 /// dirtiness makes each request a working-tree status walk, so the requests run
 /// on **one `spawn_blocking` task each** rather than serially inside one. The
 /// per-workspace work is independent and CPU/IO bound, so a Profile with a dozen
-/// large repos no longer pays for a dozen sequential scans. The tokio runtime
+/// large repos no longer pays for a dozen sequential scans. The async runtime
 /// itself is never blocked either way.
 ///
 /// A workspace whose task panics is simply absent from the result: callers
 /// already treat a missing entry as "no answer for this one".
-#[tauri::command]
-pub async fn git_workspaces_summary(
+pub fn git_workspaces_summary(
     requests: Vec<WorkspaceGitRequest>,
 ) -> Vec<WorkspaceGitSummary> {
-    if requests.is_empty() {
-        return Vec::new();
-    }
-    let mut tasks = tokio::task::JoinSet::new();
-    for req in requests {
-        tasks.spawn_blocking(move || compute_workspace_git_summary(req));
-    }
-    let mut summaries = Vec::new();
-    while let Some(joined) = tasks.join_next().await {
-        if let Ok(summary) = joined {
-            summaries.push(summary);
-        }
-    }
-    summaries
+    // One thread per Workspace: each opens its own repository.
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = requests
+            .into_iter()
+            .map(|req| scope.spawn(move || compute_workspace_git_summary(req)))
+            .collect();
+        handles.into_iter().filter_map(|h| h.join().ok()).collect()
+    })
 }
 
 #[cfg(test)]
@@ -458,8 +412,8 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn workspaces_summary_carries_repo_slugs() {
+    #[test]
+    fn workspaces_summary_carries_repo_slugs() {
         let dir = setup_temp_git_repo();
         let cwd = dir.path().to_str().unwrap();
         run_git_test(cwd, &["remote", "add", "origin", "https://github.com/me/foo.git"]);
@@ -469,14 +423,14 @@ mod tests {
             cwd: cwd.to_string(),
             base_branch: None,
         }])
-        .await;
+        ;
 
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].repo_slugs, vec!["me/foo".to_string()]);
     }
 
-    #[tokio::test]
-    async fn workspaces_summary_reports_dirty_working_tree() {
+    #[test]
+    fn workspaces_summary_reports_dirty_working_tree() {
         let dir = setup_temp_git_repo();
         let cwd = dir.path().to_str().unwrap();
         let summarize = || {
@@ -487,39 +441,39 @@ mod tests {
             }])
         };
 
-        assert!(!summarize().await[0].is_dirty, "fresh commit is clean");
+        assert!(!summarize()[0].is_dirty, "fresh commit is clean");
 
         std::fs::write(dir.path().join("initial.txt"), "changed\n").unwrap();
-        assert!(summarize().await[0].is_dirty, "unstaged edit is dirty");
+        assert!(summarize()[0].is_dirty, "unstaged edit is dirty");
 
         run_git_test(cwd, &["commit", "-am", "second"]);
-        assert!(!summarize().await[0].is_dirty, "committed work is clean");
+        assert!(!summarize()[0].is_dirty, "committed work is clean");
     }
 
-    #[tokio::test]
-    async fn workspaces_summary_repo_slugs_empty_for_non_repo() {
+    #[test]
+    fn workspaces_summary_repo_slugs_empty_for_non_repo() {
         let dir = tempfile::tempdir().unwrap();
         let summaries = git_workspaces_summary(vec![WorkspaceGitRequest {
             workspace_id: "ws-1".to_string(),
             cwd: dir.path().to_str().unwrap().to_string(),
             base_branch: None,
         }])
-        .await;
+        ;
 
         assert!(summaries[0].repo_slugs.is_empty());
         assert!(!summaries[0].is_git_repo);
         assert!(!summaries[0].is_dirty);
     }
 
-    #[tokio::test]
-    async fn git_changed_files_includes_untracked() {
+    #[test]
+    fn git_changed_files_includes_untracked() {
         let dir = setup_temp_git_repo();
         let cwd = dir.path().to_str().unwrap();
 
         // Create an untracked file with 3 lines
         std::fs::write(dir.path().join("new_file.txt"), "a\nb\nc\n").unwrap();
 
-        let files = git_changed_files(cwd.to_string(), Some("main".to_string())).await.unwrap();
+        let files = git_changed_files(cwd.to_string(), Some("main".to_string())).unwrap();
         let untracked: Vec<_> = files.iter().filter(|f| f.section == "untracked").collect();
 
         assert_eq!(untracked.len(), 1);
@@ -529,8 +483,8 @@ mod tests {
         assert_eq!(untracked[0].deletions, 0);
     }
 
-    #[tokio::test]
-    async fn git_file_diff_untracked_returns_empty_original() {
+    #[test]
+    fn git_file_diff_untracked_returns_empty_original() {
         let dir = setup_temp_git_repo();
         let cwd = dir.path().to_str().unwrap();
 
@@ -542,7 +496,7 @@ mod tests {
             "untracked".to_string(),
             Some("main".to_string()),
         )
-        .await
+        
         .unwrap();
 
         assert_eq!(diff.original, "");
@@ -810,15 +764,8 @@ mod tests {
 
         assert!(git_libgit2::stage_path_sync(cwd, "file.txt").is_ok());
         // The validator lives in the command layer, so assert through it.
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
-        assert!(rt
-            .block_on(git_stage_path(cwd.to_string(), "/etc/passwd".to_string()))
-            .is_err());
-        assert!(rt
-            .block_on(git_stage_path(cwd.to_string(), "../escape".to_string()))
-            .is_err());
+        assert!(git_stage_path(cwd.to_string(), "/etc/passwd".to_string()).is_err());
+        assert!(git_stage_path(cwd.to_string(), "../escape".to_string()).is_err());
         // Only the legitimate stage above changed the index.
         assert_ne!(before, std::fs::read(&index_path).unwrap());
     }
@@ -827,17 +774,13 @@ mod tests {
     fn file_diff_conflicted_section_falls_back_to_ours_vs_theirs() {
         let dir = make_conflicted_repo();
         let cwd = dir.path().to_str().unwrap();
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
-        let diff = rt
-            .block_on(git_file_diff(
-                cwd.to_string(),
-                "file.txt".to_string(),
-                "conflicted".to_string(),
-                Some("main".to_string()),
-            ))
-            .unwrap();
+        let diff = git_file_diff(
+            cwd.to_string(),
+            "file.txt".to_string(),
+            "conflicted".to_string(),
+            Some("main".to_string()),
+        )
+        .unwrap();
         assert_eq!(diff.original, "ours\n");
         assert_eq!(diff.modified, "theirs\n");
     }
