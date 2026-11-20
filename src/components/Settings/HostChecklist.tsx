@@ -9,6 +9,7 @@ const ACTION_LABELS: Partial<
 	install: "Install",
 	update: "Update",
 	start: "Start",
+	service: "Set up as a service",
 };
 
 /**

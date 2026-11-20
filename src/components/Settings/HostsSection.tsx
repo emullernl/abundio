@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { panesEndedBy, restartMessage } from "../../lib/hostSetup";
 import {
 	type HostCheck,
 	type HostEntry,
@@ -7,6 +8,7 @@ import {
 	listenToThisWindow,
 } from "../../lib/ipc";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { ConfirmDialog } from "../ConfirmDialog";
 import {
 	paramTextInputStyle,
 	primaryButtonClass,
@@ -15,11 +17,14 @@ import {
 import { HostChecklist } from "./HostChecklist";
 import { SectionLabel } from "./primitives";
 
+const REMOVING = "Removing the server…";
+
 /** What a checklist button shows while it works. */
 const WORKING_LABELS: Record<string, string> = {
 	install: "Installing…",
 	update: "Updating…",
 	start: "Starting…",
+	service: "Restarting…",
 };
 
 /**
@@ -59,14 +64,42 @@ export function HostsSection() {
 			.agents.filter((a) => a.enabled)
 			.map((a) => a.command);
 
+	/** A restart waiting for the user's yes: it would end running panes. */
+	const [confirmRestart, setConfirmRestart] = useState<{
+		id: string;
+		last: HostCheck;
+		action: string;
+		message: string;
+	} | null>(null);
+	/** The Host whose Remove is asking how, and the uninstall waiting for
+	 *  its yes. */
+	const [removing, setRemoving] = useState<string | null>(null);
+	const [confirmUninstall, setConfirmUninstall] = useState<HostEntry | null>(
+		null,
+	);
+
+	const askAction = (host: HostEntry, last: HostCheck, action: string) => {
+		const panes = panesEndedBy(action, last);
+		if (panes > 0) {
+			setConfirmRestart({
+				id: host.id,
+				last,
+				action,
+				message: restartMessage(action, host.name, panes),
+			});
+		} else {
+			void runAction(host.id, last, action);
+		}
+	};
+
 	const runAction = async (id: string, last: HostCheck, action: string) => {
 		const label = WORKING_LABELS[action];
 		if (!label) return;
 		setWorking((w) => ({ ...w, [id]: label }));
 		try {
 			const result =
-				action === "start"
-					? await hostsApi.start(id, agentCommands())
+				action === "start" || action === "service"
+					? await hostsApi.start(id, action === "service", agentCommands())
 					: await hostsApi.install(
 							id,
 							last.probe.os,
@@ -128,12 +161,51 @@ export function HostsSection() {
 	};
 
 	const remove = async (id: string) => {
+		setRemoving(null);
 		await hostsApi.remove(id).catch((e) => setError(String(e)));
 		reload();
 	};
 
+	const uninstall = async (host: HostEntry) => {
+		setConfirmUninstall(null);
+		setRemoving(null);
+		setWorking((w) => ({ ...w, [host.id]: REMOVING }));
+		try {
+			await hostsApi.uninstall(host.id);
+			await remove(host.id);
+		} catch (e) {
+			setChecks((c) => ({ ...c, [host.id]: { error: String(e) } }));
+		} finally {
+			setWorking(({ [host.id]: _, ...rest }) => rest);
+		}
+	};
+
 	return (
 		<div className="flex flex-col gap-5 flex-1 min-h-0 overflow-y-auto">
+			{confirmRestart && (
+				<ConfirmDialog
+					title="End the running panes?"
+					message={confirmRestart.message}
+					confirmLabel="Restart the server"
+					confirmVariant="danger"
+					onConfirm={() => {
+						const { id, last, action } = confirmRestart;
+						setConfirmRestart(null);
+						void runAction(id, last, action);
+					}}
+					onCancel={() => setConfirmRestart(null)}
+				/>
+			)}
+			{confirmUninstall && (
+				<ConfirmDialog
+					title={`Uninstall the server from ${confirmUninstall.name}?`}
+					message="This stops the server, ending every pane and Agent it runs, and deletes ~/.abundio-server on the Host: the server and its data (the Host's Profiles, Workspaces, layouts and notes). Your project folders there are not touched."
+					confirmLabel="Uninstall"
+					confirmVariant="danger"
+					onConfirm={() => void uninstall(confirmUninstall)}
+					onCancel={() => setConfirmUninstall(null)}
+				/>
+			)}
 			<div>
 				<SectionLabel>Hosts</SectionLabel>
 				<p
@@ -145,11 +217,9 @@ export function HostsSection() {
 				>
 					A Host runs an Abundio server, so its Agents keep working while this
 					computer sleeps. Abundio reaches it with your own ssh: keys,
-					~/.ssh/config, jump hosts. Start the server there with{" "}
-					<code style={{ fontFamily: "var(--font-mono)" }}>
-						abundio-server run
-					</code>
-					, then use File ▸ Open Remote Profile….
+					~/.ssh/config, jump hosts. Check shows what the Host needs, and
+					Install puts the server in ~/.abundio-server there, no root needed.
+					Then use File ▸ Open Remote Profile….
 				</p>
 				{hosts.length === 0 ? (
 					<div style={{ fontSize: 12, color: "var(--fg-secondary)" }}>
@@ -201,18 +271,61 @@ export function HostsSection() {
 										type="button"
 										className={`${secondaryButtonClass} rounded-md`}
 										style={{ fontSize: 12, height: 28, padding: "0 10px" }}
-										onClick={() => void remove(h.id)}
+										disabled={working[h.id] !== undefined}
+										onClick={() => setRemoving(removing === h.id ? null : h.id)}
 									>
-										Remove
+										{working[h.id] === REMOVING ? "Removing…" : "Remove"}
 									</button>
 								</div>
+								{removing === h.id && (
+									<div
+										className="flex flex-col gap-2 rounded-md"
+										style={{
+											padding: "10px 12px",
+											border: "1px solid var(--border)",
+											fontSize: 12,
+											color: "var(--fg-secondary)",
+										}}
+									>
+										<span>
+											Remove {h.name} from this list only, or also uninstall the
+											server from the Host?
+										</span>
+										<div className="flex gap-2">
+											<button
+												type="button"
+												className={`${secondaryButtonClass} rounded-md`}
+												style={{ fontSize: 12, height: 26, padding: "0 10px" }}
+												onClick={() => void remove(h.id)}
+											>
+												Remove from list
+											</button>
+											<button
+												type="button"
+												className={`${secondaryButtonClass} rounded-md`}
+												style={{ fontSize: 12, height: 26, padding: "0 10px" }}
+												onClick={() => setConfirmUninstall(h)}
+											>
+												Uninstall from the Host too…
+											</button>
+											<button
+												type="button"
+												className={`${secondaryButtonClass} rounded-md`}
+												style={{ fontSize: 12, height: 26, padding: "0 10px" }}
+												onClick={() => setRemoving(null)}
+											>
+												Cancel
+											</button>
+										</div>
+									</div>
+								)}
 								<HostCheckResult
 									result={checks[h.id]}
 									busy={working[h.id] ?? null}
 									onAction={(action) => {
 										const last = checks[h.id];
 										if (last && last !== "checking" && !("error" in last))
-											void runAction(h.id, last, action);
+											askAction(h, last, action);
 									}}
 								/>
 							</div>
@@ -243,7 +356,7 @@ export function HostsSection() {
 					<input
 						className="rounded-md"
 						style={paramTextInputStyle}
-						placeholder="Server program on the Host (optional; abundio-server on its PATH)"
+						placeholder="Server program on the Host (optional; the one Install puts in ~/.abundio-server)"
 						value={server}
 						onChange={(e) => setServer(e.target.value)}
 						spellCheck={false}

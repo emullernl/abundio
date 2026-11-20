@@ -79,6 +79,7 @@ const DESKTOP = [
 	"host_check",
 	"host_install",
 	"host_start",
+	"host_uninstall",
 	"updater_check",
 	"updater_download",
 	"updater_install_now",

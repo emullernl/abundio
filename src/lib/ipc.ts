@@ -262,9 +262,12 @@ export const hostsApi = {
 	install: (hostId: string, os: string, arch: string, agents: string[]) =>
 		invoke<HostCheck>("host_install", { hostId, os, arch, agents }),
 	/** Start the installed server on a Host as a service (phase 8c);
-	 *  resolves with the new checklist. */
-	start: (hostId: string, agents: string[]) =>
-		invoke<HostCheck>("host_start", { hostId, agents }),
+	 *  `restart` stops the running one first. Resolves with the new
+	 *  checklist. */
+	start: (hostId: string, restart: boolean, agents: string[]) =>
+		invoke<HostCheck>("host_start", { hostId, restart, agents }),
+	/** Stop the server on a Host and delete ~/.abundio-server (phase 8d). */
+	uninstall: (hostId: string) => invoke<void>("host_uninstall", { hostId }),
 	/** The user's answer to an SSH prompt (`null`: cancelled). */
 	answerPrompt: (id: string, answer: string | null) =>
 		invoke<boolean>("ssh_prompt_answer", { id, answer }),
@@ -285,7 +288,7 @@ export interface HostCheckItem {
 	label: string;
 	state: "ok" | "warn" | "error";
 	fix: string | null;
-	action: "install" | "update" | "start" | null;
+	action: "install" | "update" | "start" | "service" | null;
 }
 
 /** What Host setup's probe found, and its checklist. */
@@ -297,6 +300,8 @@ export interface HostCheck {
 		current: string | null;
 		installed: string[];
 		running: boolean;
+		/** The panes a running server has. */
+		panes: number | null;
 		agents: string[];
 	};
 	items: HostCheckItem[];

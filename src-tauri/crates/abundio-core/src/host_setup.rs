@@ -39,6 +39,11 @@ if [ -x "$d/current" ]; then
 elif command -v pgrep >/dev/null 2>&1 && pgrep -u "$(id -u)" -f '[a]bundio-server run' >/dev/null 2>&1; then
   p running yes
 fi
+# The panes the installed server has: its own children.
+if command -v pgrep >/dev/null 2>&1; then
+  sp=$(pgrep -u "$(id -u)" -f "$d/(current|[^/]+/abundio-server) run\$" 2>/dev/null | head -n 1)
+  [ -n "$sp" ] && p panes "$(pgrep -P "$sp" 2>/dev/null | wc -l | tr -d ' ')"
+fi
 if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
   p systemd_user yes
 fi
@@ -191,15 +196,63 @@ else
 fi
 "#;
 
-/// Install, start (unless one already answers), then probe, in one ssh
-/// (one password prompt).
+/// Stop the server (phase 8d): its service if the app set one up, then any
+/// installed server still running, politely, then not. Only servers run
+/// from `~/.abundio-server` with no options: never one started by hand
+/// from elsewhere, or with `--data-dir` (tests).
+pub const STOP_SCRIPT: &str = r#"
+sd="$HOME/.abundio-server"
+unit="$HOME/.config/systemd/user/abundio-server.service"
+agent="$HOME/Library/LaunchAgents/dev.abundio.server.plist"
+if [ -f "$unit" ] && command -v systemctl >/dev/null 2>&1; then
+  systemctl --user stop abundio-server.service >/dev/null 2>&1 || true
+fi
+if [ -f "$agent" ] && command -v launchctl >/dev/null 2>&1; then
+  launchctl bootout "gui/$(id -u)/dev.abundio.server" >/dev/null 2>&1 || true
+  launchctl bootout "user/$(id -u)/dev.abundio.server" >/dev/null 2>&1 || true
+fi
+servers() { pgrep -u "$(id -u)" -f "$sd/(current|[^/]+/abundio-server) run\$" 2>/dev/null || true; }
+left=$(servers)
+if [ -n "$left" ]; then
+  kill $left 2>/dev/null || true
+  n=0
+  while [ -n "$(servers)" ] && [ "$n" -lt 10 ]; do sleep 1; n=$((n + 1)); done
+  left=$(servers)
+  if [ -n "$left" ]; then kill -9 $left 2>/dev/null || true; sleep 1; fi
+fi
+printf 'ABUNDIO stopped=yes\n'
+"#;
+
+/// Remove the server from a Host (phase 8d): stop it, drop the service the
+/// app set up, delete `~/.abundio-server` with its data.
+pub const UNINSTALL_SCRIPT: &str = r#"
+[ -n "$HOME" ] && [ "$HOME" != / ] || { echo "no home folder" >&2; exit 2; }
+if [ -f "$unit" ]; then
+  systemctl --user disable abundio-server.service >/dev/null 2>&1 || true
+  rm -f "$unit"
+  systemctl --user daemon-reload >/dev/null 2>&1 || true
+fi
+rm -f "$agent"
+rm -rf "$HOME/.abundio-server"
+printf 'ABUNDIO removed=yes\n'
+"#;
+
+/// Install, stop whatever server runs, start the new one, then probe, in
+/// one ssh (one password prompt).
 pub fn install_then_probe() -> String {
-    format!("{INSTALL_SCRIPT}\n{START_SCRIPT}\nset +eu\n{PROBE_SCRIPT}")
+    format!("{INSTALL_SCRIPT}\n{STOP_SCRIPT}\n{START_SCRIPT}\nset +eu\n{PROBE_SCRIPT}")
 }
 
-/// Start, then probe, in one ssh. Its arguments: the Agents to look for.
-pub fn start_then_probe() -> String {
-    format!("set -eu\n{START_SCRIPT}\nset +eu\n{PROBE_SCRIPT}")
+/// Start (or, with `restart`, stop and start), then probe, in one ssh.
+/// Its arguments: the Agents to look for.
+pub fn start_then_probe(restart: bool) -> String {
+    let stop = if restart { STOP_SCRIPT } else { "" };
+    format!("set -eu\n{stop}\n{START_SCRIPT}\nset +eu\n{PROBE_SCRIPT}")
+}
+
+/// Stop the server and remove it, in one ssh.
+pub fn uninstall() -> String {
+    format!("set -eu\n{STOP_SCRIPT}\n{UNINSTALL_SCRIPT}")
 }
 
 /// `text` as one word for a POSIX shell.
@@ -247,6 +300,10 @@ pub struct Probe {
     /// How a start just ran it: `systemd`, `launchd`, `detached`, or
     /// `already` (it was running).
     pub started: Option<String>,
+    /// The panes (shells, Agents) a running server has.
+    pub panes: Option<u32>,
+    /// The uninstall finished.
+    pub removed: bool,
 }
 
 pub fn parse_probe(text: &str) -> Probe {
@@ -276,6 +333,8 @@ pub fn parse_probe(text: &str) -> Probe {
             "done" => p.complete = true,
             "install_done" => p.installed_now = Some(value),
             "started" => p.started = Some(value),
+            "panes" => p.panes = value.parse().ok(),
+            "removed" => p.removed = value == "yes",
             _ => {}
         }
     }
@@ -302,7 +361,8 @@ pub struct CheckItem {
     pub state: &'static str,
     /// What fixes it, in words.
     pub fix: Option<String>,
-    /// The button that fixes it: `install`, `update`, `start`.
+    /// The button that fixes it: `install`, `update`, `start`, `service`
+    /// (restart a server running by itself as a service).
     pub action: Option<&'static str>,
 }
 
@@ -361,7 +421,7 @@ pub fn checklist(p: &Probe, version: &str) -> Vec<CheckItem> {
                 .action("start")
         });
     }
-    out.push(reboot_item(p));
+    out.push(reboot_item(p, installed));
     out.push(if p.agents.is_empty() {
         item("agents", "warn", "No Agents found").fix(if p.shell_answered {
             "Install one on the Host, then Check again."
@@ -383,8 +443,10 @@ pub fn checklist(p: &Probe, version: &str) -> Vec<CheckItem> {
     out
 }
 
-fn reboot_item(p: &Probe) -> CheckItem {
+fn reboot_item(p: &Probe, installed: bool) -> CheckItem {
     let linger = format!("Run once on the Host: sudo loginctl enable-linger {}", p.user);
+    // A server running by itself that a service could take over.
+    let movable = installed && p.running;
     match (p.os.as_str(), p.service.as_deref()) {
         ("Linux", Some("systemd")) if p.linger == Some(true) => item("reboot", "ok", "Comes back after a reboot"),
         ("Linux", Some("systemd")) => {
@@ -392,13 +454,22 @@ fn reboot_item(p: &Probe) -> CheckItem {
         }
         // Start runs it as a service only for a lingering user: without
         // linger systemd would stop it with the app's connection.
-        ("Linux", _) if p.systemd_user && p.linger == Some(true) => item("reboot", "warn", "Not set up to come back after a reboot")
-            .fix("Start sets it up as a systemd user service."),
+        ("Linux", _) if p.systemd_user && p.linger == Some(true) => {
+            let i = item("reboot", "warn", "Not set up to come back after a reboot");
+            if movable {
+                i.fix("Restarts it as a systemd user service.").action("service")
+            } else {
+                i.fix("Start sets it up as a systemd user service.")
+            }
+        }
         ("Linux", _) if p.systemd_user => item("reboot", "warn", "Won't come back after a reboot")
-            .fix(format!("{linger}, so Start can set it up as a systemd user service.")),
+            .fix(format!("{linger}, then Check again to set it up as a systemd user service.")),
         ("Linux", _) => item("reboot", "warn", "Won't come back after a reboot (no systemd --user)")
             .fix("Start it again from here after a reboot."),
         ("Darwin", Some("launchd")) => item("reboot", "ok", "Starts when you log in on the Mac"),
+        ("Darwin", _) if movable && p.launchd => item("reboot", "warn", "Not set up to start at login")
+            .fix("Restarts it as a LaunchAgent.")
+            .action("service"),
         ("Darwin", _) => item("reboot", "warn", "Not set up to start at login")
             .fix("Start sets it up as a LaunchAgent."),
         _ => item("reboot", "warn", "Won't come back after a reboot"),
@@ -492,6 +563,12 @@ mod tests {
         let server = list.iter().find(|i| i.id == "server").unwrap();
         assert_eq!((server.state, server.action), ("error", Some("update")));
         assert!(!list.iter().any(|i| i.id == "running"));
+        // A lingering user's server running by itself: a service can take it.
+        let loose = Probe { linger: Some(true), service: None, ..p.clone() };
+        let reboot = checklist(&loose, "3.1.0").into_iter().find(|i| i.id == "reboot").unwrap();
+        assert_eq!(reboot.action, Some("service"));
+        let stopped = Probe { running: false, ..loose };
+        assert_eq!(checklist(&stopped, "3.1.0").iter().find(|i| i.id == "reboot").unwrap().action, None);
         // Nothing installed: Install.
         let bare = Probe { current: None, installed: vec![], ..p.clone() };
         assert_eq!(checklist(&bare, "3.1.0").iter().find(|i| i.id == "server").unwrap().action, Some("install"));
@@ -579,43 +656,66 @@ mod tests {
         assert_eq!(std::fs::read_link(&current).unwrap(), std::path::Path::new("9.9.9/abundio-server"));
     }
 
-    /// The start script, run here with a fake server and no service
-    /// manager: it starts the server detached, waits until it answers, and
-    /// leaves a running one alone.
+    /// The start, restart and uninstall scripts, run here with a fake
+    /// server and no service manager: it starts the server detached, waits
+    /// until it answers, leaves a running one alone, restarts it on asking,
+    /// and removes it all.
     #[cfg(unix)]
     #[test]
-    fn starts_the_server_once_and_waits_until_it_answers() {
+    fn starts_restarts_and_removes_the_server() {
         let home = tempfile::tempdir().unwrap();
         let d = home.path().join(".abundio-server");
         std::fs::create_dir_all(d.join("9.9.9")).unwrap();
         let fake = d.join("9.9.9/abundio-server");
         std::fs::write(
             &fake,
-            "#!/bin/sh\nd=\"$HOME/.abundio-server/data\"\ncase \"$1\" in\n version) echo abundio-server 9.9.9;;\n connect) [ -f \"$d/up\" ];;\n run) echo $$ > \"$d/pid\"; sleep 1; touch \"$d/up\"; exec sleep 30;;\nesac\n",
+            r#"#!/bin/sh
+d="$HOME/.abundio-server/data"
+case "$1" in
+  version) echo abundio-server 9.9.9;;
+  connect) [ -f "$d/up" ];;
+  run)
+    echo $$ > "$d/pid"
+    trap 'rm -f "$d/up"; kill $k; exit 0' TERM
+    sleep 1; touch "$d/up"
+    sleep 30 & k=$!
+    wait;;
+esac
+"#,
         )
         .unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
         std::os::unix::fs::symlink("9.9.9/abundio-server", d.join("current")).unwrap();
-        let start = || {
+        let sh = |script: String| {
             let mut c = std::process::Command::new("/bin/sh");
-            c.args(["-c", &start_then_probe(), "abundio-setup"])
+            c.args(["-c", &script, "abundio-setup"])
                 .env("HOME", home.path())
                 .env("ABUNDIO_SETUP_SERVICE", "detached");
-            run(c, Box::new(std::io::empty()), std::time::Duration::from_secs(30))
+            run(c, Box::new(std::io::empty()), std::time::Duration::from_secs(40))
         };
-        let p = parse_probe(&start().unwrap());
-        let pid = std::fs::read_to_string(d.join("data/pid")).unwrap();
+        let pid = || std::fs::read_to_string(d.join("data/pid")).unwrap();
+        let p = parse_probe(&sh(start_then_probe(false)).unwrap());
         assert_eq!(p.started.as_deref(), Some("detached"));
         assert!(p.running);
+        assert_eq!(p.panes, Some(1), "the fake server's one child");
+        let first = pid();
         // Running already: left alone.
-        let again = parse_probe(&start().unwrap());
+        let again = parse_probe(&sh(start_then_probe(false)).unwrap());
         assert_eq!(again.started.as_deref(), Some("already"));
-        assert_eq!(std::fs::read_to_string(d.join("data/pid")).unwrap(), pid);
-        let _ = std::process::Command::new("kill").arg(pid.trim()).status();
+        assert_eq!(pid(), first);
+        // A restart stops it and starts another.
+        let restarted = parse_probe(&sh(start_then_probe(true)).unwrap());
+        assert_eq!(restarted.started.as_deref(), Some("detached"));
+        assert_ne!(pid(), first);
+        // Uninstall: stopped, and the folder is gone.
+        let last = pid();
+        assert!(parse_probe(&sh(uninstall()).unwrap()).removed);
+        assert!(!d.exists());
+        let alive = std::process::Command::new("kill").args(["-0", last.trim()]).status().unwrap();
+        assert!(!alive.success(), "the server was stopped");
         // Not installed: says so.
-        std::fs::remove_file(d.join("current")).unwrap();
-        assert!(start().unwrap_err().contains("not installed"));
+        assert!(sh(start_then_probe(false)).unwrap_err().contains("not installed"));
     }
 
     /// The real script, run here: it answers every question.
