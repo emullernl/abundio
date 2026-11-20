@@ -2,16 +2,23 @@ import { useEffect } from "react";
 import { useProfileStore } from "../stores/profileStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
-export function useWorkspace() {
-	const loadProfiles = useProfileStore((s) => s.loadProfiles);
-	const loadWorkspaces = useWorkspaceStore((s) => s.loadWorkspaces);
+/** Load the Window's Profiles, then its Workspaces. Profiles come first so
+ *  workspaceStore.loadWorkspaces sees the active profile id (reconciled
+ *  against the persisted value). A remote Window whose Host is not
+ *  connected has nothing to load yet: it shows empty, with its "Sign in
+ *  needed" banner, instead of the loading screen, and reloads once the
+ *  Host connects. */
+export async function loadWindow(): Promise<void> {
+	await useProfileStore.getState().loadProfiles();
+	if (useProfileStore.getState().remoteError) {
+		useWorkspaceStore.setState({ workspacesInitialized: true });
+		return;
+	}
+	await useWorkspaceStore.getState().loadWorkspaces();
+}
 
+export function useWorkspace() {
 	useEffect(() => {
-		// Load profiles first so workspaceStore.loadWorkspaces sees the active
-		// profile id (reconciled against the persisted value).
-		(async () => {
-			await loadProfiles();
-			await loadWorkspaces();
-		})();
-	}, [loadProfiles, loadWorkspaces]);
+		void loadWindow();
+	}, []);
 }
