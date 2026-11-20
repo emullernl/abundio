@@ -16,9 +16,11 @@ import { OpenInDevEnvButton } from "./components/OpenInDevEnvButton";
 import { OpenRemoteProfileDialog } from "./components/OpenRemoteProfileDialog";
 import { OrchestratorView } from "./components/Orchestrator/OrchestratorView";
 import { OVERVIEW_BAR_HEIGHT, OverviewBar } from "./components/OverviewBar";
+import { RemoteHostBanner } from "./components/RemoteHostBanner";
 import { RightSidebar } from "./components/RightSidebar/RightSidebar";
 import { SaveConfirmDialog } from "./components/SaveConfirmDialog";
 import { Sidebar } from "./components/Sidebar/Sidebar";
+import { SshPromptHost } from "./components/SshPromptDialog";
 import { StatisticsOverlay } from "./components/Statistics/StatisticsOverlay";
 import { StatusBar } from "./components/StatusBar";
 import { TabBar } from "./components/TabBar";
@@ -1313,6 +1315,7 @@ export function App() {
 		<div className="flex flex-col h-full w-full">
 			{!workspacesInitialized && <AppLoader />}
 			<Titlebar />
+			<RemoteHostBanner />
 			<div className="flex flex-1 min-h-0">
 				{/* The Fleet Console hides both sidebars. They stay mounted — the
 				    Left sidebar owns the Add worktree dialog the console hands off
@@ -1485,6 +1488,7 @@ export function App() {
 				onClose={() => setFileSearchOpen(false)}
 			/>
 			<Navigator open={navigatorOpen} onClose={() => setNavigatorOpen(false)} />
+			<SshPromptHost />
 			{openRemoteOpen && (
 				<OpenRemoteProfileDialog onClose={() => setOpenRemoteOpen(false)} />
 			)}

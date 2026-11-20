@@ -7,6 +7,7 @@ pub mod host_commands;
 pub use abundio_core::agent_hooks;
 pub mod app_badge;
 pub use abundio_core::app_paths;
+pub use abundio_core::askpass;
 pub use abundio_core::agent_registry;
 pub mod app_metrics;
 pub mod clipboard_image;
@@ -983,6 +984,13 @@ pub fn run() {
                 host_commands::RouterWindows(app.handle().clone()),
             )));
             app.manage(remote_windows::RemoteWindows::default());
+            // SSH prompts answered in Abundio's dialog (phase 7d).
+            app.manage(askpass::Askpass::default());
+            if let Some(dir) = remote_windows::askpass_script().parent() {
+                if let Err(e) = askpass::write_script(dir) {
+                    log::warn!("[host] cannot write the SSH prompt helper: {e}");
+                }
+            }
             app.manage::<event_sink::Events>(tauri_sink::TauriSink::shared(
                 app.handle(),
                 pty_channels,
@@ -1209,7 +1217,7 @@ pub fn run() {
                     for host_id in hosts_to_connect {
                         let app_handle = app_handle.clone();
                         std::thread::spawn(move || {
-                            if let Err(e) = remote_windows::connect(&app_handle, &host_id) {
+                            if let Err(e) = remote_windows::connect(&app_handle, &host_id, false) {
                                 log::warn!("[host] could not reconnect to {host_id} at start: {e}");
                             }
                         });
@@ -1646,6 +1654,7 @@ pub fn run() {
             remote_windows::host_connect_saved,
             remote_windows::host_request,
             remote_windows::open_remote_profile_window,
+            remote_windows::ssh_prompt_answer,
             commands::pty_output_subscribe,
             commands::profile_list,
             commands::profile_create,

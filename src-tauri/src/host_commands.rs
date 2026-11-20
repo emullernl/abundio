@@ -148,7 +148,7 @@ pub async fn host_connect(
     target: crate::host_router::HostTarget,
 ) -> Result<String, AbundioError> {
     let router = router(&app);
-    tauri::async_runtime::spawn_blocking(move || router.connect(&host, &target))
+    tauri::async_runtime::spawn_blocking(move || router.connect(&host, &target, &crate::host_router::ConnectMode::Batch))
         .await
         .map_err(|e| AbundioError::InvalidOperation(format!("{e}")))?
         .map_err(AbundioError::Channel)

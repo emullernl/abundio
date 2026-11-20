@@ -59,10 +59,43 @@ fn router(app: &AppHandle) -> std::sync::Arc<HostRouter> {
     app.state::<std::sync::Arc<HostRouter>>().inner().clone()
 }
 
-/// Connect to a Host the user added, unless already connected.
-pub fn connect(app: &AppHandle, host_id: &str) -> Result<String, AbundioError> {
+/// Connect to a Host the user added, unless already connected. `ask`:
+/// SSH prompts (a password, a passphrase, a new host key) are answered in
+/// Abundio's dialog; without it ssh never asks (app start), and the Host's
+/// Windows hear why it failed (`host-connect-failed`: "Sign in needed").
+pub fn connect(app: &AppHandle, host_id: &str, ask: bool) -> Result<String, AbundioError> {
+    use tauri::Emitter;
     let host = crate::hosts::find(host_id).ok_or_else(|| AbundioError::NotFound("that Host was removed".into()))?;
-    router(app).connect(host_id, &host.target).map_err(AbundioError::Channel)
+    let router = router(app);
+    let result = if ask {
+        let askpass = app.state::<crate::askpass::Askpass>();
+        let token = askpass.issue(&host.name);
+        let mode = crate::host_router::ConnectMode::Interactive(crate::askpass::Askpass::env(
+            &askpass_script(),
+            app.state::<crate::hook_server::HookServer>().port,
+            &token,
+        ));
+        let r = router.connect(host_id, &host.target, &mode);
+        askpass.revoke(&token);
+        r
+    } else {
+        router.connect(host_id, &host.target, &crate::host_router::ConnectMode::Batch)
+    };
+    if let Err(reason) = &result {
+        for window in router.windows_on(host_id) {
+            let _ = app.emit_to(
+                window.as_str(),
+                "host-connect-failed",
+                serde_json::json!({ "host": host_id, "reason": reason }),
+            );
+        }
+    }
+    result.map_err(AbundioError::Channel)
+}
+
+/// Where the SSH prompt helper is (written at app start).
+pub fn askpass_script() -> std::path::PathBuf {
+    crate::app_paths::shared_root().join("askpass").join("abundio-askpass")
 }
 
 /// Open `binding` in a Window: the one already showing it (focused), or a
@@ -119,7 +152,7 @@ pub fn remote_profile_for_window(window: Window, windows: tauri::State<'_, Remot
 /// handshake.
 #[tauri::command]
 pub async fn host_connect_saved(app: AppHandle, host_id: String) -> Result<String, AbundioError> {
-    tauri::async_runtime::spawn_blocking(move || connect(&app, &host_id))
+    tauri::async_runtime::spawn_blocking(move || connect(&app, &host_id, true))
         .await
         .map_err(|e| AbundioError::InvalidOperation(e.to_string()))?
 }
@@ -144,6 +177,12 @@ pub async fn host_request(
     .map_err(|e| AbundioError::InvalidOperation(e.to_string()))?
 }
 
+/// The user's answer to an SSH prompt (`None`: cancelled).
+#[tauri::command]
+pub fn ssh_prompt_answer(app: AppHandle, id: String, answer: Option<String>) -> bool {
+    app.state::<crate::askpass::Askpass>().answer(&id, answer)
+}
+
 /// Open a Host's Profile in a Window of its own (connected first).
 #[tauri::command]
 pub async fn open_remote_profile_window(
@@ -155,7 +194,7 @@ pub async fn open_remote_profile_window(
     let host = crate::hosts::find(&host_id).ok_or_else(|| AbundioError::NotFound("that Host was removed".into()))?;
     let app2 = app.clone();
     let id = host_id.clone();
-    tauri::async_runtime::spawn_blocking(move || connect(&app2, &id))
+    tauri::async_runtime::spawn_blocking(move || connect(&app2, &id, true))
         .await
         .map_err(|e| AbundioError::InvalidOperation(e.to_string()))??;
     open(

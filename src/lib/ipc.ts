@@ -252,6 +252,9 @@ export const hostsApi = {
 		invoke<RemoteBinding | null>("remote_profile_for_window"),
 	/** A remote Window's Profiles, on its Host. */
 	serverProfiles: () => invoke<Profile[]>("server_profile_list"),
+	/** The user's answer to an SSH prompt (`null`: cancelled). */
+	answerPrompt: (id: string, answer: string | null) =>
+		invoke<boolean>("ssh_prompt_answer", { id, answer }),
 	/** Tell the Host which of its Profiles this Window shows. */
 	setClientProfile: (profileId: string) =>
 		invoke<void>("client_profile_set", { profileId }),
@@ -261,6 +264,14 @@ export interface HostEntry {
 	id: string;
 	name: string;
 	target: HostTarget;
+}
+
+/** What the user's `ssh` asks while connecting (Rust's `askpass::Prompt`). */
+export interface SshPrompt {
+	id: string;
+	host: string;
+	text: string;
+	kind: "secret" | "confirm" | "info";
 }
 
 export interface RemoteBinding {

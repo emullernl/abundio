@@ -48,6 +48,15 @@ impl crate::hook_server::HookHost for AppHookHost {
     fn control_refuse_unknown(&self, request: tiny_http::Request) -> Option<tiny_http::Request> {
         crate::host_commands::with_host(&self.0, |host| crate::control_host::refuse_unknown(host, request))
     }
+    /// An SSH prompt: shown in one Profile window, answered there
+    /// (`ssh_prompt_answer`).
+    fn askpass_serve(&self, request: tiny_http::Request) {
+        let app = self.0.clone();
+        let askpass = self.0.state::<crate::askpass::Askpass>();
+        askpass.serve(request, &|prompt| {
+            crate::window_management::emit_to_one_profile_window(&app, "ssh-prompt", prompt).is_ok()
+        });
+    }
     fn control_serve(&self, request: tiny_http::Request) {
         crate::host_commands::with_host(&self.0, |host| crate::control_host::serve(host, request))
     }

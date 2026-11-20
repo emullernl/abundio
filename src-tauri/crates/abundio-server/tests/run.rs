@@ -243,7 +243,7 @@ fn windows_on_a_host_get_its_answers_events_and_output() {
         server: env!("CARGO_BIN_EXE_abundio-server").into(),
         data_dir: Some(dir.path().to_string_lossy().into_owned()),
     };
-    router.connect("box", &target).unwrap();
+    router.connect("box", &target, &abundio_core::host_router::ConnectMode::Batch).unwrap();
     router.bind("w1", Some("box"));
     router.bind("w2", Some("box"));
     // A Window on this computer is not routed.

@@ -74,6 +74,7 @@ const DESKTOP = [
 	"host_request",
 	"open_remote_profile_window",
 	"remote_profile_for_window",
+	"ssh_prompt_answer",
 	"updater_check",
 	"updater_download",
 	"updater_install_now",

@@ -10,6 +10,7 @@ pub mod agent_names;
 pub mod agent_registry;
 pub mod agent_skills;
 pub mod app_paths;
+pub mod askpass;
 pub mod change_hub;
 pub mod config;
 pub mod control_host;

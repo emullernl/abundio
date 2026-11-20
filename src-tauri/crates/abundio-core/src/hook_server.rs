@@ -31,6 +31,12 @@ pub trait HookHost: Send + Sync + 'static {
     fn control_refuse_unknown(&self, request: tiny_http::Request) -> Option<tiny_http::Request>;
     /// Serve one Agent control call; runs on its own thread.
     fn control_serve(&self, request: tiny_http::Request);
+    /// An SSH prompt from the helper of an `ssh` the app started
+    /// (`askpass.rs`); runs on its own thread, as it waits for the user.
+    /// Only the desktop app asks the user anything.
+    fn askpass_serve(&self, request: tiny_http::Request) {
+        let _ = request.respond(tiny_http::Response::empty(404));
+    }
 }
 
 pub type Host = Arc<dyn HookHost>;
@@ -247,6 +253,16 @@ fn handle_request(app: &Host, token: &str, mut request: tiny_http::Request) {
                     chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z")
                 );
             }
+        });
+        return;
+    }
+
+    // An SSH prompt carries a one-time token of its own (`askpass.rs`), never
+    // the hook token every pane has; it waits for the user, so off this loop.
+    if request.url() == "/askpass" {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            let _ = catch_unwind(AssertUnwindSafe(|| app.askpass_serve(request)));
         });
         return;
     }

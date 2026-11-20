@@ -46,15 +46,35 @@ pub enum HostTarget {
     Direct { server: String, data_dir: Option<String> },
 }
 
+/// How a connect may ask the user.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectMode {
+    /// Never ask (at app start): ssh fails rather than prompt, and the
+    /// Windows say "Sign in needed".
+    Batch,
+    /// Ask in Abundio's dialog: the environment that points ssh at the
+    /// prompt helper (`askpass::Askpass::env`).
+    Interactive(Vec<(String, String)>),
+}
+
 impl HostTarget {
     /// The program that carries the connection.
-    pub fn command(&self) -> Command {
+    pub fn command(&self, mode: &ConnectMode) -> Command {
         match self {
             HostTarget::Ssh { destination, server } => {
                 let mut c = Command::new("ssh");
                 // No terminal, keepalives so a dead link is noticed, and the
                 // user's own config for everything else.
-                c.args(["-T", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "--"])
+                c.args(["-T", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"]);
+                match mode {
+                    ConnectMode::Batch => {
+                        c.args(["-o", "BatchMode=yes"]);
+                    }
+                    ConnectMode::Interactive(env) => {
+                        c.envs(env.iter().map(|(k, v)| (k, v)));
+                    }
+                }
+                c.arg("--")
                     .arg(destination)
                     .arg(server.as_deref().unwrap_or("abundio-server"))
                     .arg("connect");
@@ -162,14 +182,14 @@ impl HostRouter {
     /// Connect to `host` (named by the caller, e.g. its ssh destination)
     /// unless already connected. Blocks for the handshake: on a password or
     /// 2FA prompt, until it is answered.
-    pub fn connect(&self, host: &str, target: &HostTarget) -> Result<String, String> {
+    pub fn connect(&self, host: &str, target: &HostTarget, mode: &ConnectMode) -> Result<String, String> {
         if let Some(c) = self.state.lock().unwrap().connections.get(host) {
             if !c.client.is_closed() {
                 return Ok(c.client.server_version.clone());
             }
         }
         let listener = Arc::new(Listener { host: host.to_string(), router: self.me.clone() });
-        let (client, process) = HostProcess::spawn(target.command(), listener)?;
+        let (client, process) = HostProcess::spawn(target.command(mode), listener)?;
         let version = client.server_version.clone();
         self.state
             .lock()
@@ -208,7 +228,8 @@ impl HostRouter {
         self.state.lock().unwrap().windows.get(window).cloned()
     }
 
-    fn windows_on(&self, host: &str) -> Vec<String> {
+    /// The Windows on `host`.
+    pub fn windows_on(&self, host: &str) -> Vec<String> {
         let s = self.state.lock().unwrap();
         let mut out: Vec<String> = s.windows.iter().filter(|(_, h)| h.as_str() == host).map(|(w, _)| w.clone()).collect();
         out.sort();
@@ -267,17 +288,24 @@ mod tests {
     #[test]
     fn ssh_runs_connect_with_keepalives_and_no_terminal() {
         let t = HostTarget::Ssh { destination: "build-box".into(), server: None };
-        let c = t.command();
+        let ask = ConnectMode::Interactive(vec![("SSH_ASKPASS".into(), "/x/helper".into())]);
+        let c = t.command(&ask);
         assert_eq!(c.get_program(), "ssh");
         let args: Vec<_> = c.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
         assert_eq!(
             args,
             ["-T", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "--", "build-box", "abundio-server", "connect"]
         );
+        assert!(c.get_envs().any(|(k, v)| k == "SSH_ASKPASS" && v == Some(std::ffi::OsStr::new("/x/helper"))));
+        // At app start ssh never asks.
+        let batch = t.command(&ConnectMode::Batch);
+        let args: Vec<_> = batch.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert!(args.windows(2).any(|w| w == ["-o", "BatchMode=yes"]));
+        assert!(batch.get_envs().next().is_none());
         // A destination is never read as an option.
-        let evil = HostTarget::Ssh { destination: "-oProxyCommand=x".into(), server: None }.command();
+        let evil = HostTarget::Ssh { destination: "-oProxyCommand=x".into(), server: None }.command(&ask);
         let args: Vec<_> = evil.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
-        assert_eq!(args[5], "--");
+        assert_eq!(args[args.len() - 4], "--");
     }
 
     #[test]
