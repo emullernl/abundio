@@ -952,7 +952,12 @@ mod tests {
             pending: &w.pending,
             waits: &w.waits,
         };
-        for name in listed {
+        // Commands that take no arguments run for real: never the ones that
+        // reach the user's machine (the keychain, the login shell's PATH,
+        // their Agents' and skill folders).
+        const REACH_OUT: &[&str] =
+            &["env_retry_key", "agents_path_is_resolved", "agent_hook_status", "agent_skill_status"];
+        for name in listed.into_iter().filter(|n| !REACH_OUT.contains(n)) {
             // Missing arguments: a host command says so; any other is `None`.
             assert!(dispatch(&host, &ClientId::from("w"), name, serde_json::json!({ "_": 0 })).is_some(), "{name}");
         }

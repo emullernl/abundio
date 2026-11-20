@@ -188,6 +188,12 @@ pub fn master_key() -> Result<MasterKey, CryptoError> {
 
     let key = match KEY_FILE.get() {
         Some(path) => load_or_create_file_key(path)?,
+        // A test never opens the user's real credential store: a rebuilt
+        // test binary is a new program to the macOS Keychain, which then
+        // stops the run on a password prompt.
+        #[cfg(test)]
+        None => return Err(CryptoError::Keyring("no credential store in tests".into())),
+        #[cfg(not(test))]
         None => load_or_create_keyring_key()?,
     };
     *cache = Some(key.clone());
