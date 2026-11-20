@@ -5,11 +5,21 @@ import { FileWindowApp } from "./FileWindowApp";
 import { currentWindowLabel } from "./lib/appWindow";
 import { isDemoMode } from "./lib/demo";
 import { disableNativeTextAssist } from "./lib/disableNativeTextAssist";
+import { hostsApi } from "./lib/ipc";
 import { initNotificationListener } from "./lib/notificationRouter";
 import { primaryFontFamily } from "./lib/terminalManager";
 import { SettingsApp, setupCrossWindowSync } from "./SettingsApp";
 import "./lib/windowFocus";
 import "./styles/globals.css";
+
+// Development only, until File ▸ Open Remote Profile (phase 7d): put this
+// Window on an Abundio server from the console, then reload it.
+//   await __abundioHost.connect("box", { kind: "ssh", destination: "localhost" })
+//   await __abundioHost.bind("box"); location.reload()
+if (import.meta.env.DEV && !isDemoMode()) {
+	(window as unknown as { __abundioHost: typeof hostsApi }).__abundioHost =
+		hostsApi;
+}
 
 // The cross-window settings bridge runs in every window (App and Settings) so
 // theme/font changes propagate live. Registered explicitly here — once per

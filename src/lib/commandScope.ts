@@ -63,6 +63,9 @@ const DESKTOP = [
 	"pr_poller_refresh",
 	"pr_poller_set_config",
 	"pr_poller_snapshot",
+	// Which Host a Window is on, and the connection to it (phase 7c).
+	"host_connect",
+	"host_bind",
 	"updater_check",
 	"updater_download",
 	"updater_install_now",

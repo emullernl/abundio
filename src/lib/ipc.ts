@@ -214,6 +214,20 @@ export const agentCommandsApi = {
 		invoke<void>("agent_commands_set", { list }),
 };
 
+/** How the desktop reaches a remote Host (Rust's `host_router::HostTarget`). */
+export type HostTarget =
+	| { kind: "ssh"; destination: string; server?: string }
+	| { kind: "direct"; server: string; dataDir?: string };
+
+/** Remote Hosts (docs/plans/remote-hosts.md phase 7c): connect once per
+ *  Host, then put this Window on it; its host commands, events and PTY
+ *  output then come from there. */
+export const hostsApi = {
+	connect: (host: string, target: HostTarget) =>
+		invoke<string>("host_connect", { host, target }),
+	bind: (host: string | null) => invoke<void>("host_bind", { host }),
+};
+
 export const layoutApi = {
 	/** Apply edits to a Tab's layout in Rust, the authority (`layoutSync.ts`). */
 	apply: (tabId: string, ops: LayoutOp[]) =>

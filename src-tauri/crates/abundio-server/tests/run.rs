@@ -6,13 +6,40 @@ use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-fn server(dir: &std::path::Path) -> Child {
-    Command::new(env!("CARGO_BIN_EXE_abundio-server"))
-        .args(["run", "--data-dir"])
-        .arg(dir)
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap()
+/// The server, killed when the test ends however it ends: a failed check
+/// must not leave it running (it holds the test's output open).
+struct Server(Child);
+
+impl std::ops::Deref for Server {
+    type Target = Child;
+    fn deref(&self) -> &Child {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Server {
+    fn deref_mut(&mut self) -> &mut Child {
+        &mut self.0
+    }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn server(dir: &std::path::Path) -> Server {
+    Server(
+        Command::new(env!("CARGO_BIN_EXE_abundio-server"))
+            .args(["run", "--data-dir"])
+            .arg(dir)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    )
 }
 
 /// Read the server's log until a line contains `needle`.
@@ -185,4 +212,102 @@ fn the_app_reaches_the_server_through_connect() {
     wait_for(&mut log, "a Client connection closed");
     nix::sys::signal::kill(nix::unistd::Pid::from_raw(server.id() as i32), nix::sys::signal::Signal::SIGTERM).unwrap();
     assert!(server.wait().unwrap().success());
+}
+
+#[derive(Default)]
+struct Windows {
+    events: std::sync::Mutex<Vec<(String, String)>>,
+    frames: std::sync::Mutex<Vec<(String, Vec<u8>)>>,
+}
+
+impl abundio_core::host_router::WindowSink for Windows {
+    fn emit_to(&self, window: &str, event: &str, _payload: serde_json::Value) {
+        self.events.lock().unwrap().push((window.to_string(), event.to_string()));
+    }
+    fn pty_frame(&self, window: &str, frame: &[u8]) {
+        self.frames.lock().unwrap().push((window.to_string(), frame.to_vec()));
+    }
+}
+
+#[test]
+fn windows_on_a_host_get_its_answers_events_and_output() {
+    use abundio_core::host_router::{HostRouter, HostTarget};
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = server(dir.path());
+    let mut log = BufReader::new(server.stderr.take().unwrap()).lines().map_while(Result::ok);
+    wait_for(&mut log, "waiting for a Client");
+
+    let windows = std::sync::Arc::new(Windows::default());
+    let router = HostRouter::new(windows.clone());
+    let target = HostTarget::Direct {
+        server: env!("CARGO_BIN_EXE_abundio-server").into(),
+        data_dir: Some(dir.path().to_string_lossy().into_owned()),
+    };
+    router.connect("box", &target).unwrap();
+    router.bind("w1", Some("box"));
+    router.bind("w2", Some("box"));
+    // A Window on this computer is not routed.
+    assert!(router.call("local", "workspace_list", serde_json::json!({})).is_none());
+
+    let call = |w: &str, command: &str, args: serde_json::Value| router.call(w, command, args).unwrap().unwrap();
+    let profile = "00000000-0000-0000-0000-000000000001";
+    let folder = tempfile::tempdir().unwrap();
+    let ws = call("w1", "workspace_create", serde_json::json!({ "name": "R", "rootFolder": folder.path(), "profileId": profile }));
+    let pty = format!("pty-{}", std::process::id());
+    call("w1", "status_apply", serde_json::json!({ "ops": [{ "op": "init", "ptyId": pty, "mode": "shell" }] }));
+    call(
+        "w1",
+        "pty_spawn",
+        serde_json::json!({
+            "cwd": folder.path(), "cols": 80, "rows": 24, "ptyId": pty,
+            "command": "/bin/echo routed-output", "workspaceId": ws["id"],
+        }),
+    );
+
+    // The output reaches both Windows on the Host, framed as local output.
+    let start = Instant::now();
+    loop {
+        let frames = windows.frames.lock().unwrap().clone();
+        let seen = |w: &str| {
+            frames.iter().any(|(win, f)| win == w && String::from_utf8_lossy(f).contains("routed-output"))
+        };
+        if seen("w1") && seen("w2") {
+            assert!(frames.iter().all(|(w, _)| w != "local"));
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(10), "no output reached the Windows");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // A command that fails: its status goes to the Window that owns it only.
+    let failing = format!("failing-{}", std::process::id());
+    call("w1", "status_apply", serde_json::json!({ "ops": [{ "op": "init", "ptyId": failing, "mode": "shell" }] }));
+    call(
+        "w1",
+        "pty_spawn",
+        serde_json::json!({
+            "cwd": folder.path(), "cols": 80, "rows": 24, "ptyId": failing,
+            "command": "/usr/bin/false", "workspaceId": ws["id"],
+        }),
+    );
+    let start = Instant::now();
+    loop {
+        let events = windows.events.lock().unwrap().clone();
+        if events.iter().any(|(w, e)| w == "w1" && e == "status-updates") {
+            assert!(!events.iter().any(|(w, e)| w == "w2" && e == "status-updates"));
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(10), "no status update: {events:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // The server goes: every Window on it hears so, and calls say so.
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(server.id() as i32), nix::sys::signal::Signal::SIGTERM).unwrap();
+    assert!(server.wait().unwrap().success());
+    let start = Instant::now();
+    while !windows.events.lock().unwrap().iter().any(|(w, e)| w == "w2" && e == "host-connection-lost") {
+        assert!(start.elapsed() < Duration::from_secs(10), "no connection-lost event");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(router.call("w1", "workspace_list", serde_json::json!({})).unwrap().is_err());
 }

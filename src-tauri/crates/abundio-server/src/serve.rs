@@ -98,8 +98,19 @@ impl EventSink for Connections {
         }
     }
 
-    /// Phase 7c sends each Client the PTYs it subscribed to.
-    fn pty_output(&self, _pty_id: &str, _data: &[u8]) {}
+    /// Once to every connection: the desktop app puts it in the output
+    /// channel of each Window it has on this Host, as local output goes to
+    /// every Window. Dropped for a connection that is behind (phase 9 sends it
+    /// a fresh snapshot instead).
+    fn pty_output(&self, pty_id: &str, data: &[u8]) {
+        for c in self.conns.lock().unwrap().values() {
+            let _ = c.pty.try_send(Frame::Pty {
+                client: String::new(),
+                pty_id: pty_id.to_string(),
+                bytes: data.to_vec(),
+            });
+        }
+    }
 }
 
 /// Serve one connection until it ends: the handshake, then each request on

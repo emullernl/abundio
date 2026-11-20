@@ -26,6 +26,15 @@ impl PtyChannels {
         self.by_client.remove(client);
     }
 
+    /// Send one Window its PTY bytes (a remote Host's output, phase 7c).
+    pub fn send_to(&self, client: &str, frame: &[u8]) {
+        let body = tauri::ipc::InvokeResponseBody::Raw(frame.to_vec());
+        let failed = self.by_client.get(client).is_some_and(|c| c.send(body).is_err());
+        if failed {
+            self.by_client.remove(client);
+        }
+    }
+
     pub(crate) fn send_all(&self, frame: &[u8]) {
         let mut dead = Vec::new();
         for entry in self.by_client.iter() {

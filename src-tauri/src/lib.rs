@@ -41,6 +41,7 @@ pub use abundio_core::git_libgit2;
 pub use abundio_core::git_scheduler;
 pub use abundio_core::hook_apply;
 pub use abundio_core::host_api;
+pub use abundio_core::host_router;
 pub use abundio_core::hook_route;
 pub use abundio_core::hook_server;
 pub use abundio_core::migrations;
@@ -971,6 +972,10 @@ pub fn run() {
             // Where core modules send events (docs/plans/remote-hosts.md).
             let pty_channels = std::sync::Arc::new(tauri_sink::PtyChannels::default());
             app.manage(pty_channels.clone());
+            // Remote Hosts: one connection each, shared by the Windows on them.
+            app.manage(host_router::HostRouter::new(std::sync::Arc::new(
+                host_commands::RouterWindows(app.handle().clone()),
+            )));
             app.manage::<event_sink::Events>(tauri_sink::TauriSink::shared(
                 app.handle(),
                 pty_channels,
@@ -1216,6 +1221,14 @@ pub fn run() {
                         fw.release_window(&label);
                     }
                     return;
+                }
+
+                // A Window on a remote Host: that Host forgets it (its PTYs
+                // keep running there).
+                if let Some(router) =
+                    app_handle.try_state::<std::sync::Arc<host_router::HostRouter>>()
+                {
+                    router.window_closed(&label);
                 }
 
                 // The settings window is auxiliary — never claims a profile,
@@ -1583,6 +1596,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             host_commands::host_call,
+            host_commands::host_connect,
+            host_commands::host_bind,
             commands::pty_output_subscribe,
             commands::profile_list,
             commands::profile_create,

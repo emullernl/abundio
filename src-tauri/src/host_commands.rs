@@ -79,10 +79,53 @@ fn call(app: &AppHandle, client: &ClientId, command: &str, args: Value) -> Resul
         .unwrap_or_else(|| Err(AbundioError::NotFound(format!("no host command {command}"))))
 }
 
-/// Run one host command for the calling Window.
+/// The app's Windows as a remote Host's router sees them (phase 7c): its
+/// events under their own names, its PTY bytes on their output channels.
+pub struct RouterWindows(pub AppHandle);
+
+impl crate::host_router::WindowSink for RouterWindows {
+    fn emit_to(&self, window: &str, event: &str, payload: Value) {
+        use tauri::Emitter;
+        let _ = self.0.emit_to(window, event, payload);
+    }
+    fn pty_frame(&self, window: &str, frame: &[u8]) {
+        self.0.state::<std::sync::Arc<crate::tauri_sink::PtyChannels>>().send_to(window, frame);
+    }
+}
+
+fn router(app: &AppHandle) -> std::sync::Arc<crate::host_router::HostRouter> {
+    app.state::<std::sync::Arc<crate::host_router::HostRouter>>().inner().clone()
+}
+
+/// What a remote Host's failure looks like to the Window: the command's own
+/// error when it ran there.
+fn remote_error(e: crate::host_router::CallError) -> AbundioError {
+    use crate::host_router::CallError;
+    match e {
+        CallError::Failed(Value::String(s)) => AbundioError::InvalidOperation(s),
+        CallError::Failed(v) => AbundioError::InvalidOperation(v.to_string()),
+        CallError::NotConnected(host) => AbundioError::Channel(format!("not connected to {host}")),
+        CallError::ConnectionLost => AbundioError::Channel(
+            "the connection to the Host was lost; the action may have happened, so check before retrying".into(),
+        ),
+    }
+}
+
+/// Run one host command for the calling Window: on its Host when it is on
+/// one (phase 7c), here otherwise.
 #[tauri::command]
 pub async fn host_call(app: AppHandle, window: Window, command: String, args: Value) -> Result<Value, AbundioError> {
     let client = ClientId::from(window.label());
+    let router = router(&app);
+    if router.host_of(client.as_str()).is_some() {
+        // A request over the connection waits for its answer: never on the
+        // async runtime.
+        return tauri::async_runtime::spawn_blocking(move || {
+            router.call(client.as_str(), &command, args).expect("bound").map_err(remote_error)
+        })
+        .await
+        .map_err(|e| AbundioError::InvalidOperation(format!("{e}")))?;
+    }
     if crate::host_api::may_block(&command) {
         // Off the async runtime: a `stat` on a hung mount can block for long.
         tauri::async_runtime::spawn_blocking(move || call(&app, &client, &command, args))
@@ -91,4 +134,27 @@ pub async fn host_call(app: AppHandle, window: Window, command: String, args: Va
     } else {
         call(&app, &client, &command, args)
     }
+}
+
+/// Connect to a Host (once per Host for the whole app). Blocks for the
+/// handshake, so a password prompt waits for the user. Development only
+/// until Settings ▸ Hosts (phase 7d).
+#[tauri::command]
+pub async fn host_connect(
+    app: AppHandle,
+    host: String,
+    target: crate::host_router::HostTarget,
+) -> Result<String, AbundioError> {
+    let router = router(&app);
+    tauri::async_runtime::spawn_blocking(move || router.connect(&host, &target))
+        .await
+        .map_err(|e| AbundioError::InvalidOperation(format!("{e}")))?
+        .map_err(AbundioError::Channel)
+}
+
+/// Put the calling Window on `host` (`None`: back on this computer); its
+/// host commands then go there.
+#[tauri::command]
+pub fn host_bind(app: AppHandle, window: Window, host: Option<String>) {
+    router(&app).bind(window.label(), host.as_deref());
 }
