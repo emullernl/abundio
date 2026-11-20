@@ -62,7 +62,8 @@ fn router(app: &AppHandle) -> std::sync::Arc<HostRouter> {
 /// Connect to a Host the user added, unless already connected. `ask`:
 /// SSH prompts (a password, a passphrase, a new host key) are answered in
 /// Abundio's dialog; without it ssh never asks (app start), and the Host's
-/// Windows hear why it failed (`host-connect-failed`: "Sign in needed").
+/// Windows hear why it failed (`host-connect-failed`: "Sign in needed", or
+/// unreachable and tried again in the background).
 pub fn connect(app: &AppHandle, host_id: &str, ask: bool) -> Result<String, AbundioError> {
     use tauri::Emitter;
     let host = crate::hosts::find(host_id).ok_or_else(|| AbundioError::NotFound("that Host was removed".into()))?;
@@ -82,12 +83,18 @@ pub fn connect(app: &AppHandle, host_id: &str, ask: bool) -> Result<String, Abun
         router.connect(host_id, &host.target, &crate::host_router::ConnectMode::Batch)
     };
     if let Err(reason) = &result {
+        let sign_in = crate::host_router::needs_sign_in(reason);
         for window in router.windows_on(host_id) {
             let _ = app.emit_to(
                 window.as_str(),
                 "host-connect-failed",
-                serde_json::json!({ "host": host_id, "reason": reason }),
+                serde_json::json!({ "host": host_id, "reason": reason, "signIn": sign_in }),
             );
+        }
+        // A Host that is only unreachable (asleep, offline) is tried again
+        // in the background; one that needs the user waits for Sign in.
+        if !ask && !sign_in {
+            router.retry_in_background(host_id, crate::host_router::BACKOFF[0]);
         }
     }
     result.map_err(AbundioError::Channel)

@@ -22,6 +22,7 @@ import {
 import { withTerminalSettings } from "../lib/terminalSettingsBridge";
 import { applyTheme, getTheme } from "../lib/themes";
 import type { CodingAgent } from "../lib/types";
+import { isNotConnectedError } from "./hostLinkStore";
 
 /**
  * IDs of agents whose hooks should be provisioned — those with their per-agent
@@ -619,7 +620,9 @@ function applyRehydratedSettings(state: SettingsState | undefined): void {
 				provisionableAgentIds(state.agents),
 			)
 			.catch((err) => {
-				console.error("[agentSkill] startup provision failed:", err);
+				// A remote Window whose Host is offline runs it on reload.
+				if (!isNotConnectedError(err))
+					console.error("[agentSkill] startup provision failed:", err);
 			});
 	}
 	// Re-sync agent hook provisioning with the persisted setting on
@@ -630,7 +633,9 @@ function applyRehydratedSettings(state: SettingsState | undefined): void {
 		agentHooks
 			.provisionStartup(true, provisionableAgentIds(state.agents))
 			.catch((err) => {
-				console.error("[agentHooks] startup provision failed:", err);
+				// A remote Window whose Host is offline runs it on reload.
+				if (!isNotConnectedError(err))
+					console.error("[agentHooks] startup provision failed:", err);
 			});
 	}
 	// Always pushed, not only when false. This same handler runs on

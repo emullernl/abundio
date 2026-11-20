@@ -1,3 +1,4 @@
+import { isNotConnectedError } from "../stores/hostLinkStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { agentCommandsApi } from "./ipc";
 import { isRustStatusAuthority } from "./statusSync";
@@ -15,7 +16,10 @@ export function startAgentCommandsSync(): () => void {
 	const send = (agents: CodingAgent[]) => {
 		agentCommandsApi
 			.set(agents.map(({ id, command, enabled }) => ({ id, command, enabled })))
-			.catch((e) => console.warn("[agents] Rust did not take the list", e));
+			.catch((e) => {
+				if (!isNotConnectedError(e))
+					console.warn("[agents] Rust did not take the list", e);
+			});
 	};
 	send(useSettingsStore.getState().agents);
 	return useSettingsStore.subscribe((s, prev) => {

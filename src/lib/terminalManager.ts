@@ -5,6 +5,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { type ITerminalOptions, type ITheme, Terminal } from "@xterm/xterm";
+import { isNotConnectedError } from "../stores/hostLinkStore";
 import { useOrchestratorStore } from "../stores/orchestratorStore";
 import {
 	hasActiveSubagent,
@@ -732,11 +733,10 @@ export function setActivityByteThreshold(n: number): void {
 	ACTIVITY_BYTE_THRESHOLD = Math.max(1, Math.round(n));
 	// Rust runs the heuristic where it is the authority (phase 6d-5).
 	if (isRustStatusAuthority()) {
-		statusApi
-			.setByteThreshold(ACTIVITY_BYTE_THRESHOLD)
-			.catch((e) =>
-				console.warn("[status] Rust did not take the threshold", e),
-			);
+		statusApi.setByteThreshold(ACTIVITY_BYTE_THRESHOLD).catch((e) => {
+			if (!isNotConnectedError(e))
+				console.warn("[status] Rust did not take the threshold", e);
+		});
 	}
 }
 // Output is ignored for INPUT_GATE_MS after the last keystroke to suppress

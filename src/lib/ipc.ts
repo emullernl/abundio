@@ -4,6 +4,7 @@ import {
 	listen as realListen,
 	type UnlistenFn,
 } from "@tauri-apps/api/event";
+import { isHostOffline } from "../stores/hostLinkStore";
 import { appWebview } from "./appWindow";
 import { decodeBase64 } from "./base64";
 import { isDemoMode } from "./demo";
@@ -293,8 +294,12 @@ export const pty = {
 	spawn: (options: PtySpawnOptions) =>
 		invoke<string>("pty_spawn", { ...options }),
 
+	/** Dropped, never queued, while a remote Window's Host is not connected
+	 *  (its panes are frozen; docs/plans/remote-hosts.md phase 7d). */
 	write: (ptyId: string, data: string) =>
-		invoke<void>("pty_write", { ptyId, data }),
+		isHostOffline()
+			? Promise.resolve()
+			: invoke<void>("pty_write", { ptyId, data }),
 
 	resize: (ptyId: string, cols: number, rows: number) =>
 		invoke<void>("pty_resize", { ptyId, cols, rows }),

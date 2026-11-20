@@ -2,7 +2,6 @@ import { create } from "zustand";
 import { appWindow } from "../lib/appWindow";
 import {
 	hostsApi,
-	listenToThisWindow,
 	profiles as profilesApi,
 	type RemoteBinding,
 	windowSession,
@@ -294,14 +293,7 @@ async function loadRemote(remote: RemoteBinding): Promise<void> {
 			remoteError: String(e),
 		});
 		applyWindowTitle(remote.profileName);
-		const stop = await listenToThisWindow<{ host: string }>(
-			"host-connected",
-			(event) => {
-				if (event.payload.host !== remote.hostId) return;
-				stop();
-				window.location.reload();
-			},
-		);
+		// Loaded again once the Host connects (`RemoteHostBanner`).
 	}
 }
 

@@ -124,6 +124,7 @@ import {
 import { useDevEnvironmentsStore } from "./stores/devEnvironmentsStore";
 import { useExplorerStore } from "./stores/explorerStore";
 import { confirmFileWindowsClean } from "./stores/fileWindowCloseConfirmStore";
+import { useHostLinkStore } from "./stores/hostLinkStore";
 import { useNotesStore } from "./stores/notesStore";
 import { useOrchestratorStore } from "./stores/orchestratorStore";
 import {
@@ -465,6 +466,7 @@ export function App() {
 		string | null
 	>(null);
 	const appWindowRef = useRef<ReturnType<typeof appWindow>>(null);
+	const hostAway = useHostLinkStore((s) => s.link.state !== "online");
 	const workspacesInitialized = useWorkspaceStore(
 		(s) => s.workspacesInitialized,
 	);
@@ -1331,7 +1333,12 @@ export function App() {
 				</div>
 				<div
 					className="flex-1 min-w-0 flex flex-col relative"
-					style={{ paddingTop: TITLEBAR_HEIGHT + OVERVIEW_BAR_HEIGHT }}
+					style={{
+						paddingTop: TITLEBAR_HEIGHT + OVERVIEW_BAR_HEIGHT,
+						// Frozen while a remote Window's Host is away: what is
+						// typed is dropped (`isHostOffline`), and it looks it.
+						...(hostAway ? { opacity: 0.55, filter: "grayscale(0.6)" } : {}),
+					}}
 				>
 					<div
 						style={{

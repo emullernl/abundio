@@ -10,8 +10,13 @@
 //! Window on another Host or on this computer). PTY output comes once per
 //! connection and goes into each bound Window's output channel, framed as
 //! local output is. The Window itself never touches the connection.
+//!
+//! A connection that ends while Windows are on its Host is tried again in
+//! the background (phase 7d), with backoff and without ever asking the user
+//! anything: a Host that needs a password, a passphrase or a new host key
+//! stops the retries and its Windows say "Sign in needed" instead.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::process::Command;
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
@@ -65,7 +70,15 @@ impl HostTarget {
                 let mut c = Command::new("ssh");
                 // No terminal, keepalives so a dead link is noticed, and the
                 // user's own config for everything else.
-                c.args(["-T", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"]);
+                c.args([
+                    "-T",
+                    "-o",
+                    "ServerAliveInterval=15",
+                    "-o",
+                    "ServerAliveCountMax=3",
+                    "-o",
+                    "ConnectTimeout=10",
+                ]);
                 match mode {
                     ConnectMode::Batch => {
                         c.args(["-o", "BatchMode=yes"]);
@@ -106,6 +119,9 @@ pub enum CallError {
 struct Connection {
     client: Arc<HostClient>,
     _process: HostProcess,
+    /// Which connect made it: a connection that ends after a newer one
+    /// replaced it removes nothing.
+    generation: u64,
 }
 
 #[derive(Default)]
@@ -113,13 +129,46 @@ struct State {
     connections: HashMap<String, Connection>,
     /// Window → the Host it is bound to.
     windows: HashMap<String, String>,
+    /// How each Host was last reached, for the retries.
+    targets: HashMap<String, HostTarget>,
+    /// Hosts being tried again in the background.
+    retrying: HashSet<String>,
+    generation: u64,
 }
 
 /// Every Host connection of this desktop app, and which Window is on which.
 pub struct HostRouter {
     state: Mutex<State>,
+    /// One connect at a time per Host, so a retry and the user's Sign in
+    /// never open two connections.
+    connecting: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    backoff: Mutex<Vec<Duration>>,
     sink: Arc<dyn WindowSink>,
     me: Weak<HostRouter>,
+}
+
+/// Told after each failed retry: why, and when the next one is (none when
+/// the Host needs the user to sign in).
+pub const RECONNECTING_EVENT: &str = "host-reconnecting";
+
+/// The waits between retries; the last one repeats.
+pub const BACKOFF: [Duration; 6] = [
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+    Duration::from_secs(8),
+    Duration::from_secs(15),
+    Duration::from_secs(30),
+];
+
+/// Whether a failed connect needs the user (a password, a passphrase, 2FA,
+/// a host key to trust): trying again without asking only fails again, and
+/// a server may lock out an address that keeps failing to log in.
+pub fn needs_sign_in(reason: &str) -> bool {
+    let r = reason.to_lowercase();
+    ["permission denied", "host key verification failed", "too many authentication failures", "no more authentication methods"]
+        .iter()
+        .any(|m| r.contains(m))
 }
 
 /// Told when a connection ends, so its Windows can show it.
@@ -132,6 +181,7 @@ pub const CONNECTED_EVENT: &str = "host-connected";
 struct Listener {
     host: String,
     router: Weak<HostRouter>,
+    generation: u64,
 }
 
 impl HostListener for Listener {
@@ -162,8 +212,18 @@ impl HostListener for Listener {
     fn closed(&self, why: &str) {
         let Some(router) = self.router.upgrade() else { return };
         log::warn!("[host] the connection to {} ended: {why}", self.host);
+        {
+            let mut s = router.state.lock().unwrap();
+            if s.connections.get(&self.host).is_none_or(|c| c.generation != self.generation) {
+                return;
+            }
+            s.connections.remove(&self.host);
+        }
         let windows = router.windows_on(&self.host);
-        router.state.lock().unwrap().connections.remove(&self.host);
+        if !windows.is_empty() {
+            let first = router.backoff.lock().unwrap()[0];
+            router.retry_in_background(&self.host, first);
+        }
         for window in windows {
             router.sink.emit_to(
                 &window,
@@ -176,31 +236,124 @@ impl HostListener for Listener {
 
 impl HostRouter {
     pub fn new(sink: Arc<dyn WindowSink>) -> Arc<Self> {
-        Arc::new_cyclic(|me| HostRouter { state: Mutex::default(), sink, me: me.clone() })
+        Arc::new_cyclic(|me| HostRouter {
+            state: Mutex::default(),
+            connecting: Mutex::default(),
+            backoff: Mutex::new(BACKOFF.to_vec()),
+            sink,
+            me: me.clone(),
+        })
+    }
+
+    /// Shorter waits between retries (tests).
+    pub fn set_backoff(&self, waits: Vec<Duration>) {
+        assert!(!waits.is_empty());
+        *self.backoff.lock().unwrap() = waits;
     }
 
     /// Connect to `host` (named by the caller, e.g. its ssh destination)
     /// unless already connected. Blocks for the handshake: on a password or
     /// 2FA prompt, until it is answered.
     pub fn connect(&self, host: &str, target: &HostTarget, mode: &ConnectMode) -> Result<String, String> {
-        if let Some(c) = self.state.lock().unwrap().connections.get(host) {
-            if !c.client.is_closed() {
-                return Ok(c.client.server_version.clone());
+        let gate = self.connecting.lock().unwrap().entry(host.to_string()).or_default().clone();
+        let _one_at_a_time = gate.lock().unwrap();
+        let generation = {
+            let mut s = self.state.lock().unwrap();
+            s.targets.insert(host.to_string(), target.clone());
+            if let Some(c) = s.connections.get(host) {
+                if !c.client.is_closed() {
+                    return Ok(c.client.server_version.clone());
+                }
             }
-        }
-        let listener = Arc::new(Listener { host: host.to_string(), router: self.me.clone() });
+            s.generation += 1;
+            s.generation
+        };
+        let listener = Arc::new(Listener { host: host.to_string(), router: self.me.clone(), generation });
         let (client, process) = HostProcess::spawn(target.command(mode), listener)?;
         let version = client.server_version.clone();
         self.state
             .lock()
             .unwrap()
             .connections
-            .insert(host.to_string(), Connection { client, _process: process });
+            .insert(host.to_string(), Connection { client, _process: process, generation });
         log::info!("[host] connected to {host} (server {version})");
         for window in self.windows_on(host) {
             self.sink.emit_to(&window, CONNECTED_EVENT, serde_json::json!({ "host": host }));
         }
         Ok(version)
+    }
+
+    /// Try `host` again in the background, first after `first_wait`, then
+    /// with backoff, until it connects, needs the user to sign in, or has no
+    /// Window left. Once per Host at a time. Its Windows hear each failure
+    /// (`host-reconnecting`) and the success (`host-connected`).
+    pub fn retry_in_background(&self, host: &str, first_wait: Duration) {
+        {
+            let mut s = self.state.lock().unwrap();
+            if !s.targets.contains_key(host) || !s.retrying.insert(host.to_string()) {
+                return;
+            }
+        }
+        let (me, host) = (self.me.clone(), host.to_string());
+        std::thread::spawn(move || {
+            let mut wait = first_wait;
+            let mut attempt = 0usize;
+            loop {
+                // Sleep in short steps, so a Sign in or the last Window
+                // closing ends the wait early.
+                let until = std::time::Instant::now() + wait;
+                loop {
+                    let Some(router) = me.upgrade() else { return };
+                    if router.is_connected(&host) || router.windows_on(&host).is_empty() {
+                        router.state.lock().unwrap().retrying.remove(&host);
+                        return;
+                    }
+                    drop(router);
+                    let now = std::time::Instant::now();
+                    if now >= until {
+                        break;
+                    }
+                    std::thread::sleep((until - now).min(Duration::from_millis(200)));
+                }
+                let Some(router) = me.upgrade() else { return };
+                let target = router.state.lock().unwrap().targets.get(&host).cloned();
+                let Some(target) = target else {
+                    router.state.lock().unwrap().retrying.remove(&host);
+                    return;
+                };
+                match router.connect(&host, &target, &ConnectMode::Batch) {
+                    Ok(_) => {
+                        router.state.lock().unwrap().retrying.remove(&host);
+                        return;
+                    }
+                    Err(reason) => {
+                        let sign_in = needs_sign_in(&reason);
+                        wait = {
+                            let b = router.backoff.lock().unwrap();
+                            b[attempt.min(b.len() - 1)]
+                        };
+                        attempt += 1;
+                        log::info!("[host] {host} is still unreachable ({reason})");
+                        for window in router.windows_on(&host) {
+                            router.sink.emit_to(
+                                &window,
+                                RECONNECTING_EVENT,
+                                serde_json::json!({
+                                    "host": host,
+                                    "reason": reason,
+                                    "signIn": sign_in,
+                                    "retryInMs": if sign_in { None } else { Some(wait.as_millis() as u64) },
+                                }),
+                            );
+                        }
+                        if sign_in {
+                            router.state.lock().unwrap().retrying.remove(&host);
+                            return;
+                        }
+                    }
+                }
+            }
+        });
     }
 
     /// Whether `host` has a live connection.
@@ -294,7 +447,19 @@ mod tests {
         let args: Vec<_> = c.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
         assert_eq!(
             args,
-            ["-T", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "--", "build-box", "abundio-server", "connect"]
+            [
+                "-T",
+                "-o",
+                "ServerAliveInterval=15",
+                "-o",
+                "ServerAliveCountMax=3",
+                "-o",
+                "ConnectTimeout=10",
+                "--",
+                "build-box",
+                "abundio-server",
+                "connect"
+            ]
         );
         assert!(c.get_envs().any(|(k, v)| k == "SSH_ASKPASS" && v == Some(std::ffi::OsStr::new("/x/helper"))));
         // At app start ssh never asks.
@@ -306,6 +471,15 @@ mod tests {
         let evil = HostTarget::Ssh { destination: "-oProxyCommand=x".into(), server: None }.command(&ask);
         let args: Vec<_> = evil.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
         assert_eq!(args[args.len() - 4], "--");
+    }
+
+    #[test]
+    fn only_a_failure_the_user_can_fix_stops_the_retries() {
+        assert!(needs_sign_in("handshake failed: me@box: Permission denied (publickey,password)."));
+        assert!(needs_sign_in("Host key verification failed."));
+        assert!(!needs_sign_in("ssh: connect to host box port 22: Operation timed out"));
+        assert!(!needs_sign_in("ssh: Could not resolve hostname box: nodename nor servname provided"));
+        assert!(!needs_sign_in("handshake failed: the connection ended"));
     }
 
     #[test]

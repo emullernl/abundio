@@ -239,6 +239,7 @@ fn windows_on_a_host_get_its_answers_events_and_output() {
 
     let windows = std::sync::Arc::new(Windows::default());
     let router = HostRouter::new(windows.clone());
+    router.set_backoff(vec![Duration::from_millis(100), Duration::from_millis(300)]);
     let target = HostTarget::Direct {
         server: env!("CARGO_BIN_EXE_abundio-server").into(),
         data_dir: Some(dir.path().to_string_lossy().into_owned()),
@@ -310,4 +311,28 @@ fn windows_on_a_host_get_its_answers_events_and_output() {
         std::thread::sleep(Duration::from_millis(50));
     }
     assert!(router.call("w1", "workspace_list", serde_json::json!({})).unwrap().is_err());
+
+    // It comes back: the router finds it again by itself, and its Windows
+    // hear so. Until then each retry says when the next one is.
+    let start = Instant::now();
+    while !windows.events.lock().unwrap().iter().any(|(w, e)| w == "w1" && e == "host-reconnecting") {
+        assert!(start.elapsed() < Duration::from_secs(10), "no retry was reported");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let mut again = self::server(dir.path());
+    let mut log = BufReader::new(again.stderr.take().unwrap()).lines().map_while(Result::ok);
+    wait_for(&mut log, "waiting for a Client");
+    let start = Instant::now();
+    while !router.is_connected("box") {
+        assert!(start.elapsed() < Duration::from_secs(15), "the router did not reconnect");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let start = Instant::now();
+    while !windows.events.lock().unwrap().iter().any(|(w, e)| w == "w2" && e == "host-connected") {
+        assert!(start.elapsed() < Duration::from_secs(5), "no host-connected event");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // The Workspace made before is there again.
+    let list = call("w1", "workspace_list", serde_json::json!({ "profileId": profile }));
+    assert!(list.to_string().contains(ws["id"].as_str().unwrap()), "{list}");
 }
