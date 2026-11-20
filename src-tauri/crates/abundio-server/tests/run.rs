@@ -153,6 +153,17 @@ fn the_app_reaches_the_server_through_connect() {
     assert_eq!(read["content"], "# on the host");
     let listed = call("fs_list_dir", serde_json::json!({ "path": folder.path() })).unwrap();
     assert_eq!(listed[0]["name"], "notes.md");
+    // Notes and Prompt actions live on the Host too.
+    call("note_set", serde_json::json!({ "workspaceId": ws["id"], "content": "remember" })).unwrap();
+    assert_eq!(call("note_get", serde_json::json!({ "workspaceId": ws["id"] })).unwrap(), "remember");
+    let before = call("prompt_actions_list", serde_json::Value::Null).unwrap().as_array().unwrap().len();
+    call(
+        "prompt_action_create",
+        serde_json::json!({ "action": { "name": "Review", "body": "Review this" } }),
+    )
+    .unwrap();
+    let after = call("prompt_actions_list", serde_json::Value::Null).unwrap().as_array().unwrap().len();
+    assert_eq!(after, before + 1);
     // A host command's error reaches the app as the command's own.
     let err = call("pty_resize", serde_json::json!({ "ptyId": "nope", "cols": 1, "rows": 1 })).unwrap_err();
     assert!(format!("{err:?}").contains("PTY not found"), "{err:?}");

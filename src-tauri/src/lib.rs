@@ -1,12 +1,11 @@
 pub mod agent_control;
 pub use abundio_core::agent_names;
 pub use abundio_core::agent_skills;
-pub mod agent_skills_commands;
 pub mod host_commands;
 pub use abundio_core::agent_hooks;
 pub mod app_badge;
 pub use abundio_core::app_paths;
-pub mod agent_registry;
+pub use abundio_core::agent_registry;
 pub mod app_metrics;
 pub mod clipboard_image;
 pub mod commands;
@@ -27,7 +26,7 @@ pub use abundio_core::control_local;
 pub use abundio_core::control_protocol;
 pub use abundio_core::git_core;
 pub use abundio_core::db_open;
-pub mod env_vars_commands;
+pub use abundio_core::env_vars_commands;
 pub mod tauri_sink;
 pub use abundio_core::status_store;
 pub use abundio_core::title_status;
@@ -44,12 +43,12 @@ pub use abundio_core::host_api;
 pub use abundio_core::hook_route;
 pub use abundio_core::hook_server;
 pub use abundio_core::migrations;
-pub mod orchestrator;
+pub use abundio_core::orchestrator;
 pub use abundio_core::owner_map;
 pub mod pr_poller;
 pub use abundio_core::process_monitor;
 pub use abundio_core::profile_store;
-pub mod prompt_actions;
+pub use abundio_core::prompt_actions;
 pub mod prompt_attachments;
 pub use abundio_core::pty_manager;
 pub use abundio_core::search;
@@ -1600,33 +1599,8 @@ pub fn run() {
             commands::create_untitled_profile_in_new_window,
             commands::open_settings_window,
             commands::focus_window,
-            orchestrator::orchestrator_ensure,
-            orchestrator::orchestrator_folder_get,
-            orchestrator::orchestrator_folder_set,
-            orchestrator::orchestrator_agent_get,
-            orchestrator::orchestrator_agent_set,
-            orchestrator::orchestrator_tabs_list,
-            orchestrator::orchestrator_tab_add,
-            orchestrator::orchestrator_tab_remove,
-            orchestrator::orchestrator_tab_select,
-            orchestrator::orchestrator_tab_set_view,
             agent_control::agent_control_reply,
-            agent_control::agent_control_enabled,
-            agent_control::agent_control_set_enabled,
-            agent_control::agent_control_pane_numbers,
-            agent_control::agent_control_pane_for_number,
             agent_control::agent_control_pane_closed,
-            agent_control::agent_handle_check,
-            agent_control::agent_handle_default,
-            agent_skills_commands::agent_skill_provision,
-            agent_skills_commands::agent_skill_provision_startup,
-            agent_skills_commands::agent_skill_status,
-            commands::note_get,
-            commands::note_set,
-            commands::telemetry_record_turn,
-            commands::telemetry_buckets,
-            commands::telemetry_totals,
-            commands::telemetry_list_turns,
             commands::fs_reveal_in_folder,
             pr_poller::pr_poller_set_config,
             pr_poller::pr_poller_refresh,
@@ -1636,7 +1610,6 @@ pub fn run() {
             dev_environments::list_dev_environments,
             dev_environments::launch_dev_environment,
             prompt_attachments::prompt_attachment_from_clipboard,
-            prompt_actions::prompt_actions_list,
             file_windows::file_window_open,
             file_windows::file_window_info,
             file_windows::file_window_set_view,
@@ -1649,32 +1622,6 @@ pub fn run() {
             file_windows::file_windows_raise,
             file_windows::file_windows_list,
             file_windows::file_window_focus,
-            prompt_actions::prompt_action_create,
-            prompt_actions::prompt_action_update,
-            prompt_actions::prompt_action_delete,
-            prompt_actions::prompt_actions_reorder,
-            env_vars_commands::env_list,
-            env_vars_commands::env_bundle_create,
-            env_vars_commands::env_bundle_rename,
-            env_vars_commands::env_bundle_set_injected,
-            env_vars_commands::env_bundle_clear_injected,
-            env_vars_commands::env_injected_summary,
-            env_vars_commands::env_bundle_delete,
-            env_vars_commands::env_vars_upsert,
-            env_vars_commands::env_vars_upsert_many,
-            env_vars_commands::env_export_to_path,
-            env_vars_commands::env_vars_delete,
-            env_vars_commands::env_vars_reveal,
-            env_vars_commands::env_vars_reorder,
-            env_vars_commands::env_retry_key,
-            agent_registry::list_installed_agent_commands,
-            agent_registry::agents_claim_seeding,
-            agent_registry::agents_path_is_resolved,
-            agent_registry::agents_commit_seeding,
-            commands::agent_hooks_provision,
-            commands::agent_hooks_provision_startup,
-            commands::ensure_agent_hooks,
-            commands::agent_hook_status,
             updater::updater_check,
             updater::updater_download,
             updater::updater_install_now,

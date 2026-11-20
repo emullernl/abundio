@@ -175,6 +175,10 @@ struct ServerHost {
     git: git_scheduler::GitScheduler,
     worktrees: worktree_watcher::WorktreeWatcher,
     search: search::SearchManager,
+    prompt_actions: abundio_core::prompt_actions::PromptActionStore,
+    handles: abundio_core::agent_names::HandleReservations,
+    hooks_guard: agent_hooks::StartupProvisionGuard,
+    skill_guard: abundio_core::agent_skills::SkillStartupGuard,
 }
 
 impl ServerHost {
@@ -198,6 +202,10 @@ impl ServerHost {
                 git: &self.git,
                 worktrees: &self.worktrees,
                 search: &self.search,
+                prompt_actions: &self.prompt_actions,
+                handles: &self.handles,
+                hooks_guard: &self.hooks_guard,
+                skill_guard: &self.skill_guard,
             };
             match abundio_core::host_api::dispatch(&host, client, command, args.clone()) {
                 Some(result) => result
@@ -347,6 +355,10 @@ fn run(data_dir: PathBuf) -> Result<(), String> {
         git: git_scheduler::GitScheduler::new(change_hub),
         worktrees: worktree_watcher::WorktreeWatcher::new(),
         search: search::SearchManager::new(),
+        prompt_actions: abundio_core::prompt_actions::PromptActionStore::new(open_db()?),
+        handles: Default::default(),
+        hooks_guard: Default::default(),
+        skill_guard: Default::default(),
     });
     #[cfg(unix)]
     {

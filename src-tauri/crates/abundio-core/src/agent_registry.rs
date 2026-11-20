@@ -1,15 +1,13 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tauri::State;
 
-use crate::dev_environments::find_in_path;
+use crate::shell_env::find_in_path;
 use crate::error::AbundioError;
 use crate::workspace_store::WorkspaceStore;
 
 /// Returns the subset of `commands` whose binary is found on `$PATH`
 /// (plus `/usr/local/bin` and `/opt/homebrew/bin` on macOS).
 /// Pure filesystem check — no subprocesses spawned.
-#[tauri::command]
 pub fn list_installed_agent_commands(commands: Vec<String>) -> Vec<String> {
     commands
         .into_iter()
@@ -22,7 +20,6 @@ pub fn list_installed_agent_commands(commands: Vec<String>) -> Vec<String> {
 /// Resolves the path first if nothing has yet, which can block for up to the
 /// shell timeout, so it is a sync command: Tauri runs those off the async
 /// runtime, where a blocking wait cannot park a Tokio worker.
-#[tauri::command]
 pub fn agents_path_is_resolved() -> bool {
     crate::shell_env::shell_path_is_resolved()
 }
@@ -47,9 +44,8 @@ static SEEDING_CLAIMED_THIS_LAUNCH: AtomicBool = AtomicBool::new(false);
 /// Callers must scan `$PATH` first and claim only once the scan has found
 /// something. An empty scan is read as a failed scan, never as a machine with
 /// no Agents.
-#[tauri::command]
-pub async fn agents_claim_seeding(
-    store: State<'_, WorkspaceStore>,
+pub fn agents_claim_seeding(
+    store: &WorkspaceStore,
 ) -> Result<bool, AbundioError> {
     if store.agent_seeding_is_done()? {
         return Ok(false);
@@ -59,9 +55,8 @@ pub async fn agents_claim_seeding(
 }
 
 /// Spends the claim, now that a seed has actually been applied. Idempotent.
-#[tauri::command]
-pub async fn agents_commit_seeding(
-    store: State<'_, WorkspaceStore>,
+pub fn agents_commit_seeding(
+    store: &WorkspaceStore,
 ) -> Result<(), AbundioError> {
     store.mark_agent_seeding_done()
 }

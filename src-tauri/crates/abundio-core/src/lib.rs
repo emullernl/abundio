@@ -7,6 +7,7 @@
 
 pub mod agent_hooks;
 pub mod agent_names;
+pub mod agent_registry;
 pub mod agent_skills;
 pub mod app_paths;
 pub mod change_hub;
@@ -16,6 +17,7 @@ pub mod control_protocol;
 pub mod db_open;
 pub mod env_crypto;
 pub mod env_vars;
+pub mod env_vars_commands;
 pub mod error;
 pub mod event_sink;
 pub mod events;
@@ -35,10 +37,12 @@ pub mod host_protocol;
 pub mod layout_ops;
 pub mod layout_store;
 pub mod migrations;
+pub mod orchestrator;
 pub mod owner_map;
 pub mod pane_facts;
 pub mod process_monitor;
 pub mod profile_store;
+pub mod prompt_actions;
 pub mod pty_manager;
 pub mod screen;
 pub mod search;

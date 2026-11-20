@@ -6,7 +6,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use tauri::State;
 
 use crate::error::AbundioError;
 use crate::prompt_actions::PromptActionStore;
@@ -302,19 +301,17 @@ pub fn forget_folder_at(root: &Path, folder: &Path) {
 }
 
 // ── Commands ──
-
-#[tauri::command]
-pub async fn orchestrator_ensure(
-    app: tauri::AppHandle,
-    store: State<'_, WorkspaceStore>,
-    actions: State<'_, PromptActionStore>,
+pub fn orchestrator_ensure(
+    events: &crate::event_sink::Events,
+    store: &WorkspaceStore,
+    actions: &PromptActionStore,
     profile_id: String,
 ) -> Result<WorkspaceWithTabs, AbundioError> {
-    let ws = ensure(&store, &crate::app_paths::shared_root(), &profile_id)?;
+    let ws = ensure(store, &crate::app_paths::shared_root(), &profile_id)?;
     // The suggested questions, the first time any Orchestrator is set up. A
     // failure here must not keep the Orchestrator from starting.
     match actions.seed_orchestrator_actions() {
-        Ok(true) => crate::prompt_actions::broadcast(&app),
+        Ok(true) => crate::prompt_actions::broadcast(events),
         Ok(false) => {}
         Err(e) => log::warn!("[orchestrator] could not seed prompt actions: {e}"),
     }
@@ -341,52 +338,45 @@ fn describe(store: &WorkspaceStore, root: &Path, profile_id: &str, path: PathBuf
         path: path.to_string_lossy().into_owned(),
     })
 }
-
-#[tauri::command]
-pub async fn orchestrator_folder_get(
-    store: State<'_, WorkspaceStore>,
+pub fn orchestrator_folder_get(
+    store: &WorkspaceStore,
     profile_id: String,
 ) -> Result<OrchestratorFolder, AbundioError> {
     let root = crate::app_paths::shared_root();
     // Not set up yet: where it would go, without making anything.
     let path = match store.orchestrator_folder_of(&profile_id)? {
         Some(f) => PathBuf::from(f),
-        None => new_default(&store, &root, &profile_id)?,
+        None => new_default(store, &root, &profile_id)?,
     };
-    describe(&store, &root, &profile_id, path)
+    describe(store, &root, &profile_id, path)
 }
 
 /// Chooses the Profile's Orchestrator folder (`None`: back to the default),
 /// then tells every Window, so the one running it restarts it there.
-#[tauri::command]
-pub async fn orchestrator_folder_set(
-    app: tauri::AppHandle,
-    store: State<'_, WorkspaceStore>,
+pub fn orchestrator_folder_set(
+    events: &crate::event_sink::Events,
+    store: &WorkspaceStore,
     profile_id: String,
     path: Option<String>,
 ) -> Result<OrchestratorFolder, AbundioError> {
-    use tauri::Emitter;
+    use crate::event_sink::EventsExt;
     let root = crate::app_paths::shared_root();
-    let folder = set_folder(&store, &root, &profile_id, path.as_deref().map(Path::new))?;
-    let out = describe(&store, &root, &profile_id, folder)?;
-    let _ = app.emit(
+    let folder = set_folder(store, &root, &profile_id, path.as_deref().map(Path::new))?;
+    let out = describe(store, &root, &profile_id, folder)?;
+    events.broadcast(
         "orchestrator-folder-changed",
         serde_json::json!({ "profileId": profile_id, "path": out.path }),
     );
     Ok(out)
 }
-
-#[tauri::command]
-pub async fn orchestrator_agent_get(
-    store: State<'_, WorkspaceStore>,
+pub fn orchestrator_agent_get(
+    store: &WorkspaceStore,
     profile_id: String,
 ) -> Result<Option<String>, AbundioError> {
     store.orchestrator_agent(&profile_id)
 }
-
-#[tauri::command]
-pub async fn orchestrator_agent_set(
-    store: State<'_, WorkspaceStore>,
+pub fn orchestrator_agent_set(
+    store: &WorkspaceStore,
     profile_id: String,
     agent_id: Option<String>,
 ) -> Result<(), AbundioError> {
@@ -401,19 +391,15 @@ pub struct OrchestratorTabs {
     pub tabs: Vec<OrchestratorTab>,
     pub selected: Option<String>,
 }
-
-#[tauri::command]
-pub async fn orchestrator_tabs_list(
-    store: State<'_, WorkspaceStore>,
+pub fn orchestrator_tabs_list(
+    store: &WorkspaceStore,
     profile_id: String,
 ) -> Result<OrchestratorTabs, AbundioError> {
     let (tabs, selected) = store.orchestrator_tabs(&profile_id)?;
     Ok(OrchestratorTabs { tabs, selected })
 }
-
-#[tauri::command]
-pub async fn orchestrator_tab_add(
-    store: State<'_, WorkspaceStore>,
+pub fn orchestrator_tab_add(
+    store: &WorkspaceStore,
     profile_id: String,
     mut tab: NewOrchestratorTab,
 ) -> Result<OrchestratorTab, AbundioError> {
@@ -430,7 +416,7 @@ pub async fn orchestrator_tab_add(
 /// with no `..` and not absolute.
 pub fn checked_tab_path(root: &Path, kind: &str, path: &str) -> Result<String, AbundioError> {
     if kind == "file" {
-        return crate::agent_control::resolve_workspace_file(root, None, path, true)
+        return crate::control_protocol::resolve_workspace_file(root, None, path, true)
             .map(|(absolute, _)| absolute)
             .map_err(|(_, why)| AbundioError::InvalidOperation(why));
     }
@@ -444,29 +430,23 @@ pub fn checked_tab_path(root: &Path, kind: &str, path: &str) -> Result<String, A
     }
     Ok(path.to_string())
 }
-
-#[tauri::command]
-pub async fn orchestrator_tab_remove(
-    store: State<'_, WorkspaceStore>,
+pub fn orchestrator_tab_remove(
+    store: &WorkspaceStore,
     profile_id: String,
     id: String,
 ) -> Result<(), AbundioError> {
     store.remove_orchestrator_tab(&profile_id, &id)
 }
-
-#[tauri::command]
-pub async fn orchestrator_tab_set_view(
-    store: State<'_, WorkspaceStore>,
+pub fn orchestrator_tab_set_view(
+    store: &WorkspaceStore,
     profile_id: String,
     id: String,
-    view: crate::file_windows::MarkdownView,
+    view: crate::workspace_store::MarkdownView,
 ) -> Result<(), AbundioError> {
     store.set_orchestrator_tab_view(&profile_id, &id, view)
 }
-
-#[tauri::command]
-pub async fn orchestrator_tab_select(
-    store: State<'_, WorkspaceStore>,
+pub fn orchestrator_tab_select(
+    store: &WorkspaceStore,
     profile_id: String,
     id: Option<String>,
 ) -> Result<(), AbundioError> {
@@ -755,7 +735,7 @@ mod tests {
 
     #[test]
     fn a_file_tabs_view_is_remembered() {
-        use crate::file_windows::MarkdownView::{Rendered, Source};
+        use crate::workspace_store::MarkdownView::{Rendered, Source};
         let store = test_store();
         let ws = store.create("w", "/w", PID).unwrap().workspace.id;
         let new = |view| NewOrchestratorTab {
@@ -807,7 +787,7 @@ mod tests {
              INSERT INTO orchestrator_tabs (id, preview) VALUES ('p', 1), ('q', 0);",
         )
         .unwrap();
-        conn.execute_batch(include_str!("../crates/abundio-core/migrations/024_orchestrator_tab_view.sql"))
+        conn.execute_batch(include_str!("../migrations/024_orchestrator_tab_view.sql"))
             .unwrap();
         let view = |id: &str| -> Option<String> {
             conn.query_row("SELECT view FROM orchestrator_tabs WHERE id = ?1", [id], |r| r.get(0))

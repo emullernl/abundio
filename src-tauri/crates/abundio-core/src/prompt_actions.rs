@@ -31,7 +31,6 @@ use std::sync::Mutex;
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use tauri::{Emitter, State};
 use uuid::Uuid;
 
 use crate::error::AbundioError;
@@ -476,61 +475,50 @@ fn now() -> i64 {
 // ── IPC ──
 
 /// Tells every Window the list moved. Payload-free by design (ADR-0039).
-pub(crate) fn broadcast(app: &tauri::AppHandle) {
-    if let Err(e) = app.emit(PROMPT_ACTIONS_CHANGED, ()) {
-        log::warn!("[prompt-actions] could not broadcast change: {e}");
-    }
+pub fn broadcast(events: &crate::event_sink::Events) {
+    use crate::event_sink::EventsExt;
+    events.broadcast(PROMPT_ACTIONS_CHANGED, ());
 }
-
-#[tauri::command]
 pub fn prompt_actions_list(
-    store: State<'_, PromptActionStore>,
+    store: &PromptActionStore,
 ) -> Result<Vec<PromptAction>, AbundioError> {
     store.list()
 }
-
-#[tauri::command]
 pub fn prompt_action_create(
-    app: tauri::AppHandle,
-    store: State<'_, PromptActionStore>,
+    events: &crate::event_sink::Events,
+    store: &PromptActionStore,
     action: PromptActionCreate,
 ) -> Result<PromptAction, AbundioError> {
     let created = store.create(action)?;
-    broadcast(&app);
+    broadcast(events);
     Ok(created)
 }
-
-#[tauri::command]
 pub fn prompt_action_update(
-    app: tauri::AppHandle,
-    store: State<'_, PromptActionStore>,
+    events: &crate::event_sink::Events,
+    store: &PromptActionStore,
     id: String,
     updates: PromptActionUpdate,
 ) -> Result<PromptAction, AbundioError> {
     let updated = store.update(&id, updates)?;
-    broadcast(&app);
+    broadcast(events);
     Ok(updated)
 }
-
-#[tauri::command]
 pub fn prompt_action_delete(
-    app: tauri::AppHandle,
-    store: State<'_, PromptActionStore>,
+    events: &crate::event_sink::Events,
+    store: &PromptActionStore,
     id: String,
 ) -> Result<(), AbundioError> {
     store.delete(&id)?;
-    broadcast(&app);
+    broadcast(events);
     Ok(())
 }
-
-#[tauri::command]
 pub fn prompt_actions_reorder(
-    app: tauri::AppHandle,
-    store: State<'_, PromptActionStore>,
+    events: &crate::event_sink::Events,
+    store: &PromptActionStore,
     ids: Vec<String>,
 ) -> Result<(), AbundioError> {
     store.reorder(&ids)?;
-    broadcast(&app);
+    broadcast(events);
     Ok(())
 }
 

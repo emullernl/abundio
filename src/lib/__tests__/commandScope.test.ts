@@ -23,7 +23,9 @@ function rustHandlers(): string[] {
 describe("command scope", () => {
 	it("finds the commands it checks", () => {
 		expect(ipcCommands().length).toBeGreaterThan(100);
-		expect(rustHandlers().length).toBeGreaterThan(100);
+		// Most host commands run through `host_call` now (phase 7b).
+		expect(rustHandlers().length).toBeGreaterThan(40);
+		expect(HOST_API_COMMANDS.size).toBeGreaterThan(100);
 	});
 
 	it("labels every command ipc.ts invokes", () => {

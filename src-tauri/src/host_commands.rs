@@ -43,6 +43,10 @@ fn with_host<R>(app: &AppHandle, f: impl FnOnce(&Host) -> R) -> R {
     let git = app.state::<crate::git_scheduler::GitScheduler>();
     let worktrees = app.state::<crate::worktree_watcher::WorktreeWatcher>();
     let search = app.state::<crate::search::SearchManager>();
+    let prompt_actions = app.state::<crate::prompt_actions::PromptActionStore>();
+    let handles = app.state::<crate::agent_names::HandleReservations>();
+    let hooks_guard = app.state::<crate::agent_hooks::StartupProvisionGuard>();
+    let skill_guard = app.state::<crate::agent_skills::SkillStartupGuard>();
     f(&Host {
         workspaces: &workspaces,
         ptys: &ptys,
@@ -58,6 +62,10 @@ fn with_host<R>(app: &AppHandle, f: impl FnOnce(&Host) -> R) -> R {
         git: &git,
         worktrees: &worktrees,
         search: &search,
+        prompt_actions: &prompt_actions,
+        handles: &handles,
+        hooks_guard: &hooks_guard,
+        skill_guard: &skill_guard,
     })
 }
 

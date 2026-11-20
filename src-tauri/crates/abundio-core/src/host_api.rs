@@ -44,6 +44,12 @@ pub struct Host<'a> {
     pub git: &'a crate::git_scheduler::GitScheduler,
     pub worktrees: &'a crate::worktree_watcher::WorktreeWatcher,
     pub search: &'a crate::search::SearchManager,
+    pub prompt_actions: &'a crate::prompt_actions::PromptActionStore,
+    pub handles: &'a crate::agent_names::HandleReservations,
+    /// Once per process: the first Window's start provisions hooks and the
+    /// skill; the rest find it done.
+    pub hooks_guard: &'a crate::agent_hooks::StartupProvisionGuard,
+    pub skill_guard: &'a crate::agent_skills::SkillStartupGuard,
 }
 
 fn bad_args(command: &str, e: serde_json::Error) -> AbundioError {
@@ -117,6 +123,8 @@ pub fn dispatch(host: &Host, client: &ClientId, command: &str, raw: Value) -> Op
 
 fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Option<Value>, AbundioError> {
     use crate::file_explorer as fe;
+    use crate::orchestrator as orch;
+    use crate::prompt_actions as pa;
     use crate::git_commands as gc;
     use crate::pty_manager::PtyManager;
     use crate::worktree_commands as wt;
@@ -375,9 +383,236 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
             host.worktrees.set_watched(host.events, client.as_str(), dirs);
             Value::Null
         }
+        // ── Environment variables ──
+        c if c.starts_with("env_") => return env(host, c, raw).map(Some),
+
+        // ── Agents ──
+        "list_installed_agent_commands" => {
+            json(crate::agent_registry::list_installed_agent_commands(a!(c, raw, { commands: Vec<String> }).commands))?
+        }
+        "agents_path_is_resolved" => json(crate::agent_registry::agents_path_is_resolved())?,
+        "agents_claim_seeding" => json(crate::agent_registry::agents_claim_seeding(host.workspaces)?)?,
+        "agents_commit_seeding" => json(crate::agent_registry::agents_commit_seeding(host.workspaces)?)?,
+        "agent_hook_status" => json(crate::agent_hooks::agent_hook_status()?)?,
+        "agent_hooks_provision" => {
+            let a = a!(c, raw, { enabled: bool, enabled_agents: Vec<String> });
+            json(crate::agent_hooks::provision(a.enabled, &a.enabled_agents)?)?
+        }
+        "agent_hooks_provision_startup" => {
+            let a = a!(c, raw, { enabled: bool, enabled_agents: Vec<String> });
+            if host.hooks_guard.claim() {
+                // The invisible path: leave a breadcrumb where a dev can see it.
+                log::info!("startup hook provisioning: enabled={}, agents={:?}", a.enabled, a.enabled_agents);
+                if let Err(e) = crate::agent_hooks::provision(a.enabled, &a.enabled_agents) {
+                    log::warn!("startup hook provisioning failed: {e}");
+                    return Err(e);
+                }
+            }
+            Value::Null
+        }
+        "ensure_agent_hooks" => {
+            let a = a!(c, raw, { agent_id: String, enabled: bool });
+            json(crate::agent_hooks::ensure_agent_hooks(&a.agent_id, a.enabled)?)?
+        }
+        "agent_skill_provision" => {
+            let a = a!(c, raw, { enabled: bool, enabled_agents: Vec<String> });
+            let paths = crate::agent_skills::SkillPaths::for_user()?;
+            json(crate::agent_skills::provision_at(&paths, a.enabled, &a.enabled_agents)?)?
+        }
+        "agent_skill_provision_startup" => {
+            let a = a!(c, raw, { enabled: bool, enabled_agents: Vec<String> });
+            if host.skill_guard.claim() {
+                log::info!("startup skill provisioning: enabled={}", a.enabled);
+                let paths = crate::agent_skills::SkillPaths::for_user()?;
+                if let Err(e) = crate::agent_skills::provision_at(&paths, a.enabled, &a.enabled_agents) {
+                    log::warn!("startup skill provisioning: {e}");
+                    return Err(e);
+                }
+            }
+            Value::Null
+        }
+        "agent_skill_status" => json(crate::agent_skills::status_at(&crate::agent_skills::SkillPaths::for_user()?))?,
+        "agent_handle_check" => {
+            let a = a!(c, raw, { workspace_id: String, pane_id: String, handle: String });
+            json(host.handles.check(host.workspaces, &a.workspace_id, &a.pane_id, &a.handle)?)?
+        }
+        "agent_handle_default" => {
+            let a = a!(c, raw, { workspace_id: String, pane_id: String });
+            json(host.handles.take_default(host.workspaces, &a.workspace_id, &a.pane_id)?)?
+        }
+        "agent_control_enabled" => json(crate::control_protocol::enabled(host.workspaces))?,
+        "agent_control_set_enabled" => {
+            let on = a!(c, raw, { enabled: bool }).enabled;
+            json(host.workspaces.set_setting(crate::control_protocol::SETTING_KEY, if on { "1" } else { "0" })?)?
+        }
+        "agent_control_pane_numbers" => {
+            let a = a!(c, raw, { workspace_id: String, pane_ids: Vec<String> });
+            json(host.workspaces.pane_numbers(&a.workspace_id, &a.pane_ids)?)?
+        }
+        "agent_control_pane_for_number" => {
+            let a = a!(c, raw, { workspace_id: String, number: u32 });
+            json(host.workspaces.pane_for_number(&a.workspace_id, a.number)?)?
+        }
+
+        // ── Prompt actions ──
+        "prompt_actions_list" => json(pa::prompt_actions_list(host.prompt_actions)?)?,
+        "prompt_action_create" => {
+            let action = a!(c, raw, { action: pa::PromptActionCreate }).action;
+            json(pa::prompt_action_create(host.events, host.prompt_actions, action)?)?
+        }
+        "prompt_action_update" => {
+            let a = a!(c, raw, { id: String, updates: pa::PromptActionUpdate });
+            json(pa::prompt_action_update(host.events, host.prompt_actions, a.id, a.updates)?)?
+        }
+        "prompt_action_delete" => {
+            json(pa::prompt_action_delete(host.events, host.prompt_actions, a!(c, raw, { id: String }).id)?)?
+        }
+        "prompt_actions_reorder" => {
+            json(pa::prompt_actions_reorder(host.events, host.prompt_actions, a!(c, raw, { ids: Vec<String> }).ids)?)?
+        }
+
+        // ── Notes and statistics ──
+        "note_get" => json(host.workspaces.get_note(&a!(c, raw, { workspace_id: String }).workspace_id)?)?,
+        "note_set" => {
+            let a = a!(c, raw, { workspace_id: String, content: String });
+            json(host.workspaces.set_note(&a.workspace_id, &a.content)?)?
+        }
+        "telemetry_record_turn" => {
+            json(host.workspaces.record_agent_turn(&a!(c, raw, { turn: crate::workspace_store::AgentTurnRecord }).turn)?)?
+        }
+        "telemetry_list_turns" => {
+            let a = a!(c, raw, { profile_id: String, from_ms: i64, to_ms: i64 });
+            json(host.workspaces.list_agent_turns(&a.profile_id, a.from_ms, a.to_ms)?)?
+        }
+        "telemetry_totals" => {
+            let a = a!(c, raw, { profile_id: String, from_ms: i64, to_ms: i64 });
+            json(host.workspaces.agent_turn_totals(&a.profile_id, a.from_ms, a.to_ms)?)?
+        }
+        "telemetry_buckets" => {
+            let a = a!(c, raw, { profile_id: String, from_ms: i64, to_ms: i64, bucket: String, group_by: String });
+            json(host.workspaces.agent_turn_buckets(
+                &a.profile_id,
+                a.from_ms,
+                a.to_ms,
+                crate::workspace_store::Bucket::parse(&a.bucket)?,
+                crate::workspace_store::GroupBy::parse(&a.group_by)?,
+            )?)?
+        }
+
+        // ── The Orchestrator ──
+        "orchestrator_ensure" => {
+            let profile_id = a!(c, raw, { profile_id: String }).profile_id;
+            json(orch::orchestrator_ensure(host.events, host.workspaces, host.prompt_actions, profile_id)?)?
+        }
+        "orchestrator_folder_get" => {
+            json(orch::orchestrator_folder_get(host.workspaces, a!(c, raw, { profile_id: String }).profile_id)?)?
+        }
+        "orchestrator_folder_set" => {
+            let a = a!(c, raw, { profile_id: String, path: Option<String> });
+            json(orch::orchestrator_folder_set(host.events, host.workspaces, a.profile_id, a.path)?)?
+        }
+        "orchestrator_agent_get" => {
+            json(orch::orchestrator_agent_get(host.workspaces, a!(c, raw, { profile_id: String }).profile_id)?)?
+        }
+        "orchestrator_agent_set" => {
+            let a = a!(c, raw, { profile_id: String, agent_id: Option<String> });
+            json(orch::orchestrator_agent_set(host.workspaces, a.profile_id, a.agent_id)?)?
+        }
+        "orchestrator_tabs_list" => {
+            json(orch::orchestrator_tabs_list(host.workspaces, a!(c, raw, { profile_id: String }).profile_id)?)?
+        }
+        "orchestrator_tab_add" => {
+            let a = a!(c, raw, { profile_id: String, tab: crate::workspace_store::NewOrchestratorTab });
+            json(orch::orchestrator_tab_add(host.workspaces, a.profile_id, a.tab)?)?
+        }
+        "orchestrator_tab_remove" => {
+            let a = a!(c, raw, { profile_id: String, id: String });
+            json(orch::orchestrator_tab_remove(host.workspaces, a.profile_id, a.id)?)?
+        }
+        "orchestrator_tab_select" => {
+            let a = a!(c, raw, { profile_id: String, id: Option<String> });
+            json(orch::orchestrator_tab_select(host.workspaces, a.profile_id, a.id)?)?
+        }
+        "orchestrator_tab_set_view" => {
+            let a = a!(c, raw, { profile_id: String, id: String, view: crate::workspace_store::MarkdownView });
+            json(orch::orchestrator_tab_set_view(host.workspaces, a.profile_id, a.id, a.view)?)?
+        }
         _ => return Ok(None),
     };
     Ok(Some(out))
+}
+
+/// The Environment Bundle commands (ADR-0024). Plaintext still crosses only
+/// one variable at a time (`env_vars_reveal`).
+fn env(host: &Host, c: &str, raw: Value) -> Result<Value, AbundioError> {
+    use crate::env_vars_commands as ev;
+    if c == "env_retry_key" {
+        return json(ev::env_retry_key());
+    }
+    let store = host
+        .env
+        .ok_or_else(|| AbundioError::InvalidOperation("environment variables are unavailable on this Host".into()))?;
+    match c {
+        "env_list" => {
+            let a = a!(c, raw, { workspace_id: String, inherit_from_workspace_id: Option<String>, bundle: Option<String> });
+            json(ev::env_list(store, a.workspace_id, a.inherit_from_workspace_id, a.bundle)?)
+        }
+        "env_bundle_create" => {
+            let a = a!(c, raw, { workspace_id: String, inherit_from_workspace_id: Option<String>, name: String });
+            json(ev::env_bundle_create(store, a.workspace_id, a.inherit_from_workspace_id, a.name)?)
+        }
+        "env_bundle_rename" => {
+            let a = a!(c, raw, { workspace_id: String, from: String, to: String });
+            json(ev::env_bundle_rename(store, a.workspace_id, a.from, a.to)?)
+        }
+        "env_bundle_set_injected" => {
+            let a = a!(c, raw, { workspace_id: String, inherit_from_workspace_id: Option<String>, name: String });
+            json(ev::env_bundle_set_injected(store, a.workspace_id, a.inherit_from_workspace_id, a.name)?)
+        }
+        "env_bundle_clear_injected" => {
+            json(ev::env_bundle_clear_injected(store, a!(c, raw, { workspace_id: String }).workspace_id)?)
+        }
+        "env_injected_summary" => {
+            let a = a!(c, raw, { workspace_id: String, inherit_from_workspace_id: Option<String> });
+            json(ev::env_injected_summary(store, a.workspace_id, a.inherit_from_workspace_id)?)
+        }
+        "env_bundle_delete" => {
+            let a = a!(c, raw, { workspace_id: String, name: String });
+            json(ev::env_bundle_delete(store, a.workspace_id, a.name)?)
+        }
+        "env_vars_upsert" => {
+            let a = a!(c, raw, {
+                workspace_id: String, inherit_from_workspace_id: Option<String>, bundle: String, name: String, value: String,
+            });
+            json(ev::env_vars_upsert(store, a.workspace_id, a.inherit_from_workspace_id, a.bundle, a.name, a.value)?)
+        }
+        "env_vars_upsert_many" => {
+            let a = a!(c, raw, {
+                workspace_id: String, inherit_from_workspace_id: Option<String>, bundle: String,
+                entries: Vec<crate::env_vars::EnvVarInput>,
+            });
+            json(ev::env_vars_upsert_many(store, a.workspace_id, a.inherit_from_workspace_id, a.bundle, a.entries)?)
+        }
+        "env_vars_delete" => {
+            let a = a!(c, raw, { workspace_id: String, bundle: String, name: String });
+            json(ev::env_vars_delete(store, a.workspace_id, a.bundle, a.name)?)
+        }
+        "env_vars_reveal" => {
+            let a = a!(c, raw, {
+                workspace_id: String, inherit_from_workspace_id: Option<String>, bundle: String, name: String,
+            });
+            json(ev::env_vars_reveal(store, a.workspace_id, a.inherit_from_workspace_id, a.bundle, a.name)?)
+        }
+        "env_vars_reorder" => {
+            let a = a!(c, raw, { workspace_id: String, bundle: String, names: Vec<String> });
+            json(ev::env_vars_reorder(store, a.workspace_id, a.bundle, a.names)?)
+        }
+        "env_export_to_path" => {
+            let a = a!(c, raw, { workspace_id: String, bundle: String, workspace_name: String, path: String });
+            json(ev::env_export_to_path(store, a.workspace_id, a.bundle, a.workspace_name, a.path)?)
+        }
+        _ => Err(AbundioError::NotFound(format!("no host command {c}"))),
+    }
 }
 
 fn tabs_changed(host: &Host, client: &ClientId, workspace_id: &str, profile_id: &str) {
@@ -461,6 +696,14 @@ pub fn may_block(command: &str) -> bool {
         || command.starts_with("gh_")
         || command.starts_with("worktree_")
         || command == "list_repo_worktrees"
+        // The credential store can wait on a keychain prompt; a login shell's
+        // PATH on its timeout; provisioning and the Orchestrator write files.
+        || command.starts_with("env_")
+        || command.starts_with("agent_hook")
+        || command.starts_with("agent_skill")
+        || command.starts_with("agents_")
+        || command.starts_with("orchestrator_")
+        || matches!(command, "ensure_agent_hooks" | "list_installed_agent_commands")
 }
 
 #[cfg(test)]
@@ -503,6 +746,10 @@ mod tests {
         git: crate::git_scheduler::GitScheduler,
         worktrees: crate::worktree_watcher::WorktreeWatcher,
         search: crate::search::SearchManager,
+        prompt_actions: crate::prompt_actions::PromptActionStore,
+        handles: crate::agent_names::HandleReservations,
+        hooks_guard: crate::agent_hooks::StartupProvisionGuard,
+        skill_guard: crate::agent_skills::SkillStartupGuard,
     }
 
     const PID: &str = "00000000-0000-0000-0000-000000000001";
@@ -525,6 +772,14 @@ mod tests {
             git: crate::git_scheduler::GitScheduler::new(Default::default()),
             worktrees: crate::worktree_watcher::WorktreeWatcher::new(),
             search: crate::search::SearchManager::new(),
+            prompt_actions: {
+                let conn = rusqlite::Connection::open_in_memory().unwrap();
+                crate::migrations::run_migrations(&conn).unwrap();
+                crate::prompt_actions::PromptActionStore::new(conn)
+            },
+            handles: Default::default(),
+            hooks_guard: Default::default(),
+            skill_guard: Default::default(),
         }
     }
 
@@ -544,6 +799,10 @@ mod tests {
             git: &w.git,
             worktrees: &w.worktrees,
             search: &w.search,
+            prompt_actions: &w.prompt_actions,
+            handles: &w.handles,
+            hooks_guard: &w.hooks_guard,
+            skill_guard: &w.skill_guard,
         };
         dispatch(&host, &ClientId::from(client), command, a).expect("a host command")
     }
@@ -601,6 +860,10 @@ mod tests {
             git: &w.git,
             worktrees: &w.worktrees,
             search: &w.search,
+            prompt_actions: &w.prompt_actions,
+            handles: &w.handles,
+            hooks_guard: &w.hooks_guard,
+            skill_guard: &w.skill_guard,
         };
         assert!(dispatch(&host, &ClientId::from("w1"), "open_settings_window", Value::Null).is_none());
     }
@@ -631,6 +894,10 @@ mod tests {
             git: &w.git,
             worktrees: &w.worktrees,
             search: &w.search,
+            prompt_actions: &w.prompt_actions,
+            handles: &w.handles,
+            hooks_guard: &w.hooks_guard,
+            skill_guard: &w.skill_guard,
         };
         for name in listed {
             // Missing arguments: a host command says so; any other is `None`.

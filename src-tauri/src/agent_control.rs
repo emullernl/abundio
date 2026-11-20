@@ -656,39 +656,9 @@ pub fn agent_control_reply(
     Ok(pending.reply_from(window.label(), &id, reply))
 }
 
-#[tauri::command]
-pub fn agent_control_enabled(
-    store: tauri::State<'_, crate::workspace_store::WorkspaceStore>,
-) -> Result<bool, crate::error::AbundioError> {
-    Ok(enabled(&store))
-}
 
-#[tauri::command]
-pub fn agent_control_set_enabled(
-    store: tauri::State<'_, crate::workspace_store::WorkspaceStore>,
-    enabled: bool,
-) -> Result<(), crate::error::AbundioError> {
-    store.set_setting(SETTING_KEY, if enabled { "1" } else { "0" })
-}
 
-/// The Pane numbers of `pane_ids`, claiming new ones in the order given.
-#[tauri::command]
-pub fn agent_control_pane_numbers(
-    store: tauri::State<'_, crate::workspace_store::WorkspaceStore>,
-    workspace_id: String,
-    pane_ids: Vec<String>,
-) -> Result<Vec<(String, u32)>, crate::error::AbundioError> {
-    store.pane_numbers(&workspace_id, &pane_ids)
-}
 
-#[tauri::command]
-pub fn agent_control_pane_for_number(
-    store: tauri::State<'_, crate::workspace_store::WorkspaceStore>,
-    workspace_id: String,
-    number: u32,
-) -> Result<Option<String>, crate::error::AbundioError> {
-    store.pane_for_number(&workspace_id, number)
-}
 
 // ── What Agent control reads and writes in the app (control_local.rs) ──
 
@@ -842,24 +812,5 @@ impl crate::hook_server::HookHost for AppHookHost {
 
 // ── Commands ──
 
-#[tauri::command]
-pub fn agent_handle_check(
-    store: tauri::State<'_, crate::workspace_store::WorkspaceStore>,
-    reservations: tauri::State<'_, crate::agent_names::HandleReservations>,
-    workspace_id: String,
-    pane_id: String,
-    handle: String,
-) -> Result<crate::agent_names::HandleCheck, AbundioError> {
-    reservations.check(&store, &workspace_id, &pane_id, &handle)
-}
 
-#[tauri::command]
-pub fn agent_handle_default(
-    store: tauri::State<'_, crate::workspace_store::WorkspaceStore>,
-    reservations: tauri::State<'_, crate::agent_names::HandleReservations>,
-    workspace_id: String,
-    pane_id: String,
-) -> Result<String, AbundioError> {
-    reservations.take_default(&store, &workspace_id, &pane_id)
-}
 

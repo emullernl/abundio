@@ -5,7 +5,7 @@ use crate::profile_store::{
     ActiveProfileState, BusyCounts, BusyCountsState, Profile, ProfileStore, ProfileUpdate,
 };
 use crate::workspace_store::{
-    AgentTurnBucket, AgentTurnRecord, AgentTurnTotals, Bucket, GroupBy, WorkspaceStore,
+    WorkspaceStore,
 };
 
 // ── PTY commands ──
@@ -292,22 +292,7 @@ pub async fn create_untitled_profile_in_new_window(
 
 // ── Note commands ──
 
-#[tauri::command]
-pub async fn note_get(
-    store: State<'_, WorkspaceStore>,
-    workspace_id: String,
-) -> Result<String, AbundioError> {
-    store.get_note(&workspace_id)
-}
 
-#[tauri::command]
-pub async fn note_set(
-    store: State<'_, WorkspaceStore>,
-    workspace_id: String,
-    content: String,
-) -> Result<(), AbundioError> {
-    store.set_note(&workspace_id, &content)
-}
 
 // ── Agent telemetry commands ──
 //
@@ -315,51 +300,9 @@ pub async fn note_set(
 // Statistics overlay queries Profile-scoped rollups. See
 // docs/plans/agent-turn-telemetry-and-statistics-overlay.md and ADR-0018.
 
-#[tauri::command]
-pub async fn telemetry_record_turn(
-    store: State<'_, WorkspaceStore>,
-    turn: AgentTurnRecord,
-) -> Result<(), AbundioError> {
-    store.record_agent_turn(&turn)
-}
 
-#[tauri::command]
-pub async fn telemetry_buckets(
-    store: State<'_, WorkspaceStore>,
-    profile_id: String,
-    from_ms: i64,
-    to_ms: i64,
-    bucket: String,
-    group_by: String,
-) -> Result<Vec<AgentTurnBucket>, AbundioError> {
-    store.agent_turn_buckets(
-        &profile_id,
-        from_ms,
-        to_ms,
-        Bucket::parse(&bucket)?,
-        GroupBy::parse(&group_by)?,
-    )
-}
 
-#[tauri::command]
-pub async fn telemetry_totals(
-    store: State<'_, WorkspaceStore>,
-    profile_id: String,
-    from_ms: i64,
-    to_ms: i64,
-) -> Result<AgentTurnTotals, AbundioError> {
-    store.agent_turn_totals(&profile_id, from_ms, to_ms)
-}
 
-#[tauri::command]
-pub async fn telemetry_list_turns(
-    store: State<'_, WorkspaceStore>,
-    profile_id: String,
-    from_ms: i64,
-    to_ms: i64,
-) -> Result<Vec<AgentTurnRecord>, AbundioError> {
-    store.list_agent_turns(&profile_id, from_ms, to_ms)
-}
 
 // ── PTY log commands ──
 
@@ -401,75 +344,9 @@ pub async fn list_system_fonts() -> Result<Vec<String>, AbundioError> {
 
 // ── Agent hooks ──
 
-/// Enable or disable Agent status hooks by (un)provisioning hook configs in
-/// each installed Agent's global config directory. `enabled_agents` are the
-/// agent ids whose per-agent toggle is on — only those are provisioned; the
-/// rest are stripped (so toggling one agent off removes just its hooks).
-#[tauri::command]
-pub async fn agent_hooks_provision(
-    enabled: bool,
-    enabled_agents: Vec<String>,
-) -> Result<(), AbundioError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::agent_hooks::provision(enabled, &enabled_agents)
-    })
-    .await
-    .map_err(|e| AbundioError::Io(std::io::Error::other(e.to_string())))?
-}
 
-/// Provision hooks at app startup, exactly once per process. Every Window's
-/// settings rehydrate calls this with the persisted enabled flag and the set of
-/// per-agent-enabled ids; the guard makes only the first call do the work, so N
-/// Windows don't each rewrite the same global config files. See ADR-0003
-/// (Revisited).
-#[tauri::command]
-pub async fn agent_hooks_provision_startup(
-    enabled: bool,
-    enabled_agents: Vec<String>,
-    guard: State<'_, crate::agent_hooks::StartupProvisionGuard>,
-) -> Result<(), AbundioError> {
-    if !guard.claim() {
-        return Ok(());
-    }
-    // Startup provisioning is the invisible path — when it silently doesn't
-    // run, hooks quietly stay stale (frontend console errors live in the
-    // webview, not the terminal). Leave a breadcrumb where a dev can see it.
-    eprintln!(
-        "[abundio] startup hook provisioning: enabled={enabled}, agents={enabled_agents:?}"
-    );
-    tauri::async_runtime::spawn_blocking(move || {
-        let result = crate::agent_hooks::provision(enabled, &enabled_agents);
-        if let Err(e) = &result {
-            eprintln!("[abundio] startup hook provisioning failed: {e}");
-        }
-        result
-    })
-    .await
-    .map_err(|e| AbundioError::Io(std::io::Error::other(e.to_string())))?
-}
 
-/// Register hooks for a single Agent on demand if they aren't already, creating
-/// the Agent's config dir if needed. Called when an Agent is launched so a
-/// mid-session install gets hooks without restarting. Returns whether it
-/// provisioned. No-op when hooks are disabled or the Agent is unsupported.
-#[tauri::command]
-pub async fn ensure_agent_hooks(agent_id: String, enabled: bool) -> Result<bool, AbundioError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::agent_hooks::ensure_agent_hooks(&agent_id, enabled)
-    })
-    .await
-    .map_err(|e| AbundioError::Io(std::io::Error::other(e.to_string())))?
-}
 
-/// Read-only per-Agent provisioning footprint (config path, ownership, hooked
-/// events, registration state) for the Settings UI.
-#[tauri::command]
-pub async fn agent_hook_status(
-) -> Result<Vec<crate::agent_hooks::AgentHookStatus>, AbundioError> {
-    tauri::async_runtime::spawn_blocking(crate::agent_hooks::agent_hook_status)
-        .await
-        .map_err(|e| AbundioError::Io(std::io::Error::other(e.to_string())))?
-}
 
 /// Show a file in the desktop's file manager: always this computer's
 /// (a remote Workspace hides it).
