@@ -1,6 +1,7 @@
 import { CloudOff } from "lucide-react";
 import { useEffect, useState } from "react";
 import { hostsApi, listenToThisWindow } from "../lib/ipc";
+import { isMac } from "../lib/platform";
 import { useProfileStore } from "../stores/profileStore";
 import { primaryButtonClass } from "./PromptActions/fieldStyles";
 
@@ -10,6 +11,9 @@ import { primaryButtonClass } from "./PromptActions/fieldStyles";
  * "Sign in needed" here instead of raising a prompt. Sign in connects with
  * Abundio's SSH dialog; the Window loads again once connected.
  */
+/** Below the macOS title bar strip (fixed, drawn over the layout). */
+const TOP = (isMac ? 28 : 0) + 10;
+
 export function RemoteHostBanner() {
 	const remote = useProfileStore((s) => s.remote);
 	const error = useProfileStore((s) => s.remoteError);
@@ -46,17 +50,26 @@ export function RemoteHostBanner() {
 	return (
 		<div
 			role="status"
-			className="flex items-center gap-3 flex-shrink-0"
+			className="fixed z-[60] flex items-center gap-3 rounded-lg"
 			style={{
-				padding: "8px 14px",
+				top: TOP,
+				left: "50%",
+				transform: "translateX(-50%)",
+				width: "min(560px, calc(100vw - 32px))",
+				padding: "10px 12px 10px 14px",
 				backgroundColor:
-					"color-mix(in srgb, var(--warning, #d29922) 14%, var(--bg-secondary))",
-				borderBottom: "1px solid var(--border)",
+					"color-mix(in srgb, var(--warning, #d29922) 18%, var(--bg-secondary))",
+				border:
+					"1px solid color-mix(in srgb, var(--warning, #d29922) 55%, transparent)",
+				boxShadow: "0 12px 32px rgba(0,0,0,0.45)",
 				fontSize: 12,
 				color: "var(--fg-primary)",
 			}}
 		>
-			<CloudOff size={14} style={{ flexShrink: 0 }} />
+			<CloudOff
+				size={16}
+				style={{ flexShrink: 0, color: "var(--warning, #d29922)" }}
+			/>
 			<div className="flex flex-col flex-1 min-w-0">
 				<span>Not connected to {remote.hostName}. Sign in needed.</span>
 				{reason && (
@@ -73,6 +86,7 @@ export function RemoteHostBanner() {
 				type="button"
 				className={`${primaryButtonClass} rounded-md`}
 				style={{
+					flexShrink: 0,
 					fontSize: 12,
 					height: 26,
 					padding: "0 12px",
