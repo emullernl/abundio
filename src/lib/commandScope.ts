@@ -56,6 +56,13 @@ const DESKTOP = [
 	// then be sent to the Host (phase 7).
 	"prompt_attachment_from_clipboard",
 	"set_clipboard_image_from_path",
+	// The PR checker: the user's own GitHub review requests and PRs, whatever
+	// the Host, polled while a desktop window has focus (phase 7b-4). Issues
+	// for a New task (`gh_list_issues`) are the Workspace's repo: host.
+	"pr_mark_read",
+	"pr_poller_refresh",
+	"pr_poller_set_config",
+	"pr_poller_snapshot",
 	"updater_check",
 	"updater_download",
 	"updater_install_now",
@@ -147,10 +154,6 @@ const HOST = [
 	"orchestrator_tab_set_view",
 	"orchestrator_tabs_list",
 	"pane_facts_report",
-	"pr_mark_read",
-	"pr_poller_refresh",
-	"pr_poller_set_config",
-	"pr_poller_snapshot",
 	"profile_create",
 	"profile_delete",
 	"profile_list",

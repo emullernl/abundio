@@ -110,13 +110,18 @@ struct ServerHookHost {
     ptys: Arc<pty_manager::PtyManager>,
     env: Arc<env_vars::EnvVarStore>,
     status: Arc<status_store::StatusStore>,
+    /// The host commands' view, set once it exists (it needs the hook
+    /// server's port first); Agent control answers from it.
+    host: std::sync::OnceLock<Arc<ServerHost>>,
 }
 
 impl HookHost for ServerHookHost {
-    /// The status is kept here, Window or not (phase 6d).
+    /// The status is kept here, Window or not (phase 6d); the owning Window,
+    /// if one is connected, hears what the desktop app's would.
     fn hook_event(&self, pty_id: &str, event: AgentHookEvent) {
+        use abundio_core::event_sink::EventsExt;
         log::debug!("hook {} from {} in {pty_id}", event.event, event.agent);
-        abundio_core::hook_apply::apply(
+        let applied = abundio_core::hook_apply::apply(
             &self.status,
             pty_id,
             &event.agent,
@@ -125,6 +130,13 @@ impl HookHost for ServerHookHost {
             abundio_core::hook_apply::now_ms(),
             &status_machine::StatusConfig::default(),
         );
+        let Some(host) = self.host.get() else { return };
+        let owner = self.status.owner(pty_id).or_else(|| self.ptys.owner_window(pty_id).map(ClientId));
+        let Some(owner) = owner else { return };
+        host.events.to_client(&owner, "agent-hook-applied", &applied.notice);
+        if !applied.updates.is_empty() {
+            host.events.to_client(&owner, "status-updates", applied.updates);
+        }
     }
     fn ptys(&self) -> Option<&pty_manager::PtyManager> {
         Some(&self.ptys)
@@ -133,11 +145,20 @@ impl HookHost for ServerHookHost {
         Some(&self.env)
     }
     fn control_refuse_unknown(&self, request: tiny_http::Request) -> Option<tiny_http::Request> {
-        let body = r#"{"error":{"code":"no_client","message":"no Abundio window is connected to this Host yet"}}"#;
-        let _ = request.respond(tiny_http::Response::from_string(body).with_status_code(503));
-        None
+        match self.host.get() {
+            Some(h) => h.with_host(|host| abundio_core::control_host::refuse_unknown(host, request)),
+            None => {
+                let body = r#"{"error":{"code":"unavailable","message":"the Abundio server is still starting"}}"#;
+                let _ = request.respond(tiny_http::Response::from_string(body).with_status_code(503));
+                None
+            }
+        }
     }
-    fn control_serve(&self, _request: tiny_http::Request) {}
+    fn control_serve(&self, request: tiny_http::Request) {
+        if let Some(h) = self.host.get() {
+            h.with_host(|host| abundio_core::control_host::serve(host, request));
+        }
+    }
 }
 
 // ── The host commands ──
@@ -179,15 +200,15 @@ struct ServerHost {
     handles: abundio_core::agent_names::HandleReservations,
     hooks_guard: agent_hooks::StartupProvisionGuard,
     skill_guard: abundio_core::agent_skills::SkillStartupGuard,
+    pending: abundio_core::control_protocol::PendingRequests,
+    waits: abundio_core::control_protocol::WaitGraph,
 }
 
 impl ServerHost {
     /// Each request runs the same host command a local Profile's Window
     /// runs (`host_api`), or one of the server's own (`serve.rs`).
-    fn handler(self: Arc<Self>) -> serve::Handler {
-        let builtin = serve::builtin_handler();
-        Arc::new(move |client, command, args| {
-            let host = abundio_core::host_api::Host {
+    fn with_host<R>(&self, f: impl FnOnce(&abundio_core::host_api::Host) -> R) -> R {
+        f(&abundio_core::host_api::Host {
                 workspaces: &self.workspaces,
                 ptys: &self.ptys,
                 status: &self.status,
@@ -206,8 +227,15 @@ impl ServerHost {
                 handles: &self.handles,
                 hooks_guard: &self.hooks_guard,
                 skill_guard: &self.skill_guard,
-            };
-            match abundio_core::host_api::dispatch(&host, client, command, args.clone()) {
+                pending: &self.pending,
+                waits: &self.waits,
+        })
+    }
+
+    fn handler(self: Arc<Self>) -> serve::Handler {
+        let builtin = serve::builtin_handler();
+        Arc::new(move |client, command, args| {
+            match self.with_host(|host| abundio_core::host_api::dispatch(host, client, command, args.clone())) {
                 Some(result) => result
                     .map_err(|e| serde_json::to_value(&e).unwrap_or_else(|_| serde_json::Value::String(e.to_string()))),
                 None => builtin(client, command, args),
@@ -337,8 +365,13 @@ fn run(data_dir: PathBuf) -> Result<(), String> {
 
     // File changes reach the git scheduler inside the server, as in the app.
     let change_hub = Arc::new(change_hub::ChangeHub::new());
-    let hook_host = Arc::new(ServerHookHost { ptys: ptys.clone(), env: env.clone(), status: status.clone() });
-    let hooks = HookServer::start(hook_host)?;
+    let hook_host = Arc::new(ServerHookHost {
+        ptys: ptys.clone(),
+        env: env.clone(),
+        status: status.clone(),
+        host: Default::default(),
+    });
+    let hooks = HookServer::start(hook_host.clone())?;
     log::info!("hook server on 127.0.0.1:{}", hooks.port);
     let host = Arc::new(ServerHost {
         workspaces: workspaces.clone(),
@@ -359,7 +392,10 @@ fn run(data_dir: PathBuf) -> Result<(), String> {
         handles: Default::default(),
         hooks_guard: Default::default(),
         skill_guard: Default::default(),
+        pending: Default::default(),
+        waits: Default::default(),
     });
+    let _ = hook_host.host.set(host.clone());
     #[cfg(unix)]
     {
         // A Client going away never stops its PTYs: their status is kept,

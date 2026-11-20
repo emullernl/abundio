@@ -50,6 +50,10 @@ pub struct Host<'a> {
     /// skill; the rest find it done.
     pub hooks_guard: &'a crate::agent_hooks::StartupProvisionGuard,
     pub skill_guard: &'a crate::agent_skills::SkillStartupGuard,
+    /// Agent control: the requests waiting on a Window's answer, and who
+    /// waits on whom (`control_host.rs`).
+    pub pending: &'a crate::control_protocol::PendingRequests,
+    pub waits: &'a crate::control_protocol::WaitGraph,
 }
 
 fn bad_args(command: &str, e: serde_json::Error) -> AbundioError {
@@ -537,6 +541,22 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
             let a = a!(c, raw, { profile_id: String, id: String, view: crate::workspace_store::MarkdownView });
             json(orch::orchestrator_tab_set_view(host.workspaces, a.profile_id, a.id, a.view)?)?
         }
+        // ── Agent control: the Window's side of a call ──
+        "agent_control_reply" => {
+            let a = a!(c, raw, { id: String, reply: Value });
+            // Only the Window the request was sent to may answer it.
+            json(host.pending.reply_from(client.as_str(), &a.id, a.reply))?
+        }
+        "agent_control_pane_closed" => {
+            // A pane closed: tell every Window (ADR-0055); its Spawned panes
+            // may sit in Workspaces other Windows hold. Only a Window showing
+            // a Profile holds panes.
+            if host.clients.profiles().contains_key(client.as_str()) {
+                let pane_id = a!(c, raw, { pane_id: String }).pane_id;
+                host.events.broadcast("agent-control-pane-closed", serde_json::json!({ "paneId": pane_id }));
+            }
+            Value::Null
+        }
         _ => return Ok(None),
     };
     Ok(Some(out))
@@ -750,6 +770,8 @@ mod tests {
         handles: crate::agent_names::HandleReservations,
         hooks_guard: crate::agent_hooks::StartupProvisionGuard,
         skill_guard: crate::agent_skills::SkillStartupGuard,
+        pending: crate::control_protocol::PendingRequests,
+        waits: crate::control_protocol::WaitGraph,
     }
 
     const PID: &str = "00000000-0000-0000-0000-000000000001";
@@ -780,6 +802,8 @@ mod tests {
             handles: Default::default(),
             hooks_guard: Default::default(),
             skill_guard: Default::default(),
+            pending: Default::default(),
+            waits: Default::default(),
         }
     }
 
@@ -803,6 +827,8 @@ mod tests {
             handles: &w.handles,
             hooks_guard: &w.hooks_guard,
             skill_guard: &w.skill_guard,
+            pending: &w.pending,
+            waits: &w.waits,
         };
         dispatch(&host, &ClientId::from(client), command, a).expect("a host command")
     }
@@ -864,6 +890,8 @@ mod tests {
             handles: &w.handles,
             hooks_guard: &w.hooks_guard,
             skill_guard: &w.skill_guard,
+            pending: &w.pending,
+            waits: &w.waits,
         };
         assert!(dispatch(&host, &ClientId::from("w1"), "open_settings_window", Value::Null).is_none());
     }
@@ -898,6 +926,8 @@ mod tests {
             handles: &w.handles,
             hooks_guard: &w.hooks_guard,
             skill_guard: &w.skill_guard,
+            pending: &w.pending,
+            waits: &w.waits,
         };
         for name in listed {
             // Missing arguments: a host command says so; any other is `None`.

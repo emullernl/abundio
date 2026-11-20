@@ -99,7 +99,19 @@ fn the_app_reaches_the_server_through_connect() {
 
     let mut server = server(dir.path());
     let mut log = BufReader::new(server.stderr.take().unwrap()).lines().map_while(Result::ok);
+    let hook_line = wait_for(&mut log, "hook server on 127.0.0.1:");
+    let port: u16 = hook_line.rsplit(':').next().unwrap().trim().parse().unwrap();
     wait_for(&mut log, "waiting for a Client");
+    // Agent control is answered on the Host: a token no pane holds is refused.
+    {
+        use std::io::{Read, Write};
+        let mut http = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(http, "POST /control HTTP/1.1\r\nHost: x\r\nX-Abundio-Agent-Token: nope\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        let mut answer = String::new();
+        http.read_to_string(&mut answer).unwrap();
+        assert!(answer.starts_with("HTTP/1.1 403"), "{answer}");
+        assert!(answer.contains("unauthorized"), "{answer}");
+    }
     {
         use std::os::unix::fs::PermissionsExt;
         let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;

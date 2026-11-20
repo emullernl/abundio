@@ -26,7 +26,8 @@ impl HostClients for DesktopClients {
     }
 }
 
-fn with_host<R>(app: &AppHandle, f: impl FnOnce(&Host) -> R) -> R {
+/// Everything the host commands reach, from the app's managed state.
+pub(crate) fn with_host<R>(app: &AppHandle, f: impl FnOnce(&Host) -> R) -> R {
     let workspaces = app.state::<crate::workspace_store::WorkspaceStore>();
     let ptys = app.state::<crate::pty_manager::PtyManager>();
     let status = app.state::<std::sync::Arc<crate::status_store::StatusStore>>();
@@ -47,6 +48,8 @@ fn with_host<R>(app: &AppHandle, f: impl FnOnce(&Host) -> R) -> R {
     let handles = app.state::<crate::agent_names::HandleReservations>();
     let hooks_guard = app.state::<crate::agent_hooks::StartupProvisionGuard>();
     let skill_guard = app.state::<crate::agent_skills::SkillStartupGuard>();
+    let pending = app.state::<crate::control_protocol::PendingRequests>();
+    let waits = app.state::<crate::control_protocol::WaitGraph>();
     f(&Host {
         workspaces: &workspaces,
         ptys: &ptys,
@@ -66,6 +69,8 @@ fn with_host<R>(app: &AppHandle, f: impl FnOnce(&Host) -> R) -> R {
         handles: &handles,
         hooks_guard: &hooks_guard,
         skill_guard: &skill_guard,
+        pending: &pending,
+        waits: &waits,
     })
 }
 

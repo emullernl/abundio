@@ -12,6 +12,7 @@ pub mod agent_skills;
 pub mod app_paths;
 pub mod change_hub;
 pub mod config;
+pub mod control_host;
 pub mod control_local;
 pub mod control_protocol;
 pub mod db_open;

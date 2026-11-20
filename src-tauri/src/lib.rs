@@ -22,6 +22,7 @@ pub use abundio_core::status_machine;
 pub use abundio_core::layout_ops;
 pub use abundio_core::layout_store;
 pub use abundio_core::pane_facts;
+pub use abundio_core::control_host;
 pub use abundio_core::control_local;
 pub use abundio_core::control_protocol;
 pub use abundio_core::git_core;
@@ -1599,8 +1600,6 @@ pub fn run() {
             commands::create_untitled_profile_in_new_window,
             commands::open_settings_window,
             commands::focus_window,
-            agent_control::agent_control_reply,
-            agent_control::agent_control_pane_closed,
             commands::fs_reveal_in_folder,
             pr_poller::pr_poller_set_config,
             pr_poller::pr_poller_refresh,

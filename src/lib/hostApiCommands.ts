@@ -115,6 +115,8 @@ export const HOST_API_COMMANDS: ReadonlySet<string> = new Set([
 	"agents_path_is_resolved",
 	"ensure_agent_hooks",
 	"list_installed_agent_commands",
+	"agent_control_reply",
+	"agent_control_pane_closed",
 	// Prompt actions, notes, statistics
 	"note_get",
 	"note_set",
