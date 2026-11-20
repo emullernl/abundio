@@ -10,11 +10,12 @@ import { openDialog } from "../lib/desktop";
 import { type FolderCheck, workspaces as workspacesApi } from "../lib/ipc";
 import type { CodingAgent } from "../lib/types";
 import { folderVerdict } from "../lib/workspaceFolder";
-import { fallbackProfileId } from "../stores/profileStore";
+import { fallbackProfileId, useProfileStore } from "../stores/profileStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import type { LaunchChoice } from "./LaunchPicker";
 import { secondaryButtonClass } from "./PromptActions/fieldStyles";
+import { RemoteFolderPicker } from "./RemoteFolderPicker";
 
 interface NewWorkspaceDialogProps {
 	isOpen: boolean;
@@ -116,11 +117,24 @@ export function NewWorkspaceDialog({
 		onClose();
 	};
 
+	/** A remote Window picks on its Host: the native picker only sees this
+	 *  computer. */
+	const remote = useProfileStore((s) => s.remote);
+	const [remotePicking, setRemotePicking] = useState(false);
+
 	const pickFolder = async () => {
+		if (remote) {
+			setRemotePicking(true);
+			return;
+		}
 		const folder = await openDialog({ directory: true, multiple: false });
 		if (!folder) return;
 		const path = typeof folder === "string" ? folder : folder[0];
 		if (!path) return;
+		takeFolder(path);
+	};
+
+	const takeFolder = (path: string) => {
 		setFolderPath(path);
 		if (!nameDirtyRef.current && name.trim().length === 0) {
 			const derived = basename(path);
@@ -152,6 +166,17 @@ export function NewWorkspaceDialog({
 
 	return (
 		<AnimatePresence>
+			{isOpen && remotePicking && remote && (
+				<RemoteFolderPicker
+					key="remote-folder-picker"
+					hostName={remote.hostName}
+					onPick={(path) => {
+						setRemotePicking(false);
+						takeFolder(path);
+					}}
+					onCancel={() => setRemotePicking(false)}
+				/>
+			)}
 			{isOpen && (
 				<motion.div
 					role="presentation"

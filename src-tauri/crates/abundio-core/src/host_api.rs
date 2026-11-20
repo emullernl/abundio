@@ -278,6 +278,7 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
         }
         // ── Files ──
         "fs_list_dir" => json(fe::fs_list_dir(a!(c, raw, { path: String }).path)?)?,
+        "fs_home_dir" => json(fe::fs_home_dir()?)?,
         "fs_list_files" => {
             let a = a!(c, raw, { root_path: String, max_files: Option<usize> });
             json(fe::fs_list_files(a.root_path, a.max_files)?)?

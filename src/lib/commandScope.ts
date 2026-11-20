@@ -129,6 +129,7 @@ const HOST = [
 	"fs_file_exists",
 	"fs_index_workspace_files",
 	"fs_list_dir",
+	"fs_home_dir",
 	"fs_list_files",
 	"fs_read_file",
 	"fs_rename",

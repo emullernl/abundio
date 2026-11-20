@@ -77,6 +77,15 @@ fn has_null_bytes(data: &[u8]) -> bool {
 	data.iter().any(|&b| b == 0)
 }
 
+/// The home folder of whoever runs this backend: on a Host, where its
+/// folder picker starts (docs/plans/remote-hosts.md phase 10).
+pub fn fs_home_dir() -> Result<String, AbundioError> {
+	std::env::var_os("HOME")
+		.or_else(|| std::env::var_os("USERPROFILE"))
+		.map(|h| h.to_string_lossy().into_owned())
+		.ok_or_else(|| AbundioError::NotFound("no home folder".into()))
+}
+
 pub fn fs_list_dir(path: String) -> Result<Vec<DirEntry>, AbundioError> {
 	let dir = Path::new(&path);
 	let mut entries = Vec::new();

@@ -43,10 +43,25 @@ pub async fn host_check(
         .map_err(AbundioError::Channel)?;
         let probe = host_setup::parse_probe(&out);
         let app_version = env!("CARGO_PKG_VERSION");
-        Ok(HostCheck { items: host_setup::checklist(&probe, app_version), probe, app_version })
+        let mut items = host_setup::checklist(&probe, app_version);
+        if cfg!(debug_assertions) {
+            if let Some(sha) = dev_build_sha(&probe) {
+                host_setup::mark_rebuilt_server(&mut items, &probe, app_version, &sha);
+            }
+        }
+        Ok(HostCheck { items, probe, app_version })
     })
     .await
     .map_err(|e| AbundioError::InvalidOperation(e.to_string()))?
+}
+
+/// The SHA-256 of the server a development build would install on this
+/// Host, if it has been built.
+fn dev_build_sha(probe: &Probe) -> Option<String> {
+    use sha2::Digest;
+    let platform = host_setup::platform(&probe.os, &probe.arch).ok()?;
+    let bytes = std::fs::read(crate::server_binary::dev_build(platform).ok()?).ok()?;
+    Some(format!("{:x}", sha2::Sha256::digest(&bytes)))
 }
 
 /// How long an install may take: the upload over a slow link.

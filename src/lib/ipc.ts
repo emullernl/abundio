@@ -1045,6 +1045,8 @@ export const pr = {
 
 export const fs = {
 	listDir: (path: string) => invoke<DirEntry[]>("fs_list_dir", { path }),
+	/** The home folder where the Window's backend runs (a Host's, remotely). */
+	homeDir: () => invoke<string>("fs_home_dir"),
 
 	listFiles: (rootPath: string, maxFiles?: number) =>
 		invoke<FileEntry[]>("fs_list_files", { rootPath, maxFiles }),

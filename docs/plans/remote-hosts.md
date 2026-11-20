@@ -148,7 +148,7 @@ Done in steps: **8a** the probe and checklist (done: `host_setup.rs` in the core
 - A local Profile's list of Joined profiles (desktop DB); "+ Join remote profile…", Add Host's last step, "Leave".
 - Workspace list and Agents list sections, Host chip, `@ host` on clashes, greyed offline rows with "last seen", background reconnect with "Sign in needed".
 - Fleet Console, Navigator, cycles, quick-open and the badge include joined Workspaces.
-- Host Orchestrator from the section menu; New Workspace Location picker with remote folder browsing.
+- Host Orchestrator from the section menu; New Workspace Location picker with remote folder browsing (the browsing itself came early, with phase 8d: a remote Window's New Workspace dialog picks on its Host, `RemoteFolderPicker` over `fs_list_dir` from `fs_home_dir`).
 - Remote-SSH IDE links; hide Reveal in Finder and default-app open.
 
 #### 11. macOS Host polish, then open it up

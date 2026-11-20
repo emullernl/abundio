@@ -45,6 +45,7 @@ export const HOST_API_COMMANDS: ReadonlySet<string> = new Set([
 	"workspace_set_restore_opened",
 	// Files and search
 	"fs_list_dir",
+	"fs_home_dir",
 	"fs_list_files",
 	"fs_index_workspace_files",
 	"fs_read_file",

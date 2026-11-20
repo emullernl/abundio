@@ -47,7 +47,7 @@ pub fn locate(app: &tauri::AppHandle, platform: &str, say: &dyn Fn(&str)) -> Res
     Ok(cached)
 }
 
-fn dev_build(platform: &str) -> Result<PathBuf, String> {
+pub(crate) fn dev_build(platform: &str) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let profile_dir = exe.parent().ok_or("no build folder")?;
     let (path, how) = match platform {

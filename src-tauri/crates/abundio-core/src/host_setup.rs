@@ -28,6 +28,8 @@ for v in "$d"/*/abundio-server; do
 done
 if [ -x "$d/current" ]; then
   p current "$("$d/current" version 2>/dev/null | sed 's/^abundio-server //')"
+  if command -v sha256sum >/dev/null 2>&1; then p current_sha "$(sha256sum "$d/current" | cut -d ' ' -f 1)"
+  elif command -v shasum >/dev/null 2>&1; then p current_sha "$(shasum -a 256 "$d/current" | cut -d ' ' -f 1)"; fi
 fi
 # Running: the installed server's socket answers. With none installed, a
 # server started by hand (`[a]`: never this script's own command line).
@@ -280,6 +282,8 @@ pub struct Probe {
     pub installed: Vec<String>,
     /// The version `current` points at.
     pub current: Option<String>,
+    /// Its SHA-256 (development builds tell a rebuilt server by it).
+    pub current_sha: Option<String>,
     pub running: bool,
     pub systemd_user: bool,
     /// `None`: no `loginctl`.
@@ -321,6 +325,7 @@ pub fn parse_probe(text: &str) -> Probe {
             "home_writable" => p.home_writable = value == "yes",
             "installed" if !value.is_empty() => p.installed.push(value),
             "current" if !value.is_empty() => p.current = Some(value),
+            "current_sha" if !value.is_empty() => p.current_sha = Some(value),
             "running" => p.running = value == "yes",
             "systemd_user" => p.systemd_user = value == "yes",
             "linger" => p.linger = Some(value == "yes"),
@@ -441,6 +446,20 @@ pub fn checklist(p: &Probe, version: &str) -> Vec<CheckItem> {
         None => item("gh", "warn", "gh not found").fix("GitHub issues in New task need it."),
     });
     out
+}
+
+/// A development build's checklist: the Host runs this version but not this
+/// build's server (`local_sha`), so the server line offers Update. Release
+/// builds never need it: one version is one binary.
+pub fn mark_rebuilt_server(items: &mut [CheckItem], p: &Probe, version: &str, local_sha: &str) {
+    if p.current.as_deref() != Some(version) || p.current_sha.as_deref().is_none_or(|s| s == local_sha) {
+        return;
+    }
+    if let Some(i) = items.iter_mut().find(|i| i.id == "server") {
+        *i = item("server", "warn", format!("Server {version} installed, from another development build"))
+            .fix("Update installs the server built next to this app.")
+            .action("update");
+    }
 }
 
 fn reboot_item(p: &Probe, installed: bool) -> CheckItem {
@@ -569,6 +588,14 @@ mod tests {
         assert_eq!(reboot.action, Some("service"));
         let stopped = Probe { running: false, ..loose };
         assert_eq!(checklist(&stopped, "3.1.0").iter().find(|i| i.id == "reboot").unwrap().action, None);
+        // A development build whose server was rebuilt: Update.
+        let built = Probe { current_sha: Some("aa".into()), ..p.clone() };
+        let mut list = checklist(&built, "3.1.0");
+        mark_rebuilt_server(&mut list, &built, "3.1.0", "bb");
+        assert_eq!(list.iter().find(|i| i.id == "server").unwrap().action, Some("update"));
+        let mut same = checklist(&built, "3.1.0");
+        mark_rebuilt_server(&mut same, &built, "3.1.0", "aa");
+        assert_eq!(same.iter().find(|i| i.id == "server").unwrap().action, None);
         // Nothing installed: Install.
         let bare = Probe { current: None, installed: vec![], ..p.clone() };
         assert_eq!(checklist(&bare, "3.1.0").iter().find(|i| i.id == "server").unwrap().action, Some("install"));
