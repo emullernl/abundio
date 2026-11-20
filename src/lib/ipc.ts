@@ -257,6 +257,10 @@ export const hostsApi = {
 	 *  of the user's Agents, to look for there. */
 	check: (hostId: string, agents: string[]) =>
 		invoke<HostCheck>("host_check", { hostId, agents }),
+	/** Install this app's server on a Host (phase 8b), for the platform its
+	 *  last Check found; resolves with the new checklist. */
+	install: (hostId: string, os: string, arch: string, agents: string[]) =>
+		invoke<HostCheck>("host_install", { hostId, os, arch, agents }),
 	/** The user's answer to an SSH prompt (`null`: cancelled). */
 	answerPrompt: (id: string, answer: string | null) =>
 		invoke<boolean>("ssh_prompt_answer", { id, answer }),

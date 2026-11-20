@@ -29,7 +29,8 @@ done
 if [ -x "$d/current" ]; then
   p current "$("$d/current" version 2>/dev/null | sed 's/^abundio-server //')"
 fi
-if command -v pgrep >/dev/null 2>&1 && pgrep -u "$(id -u)" -f 'abundio-server run' >/dev/null 2>&1; then
+# `[a]`: the pattern never matches this script's own command line.
+if command -v pgrep >/dev/null 2>&1 && pgrep -u "$(id -u)" -f '[a]bundio-server run' >/dev/null 2>&1; then
   p running yes
 fi
 if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
@@ -58,6 +59,43 @@ wait "$pid" 2>/dev/null
 kill "$killer" 2>/dev/null
 p done yes
 "#;
+
+/// Install a server (phase 8b), then probe as `PROBE_SCRIPT` does. Its
+/// arguments: the OS and CPU the app picked the binary for, the version,
+/// the binary's SHA-256 and size, then the Agents to look for. The binary
+/// itself is on stdin. Nothing changes unless the Host is still that
+/// platform and the bytes arrive whole; `current` moves last, atomically.
+pub const INSTALL_SCRIPT: &str = r#"
+set -eu
+os="$1"; arch="$2"; v="$3"; want="$4"; size="$5"; shift 5
+[ "$(uname -s) $(uname -m)" = "$os $arch" ] || { echo "the Host is no longer $os $arch" >&2; exit 2; }
+umask 022
+d="$HOME/.abundio-server"
+mkdir -p "$d/$v"
+chmod 700 "$d"
+f="$d/$v/abundio-server"
+head -c "$size" > "$f.part"
+if command -v sha256sum >/dev/null 2>&1; then got=$(sha256sum "$f.part" | cut -d ' ' -f 1)
+else got=$(shasum -a 256 "$f.part" | cut -d ' ' -f 1); fi
+if [ "$got" != "$want" ]; then rm -f "$f.part"; echo "the upload arrived damaged (checksum mismatch)" >&2; exit 3; fi
+chmod 755 "$f.part"
+mv -f "$f.part" "$f"
+"$f" version >/dev/null 2>&1 || { echo "the server does not run on this Host" >&2; exit 4; }
+rm -f "$d/current.new"
+ln -s "$v/abundio-server" "$d/current.new"
+mv -f "$d/current.new" "$d/current"
+printf 'ABUNDIO install_done=%s\n' "$v"
+"#;
+
+/// Install, then probe, in one ssh (one password prompt).
+pub fn install_then_probe() -> String {
+    format!("{INSTALL_SCRIPT}\nset +eu\n{PROBE_SCRIPT}")
+}
+
+/// `text` as one word for a POSIX shell.
+pub fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
+}
 
 /// An Agent command the probe may look for: one plain word, since it is
 /// handed to the Host's shell.
@@ -94,6 +132,8 @@ pub struct Probe {
     pub shell_answered: bool,
     /// The whole script ran.
     pub complete: bool,
+    /// The version an install just put in place.
+    pub installed_now: Option<String>,
 }
 
 pub fn parse_probe(text: &str) -> Probe {
@@ -121,6 +161,7 @@ pub fn parse_probe(text: &str) -> Probe {
             "gh" => p.gh = Some(value),
             "shell_done" => p.shell_answered = true,
             "done" => p.complete = true,
+            "install_done" => p.installed_now = Some(value),
             _ => {}
         }
     }
@@ -245,15 +286,24 @@ fn reboot_item(p: &Probe) -> CheckItem {
 /// Run `command` with `script` on its stdin, for at most `limit` (a
 /// password prompt in between counts). Its stdout, or why it failed: its
 /// stderr's last lines when it said nothing useful.
-pub fn run_script(mut command: std::process::Command, script: &str, limit: std::time::Duration) -> Result<String, String> {
-    use std::io::{Read, Write};
+pub fn run_script(command: std::process::Command, script: &str, limit: std::time::Duration) -> Result<String, String> {
+    run(command, Box::new(std::io::Cursor::new(script.as_bytes().to_vec())), limit)
+}
+
+/// Run `command` with `input` on its stdin, for at most `limit`. Its stdout,
+/// or why it failed: its stderr's last lines when it said nothing useful.
+pub fn run(
+    mut command: std::process::Command,
+    mut input: Box<dyn std::io::Read + Send>,
+    limit: std::time::Duration,
+) -> Result<String, String> {
+    use std::io::Read;
     use std::process::Stdio;
     command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn().map_err(|e| format!("cannot start {:?}: {e}", command.get_program()))?;
     let mut stdin = child.stdin.take().ok_or("no stdin")?;
-    let script = script.to_string();
     std::thread::spawn(move || {
-        let _ = stdin.write_all(script.as_bytes());
+        let _ = std::io::copy(&mut input, &mut stdin);
     });
     let read = |mut r: Box<dyn Read + Send>| {
         std::thread::spawn(move || {
@@ -356,6 +406,55 @@ mod tests {
         let err = run_script(sh(), "sleep 5", std::time::Duration::from_millis(200)).unwrap_err();
         assert!(err.contains("in time"));
         assert_eq!(run_script(sh(), "echo ok", std::time::Duration::from_secs(5)).unwrap(), "ok\n");
+    }
+
+    #[test]
+    fn quotes_anything_as_one_word() {
+        assert_eq!(shell_quote("plain"), "'plain'");
+        assert_eq!(shell_quote("it's $(x)"), "'it'\\''s $(x)'");
+        let out = std::process::Command::new("/bin/sh")
+            .args(["-c", &format!("printf %s {}", shell_quote("it's $(echo no) `x` \"q\""))])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "it's $(echo no) `x` \"q\"");
+    }
+
+    /// The install script, run here on a fake binary: the server lands in
+    /// its version's folder and `current` points at it; damaged bytes or
+    /// another platform change nothing.
+    #[cfg(unix)]
+    #[test]
+    fn installs_a_server_and_moves_current_last() {
+        use sha2::Digest;
+        let home = tempfile::tempdir().unwrap();
+        let binary = b"#!/bin/sh\necho abundio-server 9.9.9\n".to_vec();
+        let sha = format!("{:x}", sha2::Sha256::digest(&binary));
+        let uname = |flag: &str| {
+            String::from_utf8(std::process::Command::new("uname").arg(flag).output().unwrap().stdout).unwrap().trim().to_string()
+        };
+        let (os, arch) = (uname("-s"), uname("-m"));
+        let install = |os: &str, sha: &str, bytes: Vec<u8>| {
+            let mut c = std::process::Command::new("/bin/sh");
+            let script = install_then_probe();
+            c.args(["-c", &script, "abundio-setup", os, &arch, "9.9.9", sha, &binary.len().to_string()])
+                .env("HOME", home.path());
+            run(c, Box::new(std::io::Cursor::new(bytes)), std::time::Duration::from_secs(10))
+        };
+        let current = home.path().join(".abundio-server/current");
+        // Another platform: nothing happens.
+        assert!(install("Plan9", &sha, binary.clone()).unwrap_err().contains("no longer"));
+        assert!(!home.path().join(".abundio-server").exists());
+        // Damaged on the way: nothing is kept.
+        let mut bad = binary.clone();
+        bad[3] ^= 1;
+        assert!(install(&os, &sha, bad).unwrap_err().contains("damaged"));
+        assert!(!current.exists());
+        // Whole: installed, and `current` runs it.
+        let out = install(&os, &sha, binary.clone()).unwrap();
+        assert_eq!(parse_probe(&out).installed_now.as_deref(), Some("9.9.9"));
+        let v = std::process::Command::new(&current).arg("version").output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&v.stdout).trim(), "abundio-server 9.9.9");
+        assert_eq!(std::fs::read_link(&current).unwrap(), std::path::Path::new("9.9.9/abundio-server"));
     }
 
     /// The real script, run here: it answers every question.

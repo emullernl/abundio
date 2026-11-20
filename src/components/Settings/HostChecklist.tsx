@@ -1,15 +1,33 @@
 import { AlertTriangle, Check, X } from "lucide-react";
-import type { HostCheck } from "../../lib/ipc";
+import type { HostCheck, HostCheckItem } from "../../lib/ipc";
+import { secondaryButtonClass } from "../PromptActions/fieldStyles";
+
+/** The fixes this build can carry out (Start comes with phase 8c). */
+const ACTION_LABELS: Partial<
+	Record<NonNullable<HostCheckItem["action"]>, string>
+> = {
+	install: "Install",
+	update: "Update",
+};
 
 /**
  * A Host's checklist (docs/plans/remote-hosts.md phase 8, "Host setup"):
  * one line per thing the app needs there, a ✓ or what fixes it.
  */
-export function HostChecklist({ check }: { check: HostCheck }) {
+export function HostChecklist({
+	check,
+	busy,
+	onAction,
+}: {
+	check: HostCheck;
+	/** What is being done now ("Uploading the server…"), if anything. */
+	busy: string | null;
+	onAction: (action: NonNullable<HostCheckItem["action"]>) => void;
+}) {
 	return (
-		<div className="flex flex-col gap-1.5" role="list">
+		<ul className="flex flex-col gap-1.5" style={{ listStyle: "none" }}>
 			{check.items.map((item) => (
-				<div key={item.id} role="listitem" className="flex items-start gap-2">
+				<li key={item.id} className="flex items-start gap-2">
 					<span style={{ flexShrink: 0, marginTop: 1 }}>
 						{item.state === "ok" ? (
 							<Check size={13} style={{ color: "var(--success, #3fb950)" }} />
@@ -26,6 +44,19 @@ export function HostChecklist({ check }: { check: HostCheck }) {
 						<span style={{ fontSize: 12, color: "var(--fg-primary)" }}>
 							{item.label}
 						</span>
+						{item.action && ACTION_LABELS[item.action] && (
+							<div style={{ marginTop: 4 }}>
+								<button
+									type="button"
+									className={`${secondaryButtonClass} rounded-md`}
+									style={{ fontSize: 12, height: 26, padding: "0 10px" }}
+									disabled={busy !== null}
+									onClick={() => item.action && onAction(item.action)}
+								>
+									{busy ?? ACTION_LABELS[item.action]}
+								</button>
+							</div>
+						)}
 						{item.fix && (
 							<span
 								style={{
@@ -38,8 +69,8 @@ export function HostChecklist({ check }: { check: HostCheck }) {
 							</span>
 						)}
 					</div>
-				</div>
+				</li>
 			))}
-		</div>
+		</ul>
 	);
 }

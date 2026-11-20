@@ -48,3 +48,62 @@ pub async fn host_check(
     .await
     .map_err(|e| AbundioError::InvalidOperation(e.to_string()))?
 }
+
+/// How long an install may take: the upload over a slow link.
+const INSTALL_LIMIT: Duration = Duration::from_secs(30 * 60);
+
+/// What Host setup is doing now, for the Window that asked.
+pub const PROGRESS_EVENT: &str = "host-setup-progress";
+
+/// Install this app's server on a Host (phase 8b): the binary for the
+/// platform its last Check found (`os`, `arch`; the Host refuses it if that
+/// changed), uploaded in the same ssh that installs it and checks again, so
+/// a Host that asks for a password asks once. Answers with the new
+/// checklist.
+#[tauri::command]
+pub async fn host_install(
+    app: AppHandle,
+    window: Window,
+    host_id: String,
+    os: String,
+    arch: String,
+    agents: Vec<String>,
+) -> Result<HostCheck, AbundioError> {
+    use sha2::Digest;
+    use tauri::Emitter;
+    let host = crate::hosts::find(&host_id).ok_or_else(|| AbundioError::NotFound("that Host was removed".into()))?;
+    let label = window.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let say = |text: &str| {
+            let _ = app.emit_to(label.as_str(), PROGRESS_EVENT, serde_json::json!({ "hostId": host_id, "text": text }));
+        };
+        let platform = host_setup::platform(&os, &arch).map_err(AbundioError::InvalidOperation)?;
+        let binary = crate::server_binary::locate(&app, platform, &say).map_err(AbundioError::InvalidOperation)?;
+        let bytes = std::fs::read(&binary)?;
+        let sha = format!("{:x}", sha2::Sha256::digest(&bytes));
+        let size = bytes.len().to_string();
+        let version = env!("CARGO_PKG_VERSION");
+        let mut args: Vec<&str> = vec![&os, &arch, version, &sha, &size];
+        let mut words: Vec<&str> = agents.iter().filter_map(|a| host_setup::probe_word(a)).collect();
+        words.sort_unstable();
+        words.dedup();
+        args.extend(words);
+        say(&format!("Uploading the server ({} MB)…", bytes.len() / 1_000_000));
+        let out = crate::remote_windows::with_ssh_mode(&app, &host.name, Some(&label), |mode| {
+            host_setup::run(
+                host.target.sh_c(mode, &host_setup::install_then_probe(), &args),
+                Box::new(std::io::Cursor::new(bytes)),
+                INSTALL_LIMIT,
+            )
+        })
+        .map_err(AbundioError::Channel)?;
+        let probe = host_setup::parse_probe(&out);
+        if probe.installed_now.as_deref() != Some(version) {
+            return Err(AbundioError::Channel("the install did not finish".into()));
+        }
+        log::info!("[host] installed server {version} on {}", host.name);
+        Ok(HostCheck { items: host_setup::checklist(&probe, version), probe, app_version: version })
+    })
+    .await
+    .map_err(|e| AbundioError::InvalidOperation(e.to_string()))?
+}

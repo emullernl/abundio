@@ -4,6 +4,7 @@ import {
 	type HostEntry,
 	hostsApi,
 	listen,
+	listenToThisWindow,
 } from "../../lib/ipc";
 import { useSettingsStore } from "../../stores/settingsStore";
 import {
@@ -32,12 +33,49 @@ export function HostsSection() {
 		Record<string, HostCheck | { error: string } | "checking">
 	>({});
 
-	const check = async (id: string) => {
-		setChecks((c) => ({ ...c, [id]: "checking" }));
-		const agents = useSettingsStore
+	/** What setup is doing on each Host now ("Uploading the server…"). */
+	const [working, setWorking] = useState<Record<string, string>>({});
+
+	useEffect(() => {
+		const off = listenToThisWindow<{ hostId: string; text: string }>(
+			"host-setup-progress",
+			(e) => setWorking((w) => ({ ...w, [e.payload.hostId]: e.payload.text })),
+		);
+		return () => {
+			off.then((stop) => stop());
+		};
+	}, []);
+
+	const agentCommands = () =>
+		useSettingsStore
 			.getState()
 			.agents.filter((a) => a.enabled)
 			.map((a) => a.command);
+
+	const runAction = async (id: string, last: HostCheck, action: string) => {
+		if (action !== "install" && action !== "update") return;
+		setWorking((w) => ({
+			...w,
+			[id]: action === "install" ? "Installing…" : "Updating…",
+		}));
+		try {
+			const result = await hostsApi.install(
+				id,
+				last.probe.os,
+				last.probe.arch,
+				agentCommands(),
+			);
+			setChecks((c) => ({ ...c, [id]: result }));
+		} catch (e) {
+			setChecks((c) => ({ ...c, [id]: { error: String(e) } }));
+		} finally {
+			setWorking(({ [id]: _, ...rest }) => rest);
+		}
+	};
+
+	const check = async (id: string) => {
+		setChecks((c) => ({ ...c, [id]: "checking" }));
+		const agents = agentCommands();
 		try {
 			const result = await hostsApi.check(id, agents);
 			setChecks((c) => ({ ...c, [id]: result }));
@@ -160,7 +198,15 @@ export function HostsSection() {
 										Remove
 									</button>
 								</div>
-								<HostCheckResult result={checks[h.id]} />
+								<HostCheckResult
+									result={checks[h.id]}
+									busy={working[h.id] ?? null}
+									onAction={(action) => {
+										const last = checks[h.id];
+										if (last && last !== "checking" && !("error" in last))
+											void runAction(h.id, last, action);
+									}}
+								/>
 							</div>
 						))}
 					</div>
@@ -224,8 +270,12 @@ export function HostsSection() {
 
 function HostCheckResult({
 	result,
+	busy,
+	onAction,
 }: {
 	result: HostCheck | { error: string } | "checking" | undefined;
+	busy: string | null;
+	onAction: (action: NonNullable<HostCheck["items"][number]["action"]>) => void;
 }) {
 	if (!result || result === "checking") return null;
 	if ("error" in result)
@@ -241,5 +291,5 @@ function HostCheckResult({
 				{result.error}
 			</div>
 		);
-	return <HostChecklist check={result} />;
+	return <HostChecklist check={result} busy={busy} onAction={onAction} />;
 }

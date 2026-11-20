@@ -108,6 +108,32 @@ impl HostTarget {
     }
 }
 
+impl HostTarget {
+    /// `sh -c <script> abundio-setup <args…>` on the Host, with whatever
+    /// the caller writes on its stdin (Host setup's install: the binary).
+    /// Over ssh the Host's login shell reads the command line, so the script
+    /// and every argument are quoted.
+    pub fn sh_c(&self, mode: &ConnectMode, script: &str, args: &[&str]) -> Command {
+        match self {
+            HostTarget::Ssh { destination, .. } => {
+                let mut line = format!("sh -c {} abundio-setup", crate::host_setup::shell_quote(script));
+                for a in args {
+                    line.push(' ');
+                    line.push_str(&crate::host_setup::shell_quote(a));
+                }
+                let mut c = ssh(mode);
+                c.arg("--").arg(destination).arg(line);
+                c
+            }
+            HostTarget::Direct { .. } => {
+                let mut c = Command::new("sh");
+                c.args(["-c", script, "abundio-setup"]).args(args);
+                c
+            }
+        }
+    }
+}
+
 /// The server on a Host whose entry names none: whatever is on its PATH
 /// (phase 8c points it at the one the app installs).
 pub const DEFAULT_SERVER: &str = "abundio-server";
@@ -503,6 +529,17 @@ mod tests {
         let args: Vec<_> = c.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
         assert_eq!(&args[args.len() - 6..], ["build-box", "sh", "-s", "--", "claude", "codex"]);
         assert!(args.windows(2).any(|w| w == ["-o", "BatchMode=yes"]));
+    }
+
+    #[test]
+    fn a_setup_script_and_its_arguments_reach_the_host_quoted() {
+        let t = HostTarget::Ssh { destination: "build-box".into(), server: None };
+        let c = t.sh_c(&ConnectMode::Batch, "echo \"$1\"", &["it's"]);
+        let args: Vec<_> = c.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert_eq!(&args[args.len() - 3..], ["--", "build-box", "sh -c 'echo \"$1\"' abundio-setup 'it'\\''s'"]);
+        // What the Host's shell makes of that line.
+        let out = std::process::Command::new("/bin/sh").args(["-c", &args[args.len() - 1]]).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "it's\n");
     }
 
     #[test]
