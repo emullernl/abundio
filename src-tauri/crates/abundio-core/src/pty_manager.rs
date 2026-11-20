@@ -685,18 +685,26 @@ impl PtyManager {
         Ok(Some(engine.encode(&data)))
     }
 
-    /// Write a serialized terminal snapshot (from xterm SerializeAddon).
+    /// Write a serialized terminal snapshot (from xterm SerializeAddon), and
+    /// how long the pane's output log was then (`<pane>.mark`), so a restore
+    /// can add what the log gained after it.
     pub fn write_snapshot(pane_id: &str, data: &str) -> Result<(), AbundioError> {
         let dir = Self::log_dir();
         fs::create_dir_all(&dir)?;
-        let path = dir.join(format!("{}.snapshot", pane_id));
-        fs::write(&path, data.as_bytes())?;
+        let log_len = fs::metadata(dir.join(format!("{}.log", pane_id))).map(|m| m.len()).unwrap_or(0);
+        fs::write(dir.join(format!("{}.snapshot", pane_id)), data.as_bytes())?;
+        fs::write(dir.join(format!("{}.mark", pane_id)), log_len.to_string())?;
         Ok(())
     }
 
-    /// Read a terminal snapshot, returning its contents as a string.
+    /// Read a terminal snapshot, with the output its pane logged after it
+    /// was taken (a shell that kept running after the snapshot: a server that
+    /// stopped without the app quitting, an app that crashed). `None` when
+    /// there is none, or when the log was cut short since and the snapshot's
+    /// place in it is lost: the log alone is then the better restore.
     pub fn read_snapshot(pane_id: &str) -> Result<Option<String>, AbundioError> {
-        let path = Self::log_dir().join(format!("{}.snapshot", pane_id));
+        let dir = Self::log_dir();
+        let path = dir.join(format!("{}.snapshot", pane_id));
         if !path.exists() {
             return Ok(None);
         }
@@ -704,7 +712,17 @@ impl PtyManager {
         if data.is_empty() {
             return Ok(None);
         }
-        Ok(Some(data))
+        let mark = fs::read_to_string(dir.join(format!("{}.mark", pane_id)))
+            .ok()
+            .and_then(|m| m.trim().parse::<u64>().ok());
+        let log = dir.join(format!("{}.log", pane_id));
+        let modified = |p: &Path| fs::metadata(p).and_then(|m| m.modified()).ok();
+        // A shell's last words after the app quit are a second or so later.
+        let stale = match (modified(&path), modified(&log)) {
+            (Some(snap), Some(log)) => log.duration_since(snap).is_ok_and(|d| d > std::time::Duration::from_secs(5)),
+            _ => false,
+        };
+        Ok(snapshot_with_tail(data, &log, mark, stale))
     }
 
     /// Delete a PTY output log file and its snapshot.
@@ -718,6 +736,7 @@ impl PtyManager {
         if snapshot_path.exists() {
             fs::remove_file(&snapshot_path)?;
         }
+        let _ = fs::remove_file(log_dir.join(format!("{}.mark", log_id)));
         Ok(())
     }
 
@@ -2131,6 +2150,26 @@ fn pty_thread(
     let _ = read_thread.join();
 }
 
+/// A snapshot plus what the log at `log` gained after `mark` (its length
+/// when the snapshot was taken). A snapshot from before marks existed is
+/// taken as it is unless the log was written well after it (`stale`), when
+/// the log alone is the better restore.
+fn snapshot_with_tail(snapshot: String, log: &Path, mark: Option<u64>, stale: bool) -> Option<String> {
+    let Some(mark) = mark else { return (!stale).then_some(snapshot) };
+    let Ok(bytes) = fs::read(log) else { return Some(snapshot) };
+    let len = bytes.len() as u64;
+    if len < mark {
+        // Cut short (`truncate_log_file`) after the snapshot.
+        return None;
+    }
+    if len == mark {
+        return Some(snapshot);
+    }
+    let mut out = snapshot;
+    out.push_str(&String::from_utf8_lossy(&bytes[mark as usize..]));
+    Some(out)
+}
+
 /// Append raw bytes to the log file and truncate if it exceeds the limit.
 fn append_to_log(log: &mut Option<(File, PathBuf)>, data: &[u8]) {
     if let Some((ref mut file, ref path)) = log {
@@ -2162,6 +2201,26 @@ fn truncate_log_file(path: &Path, keep_bytes: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_snapshot_is_restored_with_what_its_pane_logged_after_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("p.log");
+        fs::write(&log, b"old output\r\n").unwrap();
+        let mark = Some(12);
+        // Nothing since: the snapshot alone.
+        assert_eq!(snapshot_with_tail("SNAP".into(), &log, mark, false).as_deref(), Some("SNAP"));
+        // The shell went on after it (the server stopped, not the app).
+        fs::write(&log, b"old output\r\n$ ls\r\nfile\r\n").unwrap();
+        assert_eq!(snapshot_with_tail("SNAP".into(), &log, mark, false).as_deref(), Some("SNAP$ ls\r\nfile\r\n"));
+        // The log was cut short since: the snapshot's place in it is lost.
+        fs::write(&log, b"tail").unwrap();
+        assert_eq!(snapshot_with_tail("SNAP".into(), &log, mark, false), None);
+        // A snapshot from before marks, or with no log.
+        assert_eq!(snapshot_with_tail("SNAP".into(), &log, None, false).as_deref(), Some("SNAP"));
+        assert_eq!(snapshot_with_tail("SNAP".into(), &log, None, true), None);
+        assert_eq!(snapshot_with_tail("SNAP".into(), &dir.path().join("none.log"), mark, false).as_deref(), Some("SNAP"));
+    }
 
     /// Register a fake PTY owned by `window`; the receiver sees its commands.
     fn fake_pty(mgr: &PtyManager, id: &str, window: &str) -> Receiver<PtyCommand> {
