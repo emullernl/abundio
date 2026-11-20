@@ -253,6 +253,10 @@ export const hostsApi = {
 		invoke<RemoteBinding | null>("remote_profile_for_window"),
 	/** A remote Window's Profiles, on its Host. */
 	serverProfiles: () => invoke<Profile[]>("server_profile_list"),
+	/** Probe a Host and make its checklist (phase 8). `agents`: the commands
+	 *  of the user's Agents, to look for there. */
+	check: (hostId: string, agents: string[]) =>
+		invoke<HostCheck>("host_check", { hostId, agents }),
 	/** The user's answer to an SSH prompt (`null`: cancelled). */
 	answerPrompt: (id: string, answer: string | null) =>
 		invoke<boolean>("ssh_prompt_answer", { id, answer }),
@@ -265,6 +269,30 @@ export interface HostEntry {
 	id: string;
 	name: string;
 	target: HostTarget;
+}
+
+/** One line of a Host's checklist (Rust's `host_setup::CheckItem`). */
+export interface HostCheckItem {
+	id: string;
+	label: string;
+	state: "ok" | "warn" | "error";
+	fix: string | null;
+	action: "install" | "update" | "start" | null;
+}
+
+/** What Host setup's probe found, and its checklist. */
+export interface HostCheck {
+	probe: {
+		os: string;
+		arch: string;
+		user: string;
+		current: string | null;
+		installed: string[];
+		running: boolean;
+		agents: string[];
+	};
+	items: HostCheckItem[];
+	appVersion: string;
 }
 
 /** What the user's `ssh` asks while connecting (Rust's `askpass::Prompt`). */

@@ -1,5 +1,6 @@
 pub mod agent_control;
 pub mod hosts;
+pub mod host_setup_commands;
 pub mod remote_windows;
 pub use abundio_core::agent_names;
 pub use abundio_core::agent_skills;
@@ -1217,7 +1218,7 @@ pub fn run() {
                     for host_id in hosts_to_connect {
                         let app_handle = app_handle.clone();
                         std::thread::spawn(move || {
-                            if let Err(e) = remote_windows::connect(&app_handle, &host_id, false) {
+                            if let Err(e) = remote_windows::connect(&app_handle, &host_id, None) {
                                 log::warn!("[host] could not reconnect to {host_id} at start: {e}");
                             }
                         });
@@ -1650,6 +1651,7 @@ pub fn run() {
             hosts::hosts_list,
             hosts::hosts_add,
             hosts::hosts_remove,
+            host_setup_commands::host_check,
             remote_windows::remote_profile_for_window,
             remote_windows::host_connect_saved,
             remote_windows::host_request,

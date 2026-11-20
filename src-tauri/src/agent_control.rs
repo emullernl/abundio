@@ -53,8 +53,14 @@ impl crate::hook_server::HookHost for AppHookHost {
     fn askpass_serve(&self, request: tiny_http::Request) {
         let app = self.0.clone();
         let askpass = self.0.state::<crate::askpass::Askpass>();
-        askpass.serve(request, &|prompt| {
-            crate::window_management::emit_to_one_profile_window(&app, "ssh-prompt", prompt).is_ok()
+        askpass.serve(request, &|prompt, window| {
+            use tauri::{Emitter, Manager};
+            // The Window that started this connect (Settings, say), while
+            // it is open; any Profile window otherwise.
+            match window.filter(|w| app.get_webview_window(w).is_some()) {
+                Some(w) => app.emit_to(w, "ssh-prompt", prompt).is_ok(),
+                None => crate::window_management::emit_to_one_profile_window(&app, "ssh-prompt", prompt).is_ok(),
+            }
         });
     }
     fn control_serve(&self, request: tiny_http::Request) {

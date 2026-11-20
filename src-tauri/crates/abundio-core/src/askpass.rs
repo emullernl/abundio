@@ -72,16 +72,18 @@ pub fn kind_of(text: &str, ssh_kind: &str) -> &'static str {
 /// The tokens handed out and the prompts waiting for an answer.
 #[derive(Default)]
 pub struct Askpass {
-    /// Token → the Host its ssh connects to.
-    tokens: Mutex<HashMap<String, String>>,
+    /// Token → the Host its ssh connects to, and the Window that asked
+    /// (where its prompts show; `None`: any Profile window).
+    tokens: Mutex<HashMap<String, (String, Option<String>)>>,
     waiting: Mutex<HashMap<String, crossbeam_channel::Sender<Option<String>>>>,
 }
 
 impl Askpass {
-    /// A token for one connect to `host`; revoke it when the connect ends.
-    pub fn issue(&self, host: &str) -> String {
+    /// A token for one connect to `host`, its prompts shown in `window`;
+    /// revoke it when the connect ends.
+    pub fn issue(&self, host: &str, window: Option<&str>) -> String {
         let token = uuid::Uuid::new_v4().simple().to_string();
-        self.tokens.lock().unwrap().insert(token.clone(), host.to_string());
+        self.tokens.lock().unwrap().insert(token.clone(), (host.to_string(), window.map(str::to_string)));
         token
     }
 
@@ -111,9 +113,10 @@ impl Askpass {
         }
     }
 
-    /// Serve one `/askpass` request: check its token, `show` the prompt, and
-    /// wait for the answer. Runs on its own thread.
-    pub fn serve(&self, mut request: tiny_http::Request, show: &dyn Fn(&Prompt) -> bool) {
+    /// Serve one `/askpass` request: check its token, `show` the prompt (in
+    /// the Window that asked, if one did), and wait for the answer. Runs on
+    /// its own thread.
+    pub fn serve(&self, mut request: tiny_http::Request, show: &dyn Fn(&Prompt, Option<&str>) -> bool) {
         let header = |name: &'static str| {
             request
                 .headers()
@@ -124,8 +127,8 @@ impl Askpass {
         };
         let token = header("X-Abundio-Askpass-Token");
         let ssh_kind = header("X-Abundio-Askpass-Kind");
-        let host = self.tokens.lock().unwrap().get(&token).cloned();
-        let Some(host) = host.filter(|_| !token.is_empty()) else {
+        let entry = self.tokens.lock().unwrap().get(&token).cloned();
+        let Some((host, window)) = entry.filter(|_| !token.is_empty()) else {
             let _ = request.respond(tiny_http::Response::empty(403));
             return;
         };
@@ -139,7 +142,7 @@ impl Askpass {
         };
         let (tx, rx) = crossbeam_channel::bounded(1);
         self.waiting.lock().unwrap().insert(prompt.id.clone(), tx);
-        let answer = if show(&prompt) { rx.recv_timeout(ANSWER_TIMEOUT).ok().flatten() } else { None };
+        let answer = if show(&prompt, window.as_deref()) { rx.recv_timeout(ANSWER_TIMEOUT).ok().flatten() } else { None };
         self.waiting.lock().unwrap().remove(&prompt.id);
         let _ = match answer {
             Some(a) => request.respond(tiny_http::Response::from_string(a)),
@@ -182,8 +185,8 @@ mod tests {
     #[test]
     fn a_token_is_for_one_connect() {
         let a = Askpass::default();
-        let t = a.issue("box");
-        assert_eq!(a.tokens.lock().unwrap().get(&t).map(String::as_str), Some("box"));
+        let t = a.issue("box", Some("window-1"));
+        assert_eq!(a.tokens.lock().unwrap().get(&t).map(|(h, w)| (h.as_str(), w.as_deref())), Some(("box", Some("window-1"))));
         a.revoke(&t);
         assert!(a.tokens.lock().unwrap().is_empty());
         let env = Askpass::env(Path::new("/x/abundio-askpass"), 4321, &t);
@@ -202,7 +205,7 @@ mod tests {
         let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
         let port = server.server_addr().to_ip().unwrap().port();
         let askpass = Arc::new(Askpass::default());
-        let token = askpass.issue("build-box");
+        let token = askpass.issue("build-box", None);
         let shown = Arc::new(Mutex::new(Vec::<Prompt>::new()));
         {
             let (askpass, shown) = (askpass.clone(), shown.clone());
@@ -211,7 +214,7 @@ mod tests {
                     let (askpass, shown) = (askpass.clone(), shown.clone());
                     std::thread::spawn(move || {
                         let a = askpass.clone();
-                        askpass.serve(request, &|p| {
+                        askpass.serve(request, &|p, _window| {
                             shown.lock().unwrap().push(p.clone());
                             let (a, id) = (a.clone(), p.id.clone());
                             std::thread::spawn(move || {

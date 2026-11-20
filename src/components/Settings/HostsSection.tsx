@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
-import { type HostEntry, hostsApi, listen } from "../../lib/ipc";
+import {
+	type HostCheck,
+	type HostEntry,
+	hostsApi,
+	listen,
+} from "../../lib/ipc";
+import { useSettingsStore } from "../../stores/settingsStore";
 import {
 	paramTextInputStyle,
 	primaryButtonClass,
 	secondaryButtonClass,
 } from "../PromptActions/fieldStyles";
+import { HostChecklist } from "./HostChecklist";
 import { SectionLabel } from "./primitives";
 
 /**
@@ -20,6 +27,24 @@ export function HostsSection() {
 	const [server, setServer] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
+	/** Each Host's last check, or why it failed. */
+	const [checks, setChecks] = useState<
+		Record<string, HostCheck | { error: string } | "checking">
+	>({});
+
+	const check = async (id: string) => {
+		setChecks((c) => ({ ...c, [id]: "checking" }));
+		const agents = useSettingsStore
+			.getState()
+			.agents.filter((a) => a.enabled)
+			.map((a) => a.command);
+		try {
+			const result = await hostsApi.check(id, agents);
+			setChecks((c) => ({ ...c, [id]: result }));
+		} catch (e) {
+			setChecks((c) => ({ ...c, [id]: { error: String(e) } }));
+		}
+	};
 
 	const reload = useCallback(() => {
 		hostsApi
@@ -92,38 +117,50 @@ export function HostsSection() {
 						{hosts.map((h, i) => (
 							<div
 								key={h.id}
-								className="flex items-center gap-3"
+								className="flex flex-col gap-3"
 								style={{
 									padding: "10px 12px",
 									borderTop: i === 0 ? "none" : "1px solid var(--border)",
 									backgroundColor: "var(--bg-primary)",
 								}}
 							>
-								<div className="flex flex-col flex-1 min-w-0">
-									<span style={{ fontSize: 13, color: "var(--fg-primary)" }}>
-										{h.name}
-									</span>
-									<span
-										className="truncate"
-										style={{
-											fontSize: 11,
-											color: "var(--fg-secondary)",
-											fontFamily: "var(--font-mono)",
-										}}
+								<div className="flex items-center gap-3">
+									<div className="flex flex-col flex-1 min-w-0">
+										<span style={{ fontSize: 13, color: "var(--fg-primary)" }}>
+											{h.name}
+										</span>
+										<span
+											className="truncate"
+											style={{
+												fontSize: 11,
+												color: "var(--fg-secondary)",
+												fontFamily: "var(--font-mono)",
+											}}
+										>
+											{h.target.kind === "ssh"
+												? `ssh ${h.target.destination}`
+												: h.target.server}
+										</span>
+									</div>
+									<button
+										type="button"
+										className={`${secondaryButtonClass} rounded-md`}
+										style={{ fontSize: 12, height: 28, padding: "0 10px" }}
+										disabled={checks[h.id] === "checking"}
+										onClick={() => void check(h.id)}
 									>
-										{h.target.kind === "ssh"
-											? `ssh ${h.target.destination}`
-											: h.target.server}
-									</span>
+										{checks[h.id] === "checking" ? "Checking…" : "Check"}
+									</button>
+									<button
+										type="button"
+										className={`${secondaryButtonClass} rounded-md`}
+										style={{ fontSize: 12, height: 28, padding: "0 10px" }}
+										onClick={() => void remove(h.id)}
+									>
+										Remove
+									</button>
 								</div>
-								<button
-									type="button"
-									className={`${secondaryButtonClass} rounded-md`}
-									style={{ fontSize: 12, height: 28, padding: "0 10px" }}
-									onClick={() => void remove(h.id)}
-								>
-									Remove
-								</button>
+								<HostCheckResult result={checks[h.id]} />
 							</div>
 						))}
 					</div>
@@ -183,4 +220,26 @@ export function HostsSection() {
 			</div>
 		</div>
 	);
+}
+
+function HostCheckResult({
+	result,
+}: {
+	result: HostCheck | { error: string } | "checking" | undefined;
+}) {
+	if (!result || result === "checking") return null;
+	if ("error" in result)
+		return (
+			<div
+				style={{
+					fontSize: 12,
+					color: "var(--error)",
+					whiteSpace: "pre-wrap",
+					userSelect: "text",
+				}}
+			>
+				{result.error}
+			</div>
+		);
+	return <HostChecklist check={result} />;
 }

@@ -67,29 +67,10 @@ impl HostTarget {
     pub fn command(&self, mode: &ConnectMode) -> Command {
         match self {
             HostTarget::Ssh { destination, server } => {
-                let mut c = Command::new("ssh");
-                // No terminal, keepalives so a dead link is noticed, and the
-                // user's own config for everything else.
-                c.args([
-                    "-T",
-                    "-o",
-                    "ServerAliveInterval=15",
-                    "-o",
-                    "ServerAliveCountMax=3",
-                    "-o",
-                    "ConnectTimeout=10",
-                ]);
-                match mode {
-                    ConnectMode::Batch => {
-                        c.args(["-o", "BatchMode=yes"]);
-                    }
-                    ConnectMode::Interactive(env) => {
-                        c.envs(env.iter().map(|(k, v)| (k, v)));
-                    }
-                }
+                let mut c = ssh(mode);
                 c.arg("--")
                     .arg(destination)
-                    .arg(server.as_deref().unwrap_or("abundio-server"))
+                    .arg(server.as_deref().unwrap_or(DEFAULT_SERVER))
                     .arg("connect");
                 c
             }
@@ -103,6 +84,48 @@ impl HostTarget {
             }
         }
     }
+
+    /// `sh -s` on the Host, a script on its stdin and `words` as its
+    /// arguments (Host setup). The words reach the Host's shell, so each
+    /// must be a plain word (`host_setup::probe_word`). A `Direct` Host runs
+    /// it on this computer.
+    pub fn shell(&self, mode: &ConnectMode, words: &[&str]) -> Command {
+        debug_assert!(words.iter().all(|w| crate::host_setup::probe_word(w) == Some(*w)));
+        let mut c = match self {
+            HostTarget::Ssh { destination, .. } => {
+                let mut c = ssh(mode);
+                c.arg("--").arg(destination).args(["sh", "-s", "--"]);
+                c
+            }
+            HostTarget::Direct { .. } => {
+                let mut c = Command::new("sh");
+                c.args(["-s", "--"]);
+                c
+            }
+        };
+        c.args(words);
+        c
+    }
+}
+
+/// The server on a Host whose entry names none: whatever is on its PATH
+/// (phase 8c points it at the one the app installs).
+pub const DEFAULT_SERVER: &str = "abundio-server";
+
+/// The user's `ssh`, with no terminal, keepalives so a dead link is
+/// noticed, and their own config for everything else.
+fn ssh(mode: &ConnectMode) -> Command {
+    let mut c = Command::new("ssh");
+    c.args(["-T", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-o", "ConnectTimeout=10"]);
+    match mode {
+        ConnectMode::Batch => {
+            c.args(["-o", "BatchMode=yes"]);
+        }
+        ConnectMode::Interactive(env) => {
+            c.envs(env.iter().map(|(k, v)| (k, v)));
+        }
+    }
+    c
 }
 
 /// Why a call to a Host failed, as the Window sees it.
@@ -471,6 +494,15 @@ mod tests {
         let evil = HostTarget::Ssh { destination: "-oProxyCommand=x".into(), server: None }.command(&ask);
         let args: Vec<_> = evil.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
         assert_eq!(args[args.len() - 4], "--");
+    }
+
+    #[test]
+    fn a_setup_script_runs_in_the_hosts_sh_with_plain_words() {
+        let t = HostTarget::Ssh { destination: "build-box".into(), server: None };
+        let c = t.shell(&ConnectMode::Batch, &["claude", "codex"]);
+        let args: Vec<_> = c.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert_eq!(&args[args.len() - 6..], ["build-box", "sh", "-s", "--", "claude", "codex"]);
+        assert!(args.windows(2).any(|w| w == ["-o", "BatchMode=yes"]));
     }
 
     #[test]

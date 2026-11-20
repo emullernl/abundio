@@ -75,6 +75,8 @@ const DESKTOP = [
 	"open_remote_profile_window",
 	"remote_profile_for_window",
 	"ssh_prompt_answer",
+	// Setting up a Host from Settings ▸ Hosts (phase 8).
+	"host_check",
 	"updater_check",
 	"updater_download",
 	"updater_install_now",

@@ -135,6 +135,8 @@ Done in steps (decided before starting): **7a** the protocol (length-framed: JSO
 - Binary download + signature check + cache, upload, `systemd --user` (+ linger), LaunchAgent, detached fallback; update prompt with live Agents.
 - CI builds and signs `abundio-server` for linux-x86_64-musl, linux-aarch64-musl, macOS universal. Needs the updater signing key set up first.
 
+Done in steps: **8a** the probe and checklist (done: `host_setup.rs` in the core, a POSIX script run as `ssh <host> sh -s` that changes nothing and answers in `ABUNDIO key=value` lines, Agents, git and gh looked for in the user's interactive login shell with 15 s to answer; `host_check` and Settings ▸ Hosts ▸ Check; SSH prompts show in the Window that started the ssh, Settings included; `scripts/build-server-linux.sh` builds the static Linux server in Docker and `scripts/dev/linux-test-host/` runs a Debian Host with systemd and sshd on port 2222 to try it on), **8b** install, **8c** start as a service and connect to the installed server, **8d** update and remove, **8e** CI.
+
 #### 9. Several Clients
 
 - Shared state broadcast to every Client; per-Client view state stays in the Window.

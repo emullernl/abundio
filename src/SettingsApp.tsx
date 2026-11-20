@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { SshPromptHost } from "./components/SshPromptDialog";
 import { Titlebar } from "./components/Titlebar";
 import { appWindow, currentWindowLabel } from "./lib/appWindow";
 import { emit, listen, profiles as profilesApi, updates } from "./lib/ipc";
@@ -124,6 +125,8 @@ export function SettingsApp() {
 			>
 				<SettingsPanel onClose={handleClose} />
 			</div>
+			{/* What ssh asks while Settings ▸ Hosts checks or installs a Host. */}
+			<SshPromptHost />
 		</>
 	);
 }

@@ -37,6 +37,7 @@ pub mod host_api;
 pub mod host_client;
 pub mod host_protocol;
 pub mod host_router;
+pub mod host_setup;
 pub mod layout_ops;
 pub mod layout_store;
 pub mod migrations;

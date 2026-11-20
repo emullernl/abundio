@@ -64,24 +64,12 @@ fn router(app: &AppHandle) -> std::sync::Arc<HostRouter> {
 /// Abundio's dialog; without it ssh never asks (app start), and the Host's
 /// Windows hear why it failed (`host-connect-failed`: "Sign in needed", or
 /// unreachable and tried again in the background).
-pub fn connect(app: &AppHandle, host_id: &str, ask: bool) -> Result<String, AbundioError> {
+pub fn connect(app: &AppHandle, host_id: &str, ask: Option<&str>) -> Result<String, AbundioError> {
     use tauri::Emitter;
     let host = crate::hosts::find(host_id).ok_or_else(|| AbundioError::NotFound("that Host was removed".into()))?;
     let router = router(app);
-    let result = if ask {
-        let askpass = app.state::<crate::askpass::Askpass>();
-        let token = askpass.issue(&host.name);
-        let mode = crate::host_router::ConnectMode::Interactive(crate::askpass::Askpass::env(
-            &askpass_script(),
-            app.state::<crate::hook_server::HookServer>().port,
-            &token,
-        ));
-        let r = router.connect(host_id, &host.target, &mode);
-        askpass.revoke(&token);
-        r
-    } else {
-        router.connect(host_id, &host.target, &crate::host_router::ConnectMode::Batch)
-    };
+    let result = with_ssh_mode(app, &host.name, ask, |mode| router.connect(host_id, &host.target, mode));
+    let ask = ask.is_some();
     if let Err(reason) = &result {
         let sign_in = crate::host_router::needs_sign_in(reason);
         for window in router.windows_on(host_id) {
@@ -98,6 +86,29 @@ pub fn connect(app: &AppHandle, host_id: &str, ask: bool) -> Result<String, Abun
         }
     }
     result.map_err(AbundioError::Channel)
+}
+
+/// Run `f` with the way ssh may ask: in Abundio's dialog, shown in Window
+/// `ask` (a one-time askpass token for this one ssh), or never (`None`).
+pub fn with_ssh_mode<T>(
+    app: &AppHandle,
+    host_name: &str,
+    ask: Option<&str>,
+    f: impl FnOnce(&crate::host_router::ConnectMode) -> T,
+) -> T {
+    let Some(window) = ask else {
+        return f(&crate::host_router::ConnectMode::Batch);
+    };
+    let askpass = app.state::<crate::askpass::Askpass>();
+    let token = askpass.issue(host_name, Some(window));
+    let mode = crate::host_router::ConnectMode::Interactive(crate::askpass::Askpass::env(
+        &askpass_script(),
+        app.state::<crate::hook_server::HookServer>().port,
+        &token,
+    ));
+    let r = f(&mode);
+    askpass.revoke(&token);
+    r
 }
 
 /// Where the SSH prompt helper is (written at app start).
@@ -158,8 +169,9 @@ pub fn remote_profile_for_window(window: Window, windows: tauri::State<'_, Remot
 /// Connect to a Host the user added (Open Remote Profile). Blocks for the
 /// handshake.
 #[tauri::command]
-pub async fn host_connect_saved(app: AppHandle, host_id: String) -> Result<String, AbundioError> {
-    tauri::async_runtime::spawn_blocking(move || connect(&app, &host_id, true))
+pub async fn host_connect_saved(app: AppHandle, window: Window, host_id: String) -> Result<String, AbundioError> {
+    let label = window.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || connect(&app, &host_id, Some(&label)))
         .await
         .map_err(|e| AbundioError::InvalidOperation(e.to_string()))?
 }
@@ -194,6 +206,7 @@ pub fn ssh_prompt_answer(app: AppHandle, id: String, answer: Option<String>) -> 
 #[tauri::command]
 pub async fn open_remote_profile_window(
     app: AppHandle,
+    window: Window,
     host_id: String,
     profile_id: String,
     profile_name: String,
@@ -201,7 +214,8 @@ pub async fn open_remote_profile_window(
     let host = crate::hosts::find(&host_id).ok_or_else(|| AbundioError::NotFound("that Host was removed".into()))?;
     let app2 = app.clone();
     let id = host_id.clone();
-    tauri::async_runtime::spawn_blocking(move || connect(&app2, &id, true))
+    let label = window.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || connect(&app2, &id, Some(&label)))
         .await
         .map_err(|e| AbundioError::InvalidOperation(e.to_string()))??;
     open(
