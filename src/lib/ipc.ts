@@ -261,6 +261,10 @@ export const hostsApi = {
 	 *  last Check found; resolves with the new checklist. */
 	install: (hostId: string, os: string, arch: string, agents: string[]) =>
 		invoke<HostCheck>("host_install", { hostId, os, arch, agents }),
+	/** Start the installed server on a Host as a service (phase 8c);
+	 *  resolves with the new checklist. */
+	start: (hostId: string, agents: string[]) =>
+		invoke<HostCheck>("host_start", { hostId, agents }),
 	/** The user's answer to an SSH prompt (`null`: cancelled). */
 	answerPrompt: (id: string, answer: string | null) =>
 		invoke<boolean>("ssh_prompt_answer", { id, answer }),

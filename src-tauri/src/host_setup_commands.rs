@@ -107,3 +107,38 @@ pub async fn host_install(
     .await
     .map_err(|e| AbundioError::InvalidOperation(e.to_string()))?
 }
+
+/// Start the installed server on a Host as a service (phase 8c), then check
+/// again, in one ssh. Answers with the new checklist.
+#[tauri::command]
+pub async fn host_start(
+    app: AppHandle,
+    window: Window,
+    host_id: String,
+    agents: Vec<String>,
+) -> Result<HostCheck, AbundioError> {
+    let host = crate::hosts::find(&host_id).ok_or_else(|| AbundioError::NotFound("that Host was removed".into()))?;
+    let label = window.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut words: Vec<&str> = agents.iter().filter_map(|a| host_setup::probe_word(a)).collect();
+        words.sort_unstable();
+        words.dedup();
+        let out = crate::remote_windows::with_ssh_mode(&app, &host.name, Some(&label), |mode| {
+            host_setup::run_script(
+                host.target.sh_c(mode, &host_setup::start_then_probe(), &words),
+                "",
+                STEP_LIMIT,
+            )
+        })
+        .map_err(AbundioError::Channel)?;
+        let probe = host_setup::parse_probe(&out);
+        if probe.started.is_none() {
+            return Err(AbundioError::Channel("the server did not start".into()));
+        }
+        log::info!("[host] started the server on {} ({})", host.name, probe.started.as_deref().unwrap_or(""));
+        let app_version = env!("CARGO_PKG_VERSION");
+        Ok(HostCheck { items: host_setup::checklist(&probe, app_version), probe, app_version })
+    })
+    .await
+    .map_err(|e| AbundioError::InvalidOperation(e.to_string()))?
+}

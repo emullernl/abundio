@@ -2,12 +2,13 @@ import { AlertTriangle, Check, X } from "lucide-react";
 import type { HostCheck, HostCheckItem } from "../../lib/ipc";
 import { secondaryButtonClass } from "../PromptActions/fieldStyles";
 
-/** The fixes this build can carry out (Start comes with phase 8c). */
+/** The fixes this build can carry out. */
 const ACTION_LABELS: Partial<
 	Record<NonNullable<HostCheckItem["action"]>, string>
 > = {
 	install: "Install",
 	update: "Update",
+	start: "Start",
 };
 
 /**

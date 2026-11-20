@@ -134,9 +134,29 @@ impl HostTarget {
     }
 }
 
-/// The server on a Host whose entry names none: whatever is on its PATH
-/// (phase 8c points it at the one the app installs).
-pub const DEFAULT_SERVER: &str = "abundio-server";
+/// The server on a Host whose entry names none: the one Host setup
+/// installs (phase 8c), relative to the home folder ssh starts in.
+pub const DEFAULT_SERVER: &str = ".abundio-server/current";
+
+/// A failed connect's reason, with what to do about it in front when the
+/// Host is merely not set up (not installed, not running, another version).
+pub fn explain_connect_failure(reason: &str) -> String {
+    let fix = if reason.contains("no Abundio server is running") {
+        Some("The Abundio server is not running there: Settings ▸ Hosts ▸ Check, then Start.")
+    } else if reason.contains(".abundio-server/current")
+        && ["no such file", "not found"].iter().any(|m| reason.to_lowercase().contains(m))
+    {
+        Some("The Abundio server is not installed there: Settings ▸ Hosts ▸ Check, then Install.")
+    } else if reason.contains("this Abundio server is version") {
+        Some("The Host runs another version of the server: Settings ▸ Hosts ▸ Check, then Update.")
+    } else {
+        None
+    };
+    match fix {
+        Some(fix) => format!("{fix} ({reason})"),
+        None => reason.to_string(),
+    }
+}
 
 /// The user's `ssh`, with no terminal, keepalives so a dead link is
 /// noticed, and their own config for everything else.
@@ -318,7 +338,8 @@ impl HostRouter {
             s.generation
         };
         let listener = Arc::new(Listener { host: host.to_string(), router: self.me.clone(), generation });
-        let (client, process) = HostProcess::spawn(target.command(mode), listener)?;
+        let (client, process) =
+            HostProcess::spawn(target.command(mode), listener).map_err(|e| explain_connect_failure(&e))?;
         let version = client.server_version.clone();
         self.state
             .lock()
@@ -506,7 +527,7 @@ mod tests {
                 "ConnectTimeout=10",
                 "--",
                 "build-box",
-                "abundio-server",
+                ".abundio-server/current",
                 "connect"
             ]
         );
@@ -520,6 +541,17 @@ mod tests {
         let evil = HostTarget::Ssh { destination: "-oProxyCommand=x".into(), server: None }.command(&ask);
         let args: Vec<_> = evil.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
         assert_eq!(args[args.len() - 4], "--");
+    }
+
+    #[test]
+    fn a_host_not_set_up_says_what_to_do() {
+        let e = explain_connect_failure("the connection closed before the server answered: abundio-server: no Abundio server is running here (/h/.abundio-server/data/server.sock: No such file)");
+        assert!(e.starts_with("The Abundio server is not running there") && e.contains("Start"), "{e}");
+        let e = explain_connect_failure("…: bash: line 1: .abundio-server/current: No such file or directory");
+        assert!(e.contains("Install"), "{e}");
+        let e = explain_connect_failure("this Abundio server is version 3.0.0 (protocol 1); the app is 3.1.0 (protocol 1)");
+        assert!(e.contains("Update") && e.contains("3.0.0"), "{e}");
+        assert_eq!(explain_connect_failure("Permission denied (publickey)."), "Permission denied (publickey).");
     }
 
     #[test]

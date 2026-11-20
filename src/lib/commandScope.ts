@@ -78,6 +78,7 @@ const DESKTOP = [
 	// Setting up a Host from Settings ▸ Hosts (phase 8).
 	"host_check",
 	"host_install",
+	"host_start",
 	"updater_check",
 	"updater_download",
 	"updater_install_now",

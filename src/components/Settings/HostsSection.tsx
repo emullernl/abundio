@@ -15,11 +15,18 @@ import {
 import { HostChecklist } from "./HostChecklist";
 import { SectionLabel } from "./primitives";
 
+/** What a checklist button shows while it works. */
+const WORKING_LABELS: Record<string, string> = {
+	install: "Installing…",
+	update: "Updating…",
+	start: "Starting…",
+};
+
 /**
  * Settings ▸ Hosts (docs/plans/remote-hosts.md phase 7d): the machines an
  * Abundio server runs on, reached with the user's own `ssh`. Adding one
  * only remembers how to reach it; File ▸ Open Remote Profile… connects.
- * Until phase 8 installs the server, it is started on the Host by hand.
+ * Check, then Install / Start, sets a Host up (phase 8).
  */
 export function HostsSection() {
 	const [hosts, setHosts] = useState<HostEntry[]>([]);
@@ -53,18 +60,19 @@ export function HostsSection() {
 			.map((a) => a.command);
 
 	const runAction = async (id: string, last: HostCheck, action: string) => {
-		if (action !== "install" && action !== "update") return;
-		setWorking((w) => ({
-			...w,
-			[id]: action === "install" ? "Installing…" : "Updating…",
-		}));
+		const label = WORKING_LABELS[action];
+		if (!label) return;
+		setWorking((w) => ({ ...w, [id]: label }));
 		try {
-			const result = await hostsApi.install(
-				id,
-				last.probe.os,
-				last.probe.arch,
-				agentCommands(),
-			);
+			const result =
+				action === "start"
+					? await hostsApi.start(id, agentCommands())
+					: await hostsApi.install(
+							id,
+							last.probe.os,
+							last.probe.arch,
+							agentCommands(),
+						);
 			setChecks((c) => ({ ...c, [id]: result }));
 		} catch (e) {
 			setChecks((c) => ({ ...c, [id]: { error: String(e) } }));

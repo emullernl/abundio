@@ -1654,6 +1654,7 @@ pub fn run() {
             hosts::hosts_remove,
             host_setup_commands::host_check,
             host_setup_commands::host_install,
+            host_setup_commands::host_start,
             remote_windows::remote_profile_for_window,
             remote_windows::host_connect_saved,
             remote_windows::host_request,

@@ -29,8 +29,14 @@ done
 if [ -x "$d/current" ]; then
   p current "$("$d/current" version 2>/dev/null | sed 's/^abundio-server //')"
 fi
-# `[a]`: the pattern never matches this script's own command line.
-if command -v pgrep >/dev/null 2>&1 && pgrep -u "$(id -u)" -f '[a]bundio-server run' >/dev/null 2>&1; then
+# Running: the installed server's socket answers. With none installed, a
+# server started by hand (`[a]`: never this script's own command line).
+if [ -x "$d/current" ]; then
+  "$d/current" connect </dev/null >/dev/null 2>&1 & c=$!
+  ( sleep 5; kill "$c" 2>/dev/null ) >/dev/null 2>&1 & k=$!
+  if wait "$c" 2>/dev/null; then p running yes; fi
+  kill "$k" 2>/dev/null
+elif command -v pgrep >/dev/null 2>&1 && pgrep -u "$(id -u)" -f '[a]bundio-server run' >/dev/null 2>&1; then
   p running yes
 fi
 if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
@@ -87,9 +93,113 @@ mv -f "$d/current.new" "$d/current"
 printf 'ABUNDIO install_done=%s\n' "$v"
 "#;
 
-/// Install, then probe, in one ssh (one password prompt).
+/// Start the installed server unless it already answers (phase 8c), as a
+/// service that comes back by itself: a `systemd --user` unit on Linux (and
+/// linger, if the Host lets the user turn it on without root), a
+/// LaunchAgent on macOS, else a detached process that a reboot ends. Waits
+/// until its socket answers; says how in `ABUNDIO started=<how>`.
+///
+/// `ABUNDIO_SETUP_SERVICE=detached` skips the service managers (tests).
+/// The script text never spells the server's command line, so the probe's
+/// `pgrep` cannot mistake this script for a server.
+pub const START_SCRIPT: &str = r#"
+d="$HOME/.abundio-server"
+srv="$d/current"
+[ -x "$srv" ] || { echo "the server is not installed" >&2; exit 5; }
+alive() {
+  "$srv" connect </dev/null >/dev/null 2>&1 & c=$!
+  ( sleep 5; kill "$c" 2>/dev/null ) >/dev/null 2>&1 & k=$!
+  r=0; wait "$c" 2>/dev/null || r=1
+  kill "$k" 2>/dev/null || true
+  return $r
+}
+if alive; then
+  printf 'ABUNDIO started=already\n'
+else
+  mkdir -p "$d/data"
+  chmod 700 "$d/data"
+  log="$d/server.log"
+  sh_="${SHELL:-/bin/sh}"
+  how=detached
+  u="$HOME/.config/systemd/user"
+  if [ "${ABUNDIO_SETUP_SERVICE:-}" != detached ] && command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+    # Without linger systemd stops a user's services soon after their last
+    # login ends, so the server would die with the app's connection: only
+    # a lingering user gets the service; the rest run it detached.
+    me=$(id -un)
+    if [ "$(loginctl show-user "$me" -p Linger --value 2>/dev/null)" != yes ]; then
+      loginctl --no-ask-password enable-linger "$me" >/dev/null 2>&1 || true
+    fi
+    if [ "$(loginctl show-user "$me" -p Linger --value 2>/dev/null)" = yes ]; then
+      mkdir -p "$u"
+      {
+        printf '[Unit]\nDescription=Abundio server\n\n[Service]\n'
+        printf 'ExecStart="%s" %s\n' "$srv" run
+        printf 'Environment="SHELL=%s"\nRestart=on-failure\nRestartSec=2\n\n[Install]\nWantedBy=default.target\n' "$sh_"
+      } > "$u/abundio-server.service.new"
+      mv -f "$u/abundio-server.service.new" "$u/abundio-server.service"
+      systemctl --user daemon-reload
+      systemctl --user enable abundio-server.service >/dev/null 2>&1
+      systemctl --user restart abundio-server.service
+      how=systemd
+    elif [ -f "$u/abundio-server.service" ]; then
+      # Ours from when the user lingered: a login must not start a second.
+      systemctl --user disable --now abundio-server.service >/dev/null 2>&1 || true
+      rm -f "$u/abundio-server.service"
+      systemctl --user daemon-reload || true
+    fi
+  elif [ "${ABUNDIO_SETUP_SERVICE:-}" != detached ] && [ "$(uname -s)" = Darwin ] && command -v launchctl >/dev/null 2>&1; then
+    a="$HOME/Library/LaunchAgents"
+    mkdir -p "$a"
+    pl="$a/dev.abundio.server.plist"
+    x() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+    {
+      printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+      printf '<plist version="1.0"><dict>\n<key>Label</key><string>dev.abundio.server</string>\n'
+      printf '<key>ProgramArguments</key><array><string>%s</string><string>%s</string></array>\n' "$(x "$srv")" run
+      printf '<key>EnvironmentVariables</key><dict><key>SHELL</key><string>%s</string></dict>\n' "$(x "$sh_")"
+      printf '<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>\n'
+      printf '<key>StandardOutPath</key><string>%s</string>\n<key>StandardErrorPath</key><string>%s</string>\n' "$(x "$log")" "$(x "$log")"
+      printf '</dict></plist>\n'
+    } > "$pl.new"
+    mv -f "$pl.new" "$pl"
+    uid=$(id -u)
+    launchctl bootout "gui/$uid/dev.abundio.server" >/dev/null 2>&1 || true
+    launchctl bootout "user/$uid/dev.abundio.server" >/dev/null 2>&1 || true
+    launchctl bootstrap "gui/$uid" "$pl" 2>/dev/null || launchctl bootstrap "user/$uid" "$pl"
+    how=launchd
+  fi
+  if [ "$how" = detached ]; then
+    # Not `nohup`: macOS's refuses to run without a console.
+    if command -v setsid >/dev/null 2>&1; then
+      ( trap '' HUP; exec setsid "$srv" run ) >>"$log" 2>&1 </dev/null &
+    else
+      ( trap '' HUP; exec "$srv" run ) >>"$log" 2>&1 </dev/null &
+    fi
+  fi
+  i=0
+  until alive; do
+    i=$((i + 1))
+    if [ "$i" -ge 15 ]; then
+      echo "the server did not start:" >&2
+      tail -n 3 "$log" >&2 2>/dev/null || true
+      exit 6
+    fi
+    sleep 1
+  done
+  printf 'ABUNDIO started=%s\n' "$how"
+fi
+"#;
+
+/// Install, start (unless one already answers), then probe, in one ssh
+/// (one password prompt).
 pub fn install_then_probe() -> String {
-    format!("{INSTALL_SCRIPT}\nset +eu\n{PROBE_SCRIPT}")
+    format!("{INSTALL_SCRIPT}\n{START_SCRIPT}\nset +eu\n{PROBE_SCRIPT}")
+}
+
+/// Start, then probe, in one ssh. Its arguments: the Agents to look for.
+pub fn start_then_probe() -> String {
+    format!("set -eu\n{START_SCRIPT}\nset +eu\n{PROBE_SCRIPT}")
 }
 
 /// `text` as one word for a POSIX shell.
@@ -134,6 +244,9 @@ pub struct Probe {
     pub complete: bool,
     /// The version an install just put in place.
     pub installed_now: Option<String>,
+    /// How a start just ran it: `systemd`, `launchd`, `detached`, or
+    /// `already` (it was running).
+    pub started: Option<String>,
 }
 
 pub fn parse_probe(text: &str) -> Probe {
@@ -162,6 +275,7 @@ pub fn parse_probe(text: &str) -> Probe {
             "shell_done" => p.shell_answered = true,
             "done" => p.complete = true,
             "install_done" => p.installed_now = Some(value),
+            "started" => p.started = Some(value),
             _ => {}
         }
     }
@@ -242,7 +356,9 @@ pub fn checklist(p: &Probe, version: &str) -> Vec<CheckItem> {
         out.push(if p.running {
             item("running", "ok", "Running")
         } else {
-            item("running", "error", "Not running").action("start")
+            item("running", "error", "Not running")
+                .fix("Start runs it as a service, so it comes back by itself.")
+                .action("start")
         });
     }
     out.push(reboot_item(p));
@@ -268,17 +384,23 @@ pub fn checklist(p: &Probe, version: &str) -> Vec<CheckItem> {
 }
 
 fn reboot_item(p: &Probe) -> CheckItem {
+    let linger = format!("Run once on the Host: sudo loginctl enable-linger {}", p.user);
     match (p.os.as_str(), p.service.as_deref()) {
         ("Linux", Some("systemd")) if p.linger == Some(true) => item("reboot", "ok", "Comes back after a reboot"),
-        ("Linux", Some("systemd")) => item("reboot", "warn", "Stops when you log out of the Host")
-            .fix(format!("Run once on the Host: sudo loginctl enable-linger {}", p.user)),
-        ("Linux", _) if p.systemd_user => item("reboot", "warn", "Not set up to come back after a reboot")
-            .fix("Install sets up a systemd user service."),
+        ("Linux", Some("systemd")) => {
+            item("reboot", "warn", "Stops soon after you log out of the Host").fix(linger)
+        }
+        // Start runs it as a service only for a lingering user: without
+        // linger systemd would stop it with the app's connection.
+        ("Linux", _) if p.systemd_user && p.linger == Some(true) => item("reboot", "warn", "Not set up to come back after a reboot")
+            .fix("Start sets it up as a systemd user service."),
+        ("Linux", _) if p.systemd_user => item("reboot", "warn", "Won't come back after a reboot")
+            .fix(format!("{linger}, so Start can set it up as a systemd user service.")),
         ("Linux", _) => item("reboot", "warn", "Won't come back after a reboot (no systemd --user)")
             .fix("Start it again from here after a reboot."),
         ("Darwin", Some("launchd")) => item("reboot", "ok", "Starts when you log in on the Mac"),
         ("Darwin", _) => item("reboot", "warn", "Not set up to start at login")
-            .fix("Install sets up a LaunchAgent."),
+            .fix("Start sets it up as a LaunchAgent."),
         _ => item("reboot", "warn", "Won't come back after a reboot"),
     }
 }
@@ -455,6 +577,45 @@ mod tests {
         let v = std::process::Command::new(&current).arg("version").output().unwrap();
         assert_eq!(String::from_utf8_lossy(&v.stdout).trim(), "abundio-server 9.9.9");
         assert_eq!(std::fs::read_link(&current).unwrap(), std::path::Path::new("9.9.9/abundio-server"));
+    }
+
+    /// The start script, run here with a fake server and no service
+    /// manager: it starts the server detached, waits until it answers, and
+    /// leaves a running one alone.
+    #[cfg(unix)]
+    #[test]
+    fn starts_the_server_once_and_waits_until_it_answers() {
+        let home = tempfile::tempdir().unwrap();
+        let d = home.path().join(".abundio-server");
+        std::fs::create_dir_all(d.join("9.9.9")).unwrap();
+        let fake = d.join("9.9.9/abundio-server");
+        std::fs::write(
+            &fake,
+            "#!/bin/sh\nd=\"$HOME/.abundio-server/data\"\ncase \"$1\" in\n version) echo abundio-server 9.9.9;;\n connect) [ -f \"$d/up\" ];;\n run) echo $$ > \"$d/pid\"; sleep 1; touch \"$d/up\"; exec sleep 30;;\nesac\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::os::unix::fs::symlink("9.9.9/abundio-server", d.join("current")).unwrap();
+        let start = || {
+            let mut c = std::process::Command::new("/bin/sh");
+            c.args(["-c", &start_then_probe(), "abundio-setup"])
+                .env("HOME", home.path())
+                .env("ABUNDIO_SETUP_SERVICE", "detached");
+            run(c, Box::new(std::io::empty()), std::time::Duration::from_secs(30))
+        };
+        let p = parse_probe(&start().unwrap());
+        let pid = std::fs::read_to_string(d.join("data/pid")).unwrap();
+        assert_eq!(p.started.as_deref(), Some("detached"));
+        assert!(p.running);
+        // Running already: left alone.
+        let again = parse_probe(&start().unwrap());
+        assert_eq!(again.started.as_deref(), Some("already"));
+        assert_eq!(std::fs::read_to_string(d.join("data/pid")).unwrap(), pid);
+        let _ = std::process::Command::new("kill").arg(pid.trim()).status();
+        // Not installed: says so.
+        std::fs::remove_file(d.join("current")).unwrap();
+        assert!(start().unwrap_err().contains("not installed"));
     }
 
     /// The real script, run here: it answers every question.
