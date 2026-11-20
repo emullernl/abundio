@@ -231,20 +231,63 @@ impl abundio_core::host_router::WindowSink for Windows {
 
 #[test]
 fn windows_on_a_host_get_its_answers_events_and_output() {
-    use abundio_core::host_router::{HostRouter, HostTarget};
     let dir = tempfile::tempdir().unwrap();
-    let mut server = server(dir.path());
+    let target = abundio_core::host_router::HostTarget::Direct {
+        server: env!("CARGO_BIN_EXE_abundio-server").into(),
+        data_dir: Some(dir.path().to_string_lossy().into_owned()),
+    };
+    routes_windows_to(target, dir.path());
+}
+
+/// Phase 7e: the same, end to end over the user's own `ssh`, to this
+/// computer (macOS: System Settings ▸ General ▸ Sharing ▸ Remote Login) or
+/// another that sees this folder. Key login only: ssh runs with
+/// `BatchMode=yes`, as at app start. Not run by default:
+///
+/// `ABUNDIO_SSH_TEST_HOST=localhost cargo test -p abundio-server --test run -- --ignored over_ssh`
+#[test]
+#[ignore = "needs ssh to a host with key login (ABUNDIO_SSH_TEST_HOST)"]
+fn over_ssh_windows_on_a_host_get_its_answers_events_and_output() {
+    let host = std::env::var("ABUNDIO_SSH_TEST_HOST").unwrap_or_else(|_| "localhost".into());
+    let dir = tempfile::tempdir().unwrap();
+    // `connect` takes the test's data folder after its subcommand, and the
+    // router puts the subcommand last: a wrapper puts it there.
+    let wrapper = dir.path().join("abundio-server-test");
+    std::fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nexec '{}' \"$@\" --data-dir '{}'\n",
+            env!("CARGO_BIN_EXE_abundio-server"),
+            dir.path().display()
+        ),
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let target = abundio_core::host_router::HostTarget::Ssh {
+        destination: host,
+        server: Some(wrapper.to_string_lossy().into_owned()),
+    };
+    routes_windows_to(target, dir.path());
+}
+
+/// A server on `dir`, reached through `target`: answers, events and output
+/// reach the Windows on it; it stops and comes back, and the router finds
+/// it again by itself.
+fn routes_windows_to(target: abundio_core::host_router::HostTarget, dir: &std::path::Path) {
+    use abundio_core::host_router::HostRouter;
+    let mut server = server(dir);
     let mut log = BufReader::new(server.stderr.take().unwrap()).lines().map_while(Result::ok);
     wait_for(&mut log, "waiting for a Client");
 
     let windows = std::sync::Arc::new(Windows::default());
     let router = HostRouter::new(windows.clone());
     router.set_backoff(vec![Duration::from_millis(100), Duration::from_millis(300)]);
-    let target = HostTarget::Direct {
-        server: env!("CARGO_BIN_EXE_abundio-server").into(),
-        data_dir: Some(dir.path().to_string_lossy().into_owned()),
-    };
-    router.connect("box", &target, &abundio_core::host_router::ConnectMode::Batch).unwrap();
+    if let Err(e) = router.connect("box", &target, &abundio_core::host_router::ConnectMode::Batch) {
+        panic!("could not connect: {e}");
+    }
     router.bind("w1", Some("box"));
     router.bind("w2", Some("box"));
     // A Window on this computer is not routed.
@@ -319,7 +362,7 @@ fn windows_on_a_host_get_its_answers_events_and_output() {
         assert!(start.elapsed() < Duration::from_secs(10), "no retry was reported");
         std::thread::sleep(Duration::from_millis(50));
     }
-    let mut again = self::server(dir.path());
+    let mut again = self::server(dir);
     let mut log = BufReader::new(again.stderr.take().unwrap()).lines().map_while(Result::ok);
     wait_for(&mut log, "waiting for a Client");
     let start = Instant::now();
