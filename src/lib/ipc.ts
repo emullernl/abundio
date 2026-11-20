@@ -226,7 +226,49 @@ export const hostsApi = {
 	connect: (host: string, target: HostTarget) =>
 		invoke<string>("host_connect", { host, target }),
 	bind: (host: string | null) => invoke<void>("host_bind", { host }),
+	/** The Hosts the user added (Settings ▸ Hosts, phase 7d). */
+	list: () => invoke<HostEntry[]>("hosts_list"),
+	add: (name: string, target: HostTarget) =>
+		invoke<HostEntry>("hosts_add", { name, target }),
+	remove: (id: string) => invoke<void>("hosts_remove", { id }),
+	/** Connect to an added Host; resolves with its server's version. */
+	connectSaved: (hostId: string) =>
+		invoke<string>("host_connect_saved", { hostId }),
+	/** Run a host command on a Host this Window is not on. */
+	request: <T>(
+		hostId: string,
+		command: string,
+		args: Record<string, unknown>,
+	) => invoke<T>("host_request", { hostId, command, args }),
+	/** Open one of a Host's Profiles in a Window of its own. */
+	openRemoteProfile: (hostId: string, profileId: string, profileName: string) =>
+		invoke<string>("open_remote_profile_window", {
+			hostId,
+			profileId,
+			profileName,
+		}),
+	/** What this Window shows when it is on a remote Host. */
+	remoteProfileForWindow: () =>
+		invoke<RemoteBinding | null>("remote_profile_for_window"),
+	/** A remote Window's Profiles, on its Host. */
+	serverProfiles: () => invoke<Profile[]>("server_profile_list"),
+	/** Tell the Host which of its Profiles this Window shows. */
+	setClientProfile: (profileId: string) =>
+		invoke<void>("client_profile_set", { profileId }),
 };
+
+export interface HostEntry {
+	id: string;
+	name: string;
+	target: HostTarget;
+}
+
+export interface RemoteBinding {
+	hostId: string;
+	hostName: string;
+	profileId: string;
+	profileName: string;
+}
 
 export const layoutApi = {
 	/** Apply edits to a Tab's layout in Rust, the authority (`layoutSync.ts`). */

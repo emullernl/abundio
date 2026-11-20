@@ -129,6 +129,10 @@ export const HOST_API_COMMANDS: ReadonlySet<string> = new Set([
 	"telemetry_list_turns",
 	"telemetry_record_turn",
 	"telemetry_totals",
+	// A Host's own Profiles, for its remote Windows (phase 7d)
+	"server_profile_list",
+	"server_profile_create",
+	"client_profile_set",
 	// The Orchestrator
 	"orchestrator_agent_get",
 	"orchestrator_agent_set",

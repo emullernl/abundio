@@ -1,4 +1,6 @@
 pub mod agent_control;
+pub mod hosts;
+pub mod remote_windows;
 pub use abundio_core::agent_names;
 pub use abundio_core::agent_skills;
 pub mod host_commands;
@@ -355,35 +357,28 @@ pub fn build_menu(
     )?;
 
     // File menu — "New Window with Profile" is first (additive), "Switch
-    // Profile" is second (in-window swap, lossy). See ADR-0007.
-    #[cfg(target_os = "macos")]
-    let file_menu = Submenu::with_items(
-        handle,
-        "File",
-        true,
-        &[
-            &new_window_with_profile_submenu,
-            &switch_profile_submenu,
-            &PredefinedMenuItem::separator(handle)?,
-            &PredefinedMenuItem::close_window(handle, None)?,
-        ],
-    )?;
-
+    // Profile" is second (in-window swap, lossy). See ADR-0007. "Open Remote
+    // Profile…" (a Host's Profile in a Window of its own, phase 7d) shows in
+    // development builds only until the feature ships (phase 11).
+    let open_remote_item = MenuItem::with_id(handle, "open-remote-profile", "Open Remote Profile…", true, None::<&str>)?;
+    let file_separator = PredefinedMenuItem::separator(handle)?;
+    let file_separator_2 = PredefinedMenuItem::separator(handle)?;
+    let close_item = PredefinedMenuItem::close_window(handle, None)?;
+    let mut file_items: Vec<&dyn tauri::menu::IsMenuItem<Wry>> = Vec::new();
     #[cfg(not(target_os = "macos"))]
-    let file_menu = Submenu::with_items(
-        handle,
-        "File",
-        true,
-        &[
-            &settings_item,
-            &PredefinedMenuItem::separator(handle)?,
-            &new_window_with_profile_submenu,
-            &switch_profile_submenu,
-            &PredefinedMenuItem::separator(handle)?,
-            &PredefinedMenuItem::close_window(handle, None)?,
-            &quit_item,
-        ],
-    )?;
+    file_items.extend([&settings_item as &dyn tauri::menu::IsMenuItem<Wry>, &file_separator_2]);
+    file_items.push(&new_window_with_profile_submenu);
+    file_items.push(&switch_profile_submenu);
+    if cfg!(debug_assertions) {
+        file_items.push(&open_remote_item);
+    }
+    file_items.push(&file_separator);
+    file_items.push(&close_item);
+    #[cfg(not(target_os = "macos"))]
+    file_items.push(&quit_item);
+    #[cfg(target_os = "macos")]
+    let _ = &file_separator_2;
+    let file_menu = Submenu::with_items(handle, "File", true, &file_items)?;
 
     let edit_menu = Submenu::with_items(
         handle,
@@ -617,6 +612,17 @@ fn windows_snapshot(
 ) -> Vec<window_persistence::WindowEntry> {
     let tracker = app.try_state::<window_frame::PlacementTracker>();
     let mut entries = window_persistence::snapshot_from_state(state, tracker.as_deref());
+    // Windows on a remote Host come back on it (phase 7d).
+    if let Some(remote) = app.try_state::<remote_windows::RemoteWindows>() {
+        for (label, binding) in remote.snapshot() {
+            entries.push(window_persistence::WindowEntry {
+                placement: tracker.as_deref().and_then(|t| t.get(&label)),
+                profile_id: binding.profile_id.clone(),
+                label,
+                remote: Some(binding),
+            });
+        }
+    }
     if entries.is_empty() {
         if let Some((label, placement)) = tracker.and_then(|t| t.last_closed()) {
             entries.extend(window_persistence::placement_only_entry(&label, Some(placement)));
@@ -976,6 +982,7 @@ pub fn run() {
             app.manage(host_router::HostRouter::new(std::sync::Arc::new(
                 host_commands::RouterWindows(app.handle().clone()),
             )));
+            app.manage(remote_windows::RemoteWindows::default());
             app.manage::<event_sink::Events>(tauri_sink::TauriSink::shared(
                 app.handle(),
                 pty_channels,
@@ -1135,10 +1142,16 @@ pub fn run() {
 
             // Windows restored now get their desktop back, and so do the File
             // windows each of them reopens first (ADR-0051).
+            // Windows on a remote Host come back on it (phase 7d), apart
+            // from the local Profiles (a Host's Profile ids are its own).
+            let remote_entries: Vec<window_persistence::WindowEntry> = window_persistence::load()
+                .into_iter()
+                .filter(|e| e.remote.is_some())
+                .collect();
             {
                 let launch = app.state::<window_frame::LaunchRestore>();
                 launch.add(main_label);
-                for entry in &plan.additional {
+                for entry in plan.additional.iter().chain(&remote_entries) {
                     launch.add(&entry.label);
                 }
             }
@@ -1178,7 +1191,29 @@ pub fn run() {
                             );
                         }
                     }
+                    // Bound at once, connected in the background: a slow or
+                    // unreachable Host never holds up the other windows.
+                    let mut hosts_to_connect = std::collections::BTreeSet::new();
+                    for entry in remote_entries {
+                        let Some(binding) = entry.remote else { continue };
+                        hosts_to_connect.insert(binding.host_id.clone());
+                        if let Err(e) = remote_windows::open(
+                            &app_handle,
+                            binding,
+                            Some((entry.label.clone(), entry.placement.clone())),
+                        ) {
+                            eprintln!("[abundio] failed to restore a remote window: {e}");
+                        }
+                    }
                     window_frame::show_launch_windows(&app_handle);
+                    for host_id in hosts_to_connect {
+                        let app_handle = app_handle.clone();
+                        std::thread::spawn(move || {
+                            if let Err(e) = remote_windows::connect(&app_handle, &host_id) {
+                                log::warn!("[host] could not reconnect to {host_id} at start: {e}");
+                            }
+                        });
+                    }
             });
 
             Ok(())
@@ -1225,10 +1260,8 @@ pub fn run() {
 
                 // A Window on a remote Host: that Host forgets it (its PTYs
                 // keep running there).
-                if let Some(router) =
-                    app_handle.try_state::<std::sync::Arc<host_router::HostRouter>>()
-                {
-                    router.window_closed(&label);
+                if app_handle.try_state::<remote_windows::RemoteWindows>().is_some() {
+                    remote_windows::on_destroyed(&app_handle, &label);
                 }
 
                 // The settings window is auxiliary — never claims a profile,
@@ -1364,6 +1397,14 @@ pub fn run() {
         })
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();
+            if id == "open-remote-profile" {
+                let _ = window_management::emit_to_one_profile_window(
+                    app,
+                    "open-remote-profile",
+                    (),
+                );
+                return;
+            }
             if id == "navigator" {
                 // One Window only: a broadcast would open it in every Window.
                 let _ = window_management::emit_to_one_profile_window(
@@ -1598,6 +1639,13 @@ pub fn run() {
             host_commands::host_call,
             host_commands::host_connect,
             host_commands::host_bind,
+            hosts::hosts_list,
+            hosts::hosts_add,
+            hosts::hosts_remove,
+            remote_windows::remote_profile_for_window,
+            remote_windows::host_connect_saved,
+            remote_windows::host_request,
+            remote_windows::open_remote_profile_window,
             commands::pty_output_subscribe,
             commands::profile_list,
             commands::profile_create,

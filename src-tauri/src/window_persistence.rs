@@ -21,6 +21,10 @@ pub struct WindowEntry {
     /// Window placement, and for a window that was never placed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placement: Option<crate::window_placement::Remembered>,
+    /// A Window showing a Remote profile (phase 7d): `profile_id` is then
+    /// the Host's, restored apart from the local Profiles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<crate::remote_windows::RemoteBinding>,
 }
 
 pub fn windows_json_path() -> PathBuf {
@@ -67,6 +71,7 @@ pub fn snapshot_from_state(
             placement: tracker.and_then(|t| t.get(&label)),
             label,
             profile_id,
+            remote: None,
         })
         .collect()
 }
@@ -83,6 +88,7 @@ pub fn placement_only_entry(
         label: label.to_string(),
         profile_id: String::new(),
         placement: Some(p),
+        remote: None,
     })
 }
 
@@ -131,7 +137,8 @@ pub fn plan_restoration(
     let mut entries: Vec<WindowEntry> = entries
         .into_iter()
         .filter(|e| {
-            crate::window_management::is_profile_window_label(&e.label)
+            e.remote.is_none()
+                && crate::window_management::is_profile_window_label(&e.label)
                 && valid_profile_ids.contains(e.profile_id.as_str())
         })
         .filter(|e| seen_profiles.insert(e.profile_id.clone()))
@@ -230,11 +237,13 @@ mod tests {
                     label: "main".into(),
                     profile_id: "p1".into(),
                     placement: None,
+                    remote: None,
                 },
                 WindowEntry {
                     label: "window-abc".into(),
                     profile_id: "p2".into(),
                     placement: None,
+                    remote: None,
                 },
             ];
             let payload = serde_json::to_string_pretty(&entries).unwrap();
@@ -260,6 +269,7 @@ mod tests {
             label: label.into(),
             profile_id: profile.into(),
             placement: None,
+            remote: None,
         }
     }
 
@@ -495,5 +505,27 @@ mod tests {
     fn no_entry_or_a_broken_file_changes_nothing() {
         assert_eq!(upgrade_old_default_size(&saved(1680, 1240), "nope", OLD, NEW), None);
         assert_eq!(upgrade_old_default_size("not json", "settings", OLD, NEW), None);
+    }
+
+    #[test]
+    fn a_remote_window_is_never_restored_as_a_local_one() {
+        let remote = WindowEntry {
+            label: "window-r".into(),
+            // The server's default Profile has the local default's id.
+            profile_id: "p1".into(),
+            placement: None,
+            remote: Some(crate::remote_windows::RemoteBinding {
+                host_id: "h".into(),
+                host_name: "box".into(),
+                profile_id: "p1".into(),
+                profile_name: "Default".into(),
+            }),
+        };
+        let json = serde_json::to_string(&vec![remote.clone()]).unwrap();
+        let back: Vec<WindowEntry> = serde_json::from_str(&json).unwrap();
+        assert_eq!(back[0].remote, remote.remote);
+        let plan = plan_restoration(vec![remote], &ids(&["p1"]), "main", Some("p1"));
+        assert!(plan.additional.is_empty());
+        assert_eq!(plan.main_adopted_label, None);
     }
 }

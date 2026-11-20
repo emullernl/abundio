@@ -26,11 +26,16 @@ pub trait HostClients: Send + Sync {
     /// Whether the Client is still there (a spawn for a Window that closed
     /// meanwhile is killed).
     fn is_alive(&self, client: &ClientId) -> bool;
+    /// A Window on this Host says which of its Profiles it shows (a remote
+    /// Window, phase 7d). The desktop app keeps its own Windows' Profiles
+    /// itself, so it has nothing to do here.
+    fn set_profile(&self, _client: &ClientId, _profile_id: &str) {}
 }
 
 /// Everything a host command reaches.
 pub struct Host<'a> {
     pub workspaces: &'a WorkspaceStore,
+    pub profiles: &'a crate::profile_store::ProfileStore,
     pub ptys: &'a crate::pty_manager::PtyManager,
     pub status: &'a crate::status_store::StatusStore,
     pub layouts: &'a crate::layout_store::LayoutStore,
@@ -557,6 +562,17 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
             }
             Value::Null
         }
+        // ── Remote profiles (phase 7d): the Host's own Profiles ──
+        "server_profile_list" => json(host.profiles.list()?)?,
+        "server_profile_create" => {
+            let profile = host.profiles.create(&a!(c, raw, { name: String }).name)?;
+            host.events.broadcast("profiles-changed", ());
+            json(profile)?
+        }
+        "client_profile_set" => {
+            host.clients.set_profile(client, &a!(c, raw, { profile_id: String }).profile_id);
+            Value::Null
+        }
         _ => return Ok(None),
     };
     Ok(Some(out))
@@ -754,6 +770,7 @@ mod tests {
 
     struct World {
         workspaces: WorkspaceStore,
+        profiles: crate::profile_store::ProfileStore,
         ptys: crate::pty_manager::PtyManager,
         status: crate::status_store::StatusStore,
         layouts: crate::layout_store::LayoutStore,
@@ -780,8 +797,11 @@ mod tests {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         crate::migrations::run_migrations(&conn).unwrap();
         let sink = Arc::new(Sink::default());
+        let profiles_conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::migrations::run_migrations(&profiles_conn).unwrap();
         World {
             workspaces: WorkspaceStore::new(conn),
+            profiles: crate::profile_store::ProfileStore::new(profiles_conn),
             ptys: crate::pty_manager::PtyManager::new(),
             status: Default::default(),
             layouts: crate::layout_store::LayoutStore::new(),
@@ -810,6 +830,7 @@ mod tests {
     fn call(w: &World, client: &str, command: &str, a: Value) -> Result<Value, AbundioError> {
         let host = Host {
             workspaces: &w.workspaces,
+            profiles: &w.profiles,
             ptys: &w.ptys,
             status: &w.status,
             layouts: &w.layouts,
@@ -873,6 +894,7 @@ mod tests {
         assert!(e.to_string().contains("pty_resize: bad arguments"), "{e}");
         let host = Host {
             workspaces: &w.workspaces,
+            profiles: &w.profiles,
             ptys: &w.ptys,
             status: &w.status,
             layouts: &w.layouts,
@@ -909,6 +931,7 @@ mod tests {
         let w = world();
         let host = Host {
             workspaces: &w.workspaces,
+            profiles: &w.profiles,
             ptys: &w.ptys,
             status: &w.status,
             layouts: &w.layouts,

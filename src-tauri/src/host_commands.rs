@@ -29,6 +29,7 @@ impl HostClients for DesktopClients {
 /// Everything the host commands reach, from the app's managed state.
 pub(crate) fn with_host<R>(app: &AppHandle, f: impl FnOnce(&Host) -> R) -> R {
     let workspaces = app.state::<crate::workspace_store::WorkspaceStore>();
+    let profiles = app.state::<crate::profile_store::ProfileStore>();
     let ptys = app.state::<crate::pty_manager::PtyManager>();
     let status = app.state::<std::sync::Arc<crate::status_store::StatusStore>>();
     let layouts = app.state::<std::sync::Arc<crate::layout_store::LayoutStore>>();
@@ -52,6 +53,7 @@ pub(crate) fn with_host<R>(app: &AppHandle, f: impl FnOnce(&Host) -> R) -> R {
     let waits = app.state::<crate::control_protocol::WaitGraph>();
     f(&Host {
         workspaces: &workspaces,
+        profiles: &profiles,
         ptys: &ptys,
         status: &status,
         layouts: &layouts,
@@ -99,7 +101,7 @@ fn router(app: &AppHandle) -> std::sync::Arc<crate::host_router::HostRouter> {
 
 /// What a remote Host's failure looks like to the Window: the command's own
 /// error when it ran there.
-fn remote_error(e: crate::host_router::CallError) -> AbundioError {
+pub(crate) fn remote_error(e: crate::host_router::CallError) -> AbundioError {
     use crate::host_router::CallError;
     match e {
         CallError::Failed(Value::String(s)) => AbundioError::InvalidOperation(s),

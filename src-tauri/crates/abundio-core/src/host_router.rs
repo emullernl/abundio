@@ -105,6 +105,10 @@ pub struct HostRouter {
 /// Told when a connection ends, so its Windows can show it.
 pub const CONNECTION_LOST_EVENT: &str = "host-connection-lost";
 
+/// Told when a connection opens, so a Window that loaded before it can load
+/// again.
+pub const CONNECTED_EVENT: &str = "host-connected";
+
 struct Listener {
     host: String,
     router: Weak<HostRouter>,
@@ -173,6 +177,9 @@ impl HostRouter {
             .connections
             .insert(host.to_string(), Connection { client, _process: process });
         log::info!("[host] connected to {host} (server {version})");
+        for window in self.windows_on(host) {
+            self.sink.emit_to(&window, CONNECTED_EVENT, serde_json::json!({ "host": host }));
+        }
         Ok(version)
     }
 
@@ -224,6 +231,18 @@ impl HostRouter {
         if let Some(host) = host {
             self.forget_window_on(window, &host);
         }
+    }
+
+    /// Run a host command for `window` on `host`, whichever Host the Window
+    /// is on (a local Window listing a Host's Profiles before opening one).
+    pub fn call_on(&self, host: &str, window: &str, command: &str, args: Value) -> Result<Value, CallError> {
+        let Some(client) = self.client_of(host) else {
+            return Err(CallError::NotConnected(host.to_string()));
+        };
+        client.request(window, command, args, None::<Duration>).map_err(|e| match e {
+            RequestError::Failed(v) => CallError::Failed(v),
+            RequestError::ConnectionLost | RequestError::TimedOut => CallError::ConnectionLost,
+        })
     }
 
     /// Run a host command for `window` on its Host. `None` when the Window is

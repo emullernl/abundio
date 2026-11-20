@@ -10,9 +10,11 @@ import { AgentsSection } from "./Settings/AgentsSection";
 import { EditorSection } from "./Settings/EditorSection";
 import { FontsSection } from "./Settings/FontsSection";
 import { GithubSection } from "./Settings/GithubSection";
+import { HostsSection } from "./Settings/HostsSection";
 import {
 	AgentIcon,
 	EditorIcon,
+	HostIcon,
 	KeyboardIcon,
 	PaletteIcon,
 	PrIcon,
@@ -49,6 +51,7 @@ const SECTION_ICON: Record<SettingsSection, React.ReactNode> = {
 	tasks: <TaskIcon />,
 	keyboard: <KeyboardIcon />,
 	profiles: <ProfileIcon />,
+	hosts: <HostIcon />,
 	github: <PrIcon />,
 	updates: <UpdateIcon />,
 };
@@ -63,6 +66,7 @@ const SECTION_BODY: Record<SettingsSection, React.ReactNode> = {
 	tasks: <TasksSection />,
 	keyboard: <KeyboardSection />,
 	profiles: <ProfilesSection />,
+	hosts: <HostsSection />,
 	github: <GithubSection />,
 	updates: <UpdatesSection />,
 };

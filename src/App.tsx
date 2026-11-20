@@ -13,6 +13,7 @@ import { Navigator } from "./components/Navigator/Navigator";
 import { NewTaskDialog } from "./components/NewTask/NewTaskDialog";
 import { NewWorkspaceDialog } from "./components/NewWorkspaceDialog";
 import { OpenInDevEnvButton } from "./components/OpenInDevEnvButton";
+import { OpenRemoteProfileDialog } from "./components/OpenRemoteProfileDialog";
 import { OrchestratorView } from "./components/Orchestrator/OrchestratorView";
 import { OVERVIEW_BAR_HEIGHT, OverviewBar } from "./components/OverviewBar";
 import { RightSidebar } from "./components/RightSidebar/RightSidebar";
@@ -385,6 +386,7 @@ export function App() {
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	const [fileSearchOpen, setFileSearchOpen] = useState(false);
 	const [navigatorOpen, setNavigatorOpen] = useState(false);
+	const [openRemoteOpen, setOpenRemoteOpen] = useState(false);
 	const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
 
 	// LaunchPicker is shared for new-tab and split flows
@@ -881,6 +883,17 @@ export function App() {
 			setFileSearchOpen(false);
 			setNavigatorOpen(true);
 		});
+		return () => {
+			unlisten.then((fn) => fn());
+		};
+	}, []);
+
+	// File ▸ Open Remote Profile… (phase 7d, development builds). Rust aims
+	// it at one Window.
+	useEffect(() => {
+		const unlisten = listenToThisWindow<void>("open-remote-profile", () =>
+			setOpenRemoteOpen(true),
+		);
 		return () => {
 			unlisten.then((fn) => fn());
 		};
@@ -1472,6 +1485,9 @@ export function App() {
 				onClose={() => setFileSearchOpen(false)}
 			/>
 			<Navigator open={navigatorOpen} onClose={() => setNavigatorOpen(false)} />
+			{openRemoteOpen && (
+				<OpenRemoteProfileDialog onClose={() => setOpenRemoteOpen(false)} />
+			)}
 			{newTaskRequest && <NewTaskDialog request={newTaskRequest} />}
 			<LaunchPicker
 				isOpen={!!launchPicker}

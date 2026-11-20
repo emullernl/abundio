@@ -66,6 +66,14 @@ const DESKTOP = [
 	// Which Host a Window is on, and the connection to it (phase 7c).
 	"host_connect",
 	"host_bind",
+	// Hosts the user added and the Windows on them (phase 7d).
+	"hosts_list",
+	"hosts_add",
+	"hosts_remove",
+	"host_connect_saved",
+	"host_request",
+	"open_remote_profile_window",
+	"remote_profile_for_window",
 	"updater_check",
 	"updater_download",
 	"updater_install_now",
@@ -180,6 +188,10 @@ const HOST = [
 	"pty_write",
 	"pty_write_snapshot",
 	"status_apply",
+	// A Host's own Profiles, for its remote Windows (phase 7d).
+	"server_profile_list",
+	"server_profile_create",
+	"client_profile_set",
 	// The door to the host commands above for a local Profile (phase 7b).
 	"host_call",
 	"agent_commands_set",

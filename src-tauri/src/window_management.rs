@@ -337,46 +337,10 @@ pub fn open_window_with_profile_and_label(
         )));
     }
 
-    // Match the main window's chrome on macOS: native title bar is overlaid
-    // by transparent drag region, traffic lights float on top of content, no
-    // OS-drawn title (the React Titlebar component renders it itself). The
-    // tauri.macos.conf.json applies these settings to the conf-spawned main
-    // window — we replicate them here for every additional window.
-    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
-    let mut builder =
-        WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
-            .title(&window_title_for(&profile_name))
-            .inner_size(1200.0, 800.0)
-            .min_inner_size(600.0, 400.0)
-            // Hidden until placed, so it never shows at the default spot first.
-            .visible(false)
-            // A restored window shows without focus, which Windows and Linux
-            // only do for a window built unfocused (window_raise.rs).
-            .focused(desired_label.is_none());
-    #[cfg(target_os = "macos")]
-    {
-        builder = builder
-            .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .hidden_title(true);
-    }
-    let result = builder.build();
+    let result = build_profile_window(app, &label, &window_title_for(&profile_name), desired_label.is_some(), placement);
 
     match result {
-        Ok(window) => {
-            // Only the restore at app start asks for a label. Those windows
-            // get their desktop back and show together at the end of the
-            // restore (`window_frame::show_launch_windows`); a new window
-            // shows now, focused.
-            if desired_label.is_some() {
-                let desktop = crate::window_frame::place(&window, placement, true);
-                if let Some(launch) = app.try_state::<crate::window_frame::LaunchRestore>() {
-                    launch.defer_show(&label, desktop);
-                } else {
-                    crate::window_frame::show_placed(&window, None, false);
-                }
-            } else {
-                crate::window_frame::place_and_show(&window, placement, true, false);
-            }
+        Ok(_window) => {
             // Tell other windows their menus need to refresh ("open elsewhere"
             // dimming for the now-owned profile).
             let _ = app.emit("profile-ownership-changed", ());
@@ -392,6 +356,59 @@ pub fn open_window_with_profile_and_label(
             )))
         }
     }
+}
+
+/// Build a Profile window hidden, place it, and show it: now and focused for
+/// a new window, or with the other restored windows (`restoring`, ADR-0051).
+/// Shared by local and remote Profile windows (phase 7d).
+pub fn build_profile_window(
+    app: &AppHandle<Wry>,
+    label: &str,
+    title: &str,
+    restoring: bool,
+    placement: Option<crate::window_placement::Remembered>,
+) -> Result<tauri::WebviewWindow<Wry>, tauri::Error> {
+    let desired_label: Option<&str> = restoring.then_some(label);
+    // Match the main window's chrome on macOS: native title bar is overlaid
+    // by transparent drag region, traffic lights float on top of content, no
+    // OS-drawn title (the React Titlebar component renders it itself). The
+    // tauri.macos.conf.json applies these settings to the conf-spawned main
+    // window — we replicate them here for every additional window.
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    let mut builder =
+        WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
+            .title(title)
+            .inner_size(1200.0, 800.0)
+            .min_inner_size(600.0, 400.0)
+            // Hidden until placed, so it never shows at the default spot first.
+            .visible(false)
+            // A restored window shows without focus, which Windows and Linux
+            // only do for a window built unfocused (window_raise.rs).
+            .focused(desired_label.is_none());
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true);
+    }
+    let result = builder.build();
+
+    let window = result?;
+    // Only the restore at app start asks for a label. Those windows
+    // get their desktop back and show together at the end of the
+    // restore (`window_frame::show_launch_windows`); a new window
+    // shows now, focused.
+    if desired_label.is_some() {
+        let desktop = crate::window_frame::place(&window, placement, true);
+        if let Some(launch) = app.try_state::<crate::window_frame::LaunchRestore>() {
+            launch.defer_show(label, desktop);
+        } else {
+            crate::window_frame::show_placed(&window, None, false);
+        }
+    } else {
+        crate::window_frame::place_and_show(&window, placement, true, false);
+    }
+    Ok(window)
 }
 
 /// Creates a new Profile auto-named "Untitled" (or "Untitled N" on collision)

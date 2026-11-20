@@ -22,6 +22,7 @@ export const SETTINGS_SECTIONS = [
 	"tasks",
 	"keyboard",
 	"profiles",
+	"hosts",
 	"github",
 	"updates",
 ] as const;
@@ -63,6 +64,10 @@ export const SETTINGS_NAV: ReadonlyArray<{
 			{ id: "tasks", label: "Tasks" },
 			{ id: "keyboard", label: "Keyboard" },
 			{ id: "profiles", label: "Profiles" },
+			// Remote Hosts: development builds only until phase 11.
+			...(import.meta.env.DEV
+				? [{ id: "hosts" as const, label: "Hosts" }]
+				: []),
 			{ id: "github", label: "GitHub" },
 			{ id: "updates", label: "Updates" },
 		],

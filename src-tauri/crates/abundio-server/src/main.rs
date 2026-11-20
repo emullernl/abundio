@@ -178,11 +178,15 @@ impl abundio_core::host_api::HostClients for ServerClients {
     fn is_alive(&self, client: &ClientId) -> bool {
         self.connections.has_client(client.as_str())
     }
+    fn set_profile(&self, client: &ClientId, profile_id: &str) {
+        self.profiles.lock().unwrap().insert(client.as_str().to_string(), profile_id.to_string());
+    }
 }
 
 /// Everything the host commands reach on this server.
 struct ServerHost {
     workspaces: Arc<workspace_store::WorkspaceStore>,
+    profiles: abundio_core::profile_store::ProfileStore,
     env: Arc<env_vars::EnvVarStore>,
     ptys: Arc<pty_manager::PtyManager>,
     status: Arc<status_store::StatusStore>,
@@ -210,6 +214,7 @@ impl ServerHost {
     fn with_host<R>(&self, f: impl FnOnce(&abundio_core::host_api::Host) -> R) -> R {
         f(&abundio_core::host_api::Host {
                 workspaces: &self.workspaces,
+                profiles: &self.profiles,
                 ptys: &self.ptys,
                 status: &self.status,
                 layouts: &self.layouts,
@@ -375,6 +380,7 @@ fn run(data_dir: PathBuf) -> Result<(), String> {
     log::info!("hook server on 127.0.0.1:{}", hooks.port);
     let host = Arc::new(ServerHost {
         workspaces: workspaces.clone(),
+        profiles: abundio_core::profile_store::ProfileStore::new(open_db()?),
         env,
         ptys: ptys.clone(),
         status: status.clone(),
@@ -400,8 +406,11 @@ fn run(data_dir: PathBuf) -> Result<(), String> {
     {
         // A Client going away never stops its PTYs: their status is kept,
         // no longer sent to it.
-        let status = status.clone();
-        let gone: serve::ClientGone = Arc::new(move |c: &ClientId| status.release_client(c.as_str()));
+        let (status, gone_host) = (status.clone(), host.clone());
+        let gone: serve::ClientGone = Arc::new(move |c: &ClientId| {
+            status.release_client(c.as_str());
+            gone_host.clients.profiles.lock().unwrap().remove(c.as_str());
+        });
         serve::listen(&socket_path(&data_dir), connections, host.handler(), gone)?;
         log::info!("listening on {}", socket_path(&data_dir).display());
     }
