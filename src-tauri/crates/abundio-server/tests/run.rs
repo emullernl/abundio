@@ -550,3 +550,73 @@ fn an_app_that_falls_behind_skips_ahead_to_the_screen() {
     nix::sys::signal::kill(nix::unistd::Pid::from_raw(server.id() as i32), nix::sys::signal::Signal::SIGTERM).unwrap();
     assert!(server.wait().unwrap().success());
 }
+
+/// Phase 9 skip-ahead as the app lives it: the desktop's router, its
+/// connection paused (SIGSTOP, as a stalled link) while a pane floods,
+/// then resumed. The Window ends with the snapshot, then live output.
+#[test]
+fn a_paused_connection_brings_its_windows_the_screen() {
+    use abundio_core::host_router::{ConnectMode, HostRouter, HostTarget};
+    use abundio_core::screen_snapshot::RESYNC_MARK;
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = server(dir.path());
+    let mut log = BufReader::new(server.stderr.take().unwrap()).lines().map_while(Result::ok);
+    wait_for(&mut log, "waiting for a Client");
+    let windows = std::sync::Arc::new(Windows::default());
+    let router = HostRouter::new(windows.clone());
+    let target = HostTarget::Direct {
+        server: env!("CARGO_BIN_EXE_abundio-server").into(),
+        data_dir: Some(dir.path().to_string_lossy().into_owned()),
+    };
+    router.connect("box", &target, &ConnectMode::Batch).unwrap();
+    router.bind("w1", Some("box"));
+    let call = |command: &str, args: serde_json::Value| router.call("w1", command, args).unwrap().unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let profile = "00000000-0000-0000-0000-000000000001";
+    let ws = call("workspace_create", serde_json::json!({ "name": "R", "rootFolder": folder.path(), "profileId": profile }));
+    let script = folder.path().join("flood.sh");
+    std::fs::write(&script, "while [ ! -f go ]; do sleep 0.1; done\nseq 1 300000\necho FLOOD-DONE\nwhile :; do sleep 1; done\n").unwrap();
+    let pty = call(
+        "pty_spawn",
+        serde_json::json!({
+            "cwd": folder.path(), "cols": 80, "rows": 24, "workspaceId": ws["id"],
+            "command": format!("/bin/sh {}", script.display()),
+        }),
+    );
+    let pty = pty.as_str().unwrap().to_string();
+    // Pause the connection, as a stalled link would.
+    let connect_pid = {
+        let out = Command::new("pgrep").args(["-f", &format!("connect --data-dir {}", dir.path().display())]).output().unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    assert!(!connect_pid.is_empty(), "no connect process");
+    Command::new("kill").args(["-STOP", &connect_pid]).status().unwrap();
+    std::fs::write(folder.path().join("go"), "").unwrap();
+    wait_for(&mut log, "fell behind on");
+    std::thread::sleep(Duration::from_secs(3));
+    Command::new("kill").args(["-CONT", &connect_pid]).status().unwrap();
+    wait_for(&mut log, "skipped ahead on");
+    // What reached the Window for this pane, in order.
+    let start = Instant::now();
+    loop {
+        let frames = windows.frames.lock().unwrap().clone();
+        let mine: Vec<Vec<u8>> = frames
+            .iter()
+            .filter(|(w, _)| w == "w1")
+            .filter_map(|(_, f)| {
+                let n = f[0] as usize;
+                (f[1..1 + n] == *pty.as_bytes()).then(|| f[1 + n..].to_vec())
+            })
+            .collect();
+        if let Some(i) = mine.iter().position(|d| d.starts_with(RESYNC_MARK)) {
+            let after: Vec<u8> = mine[i..].concat();
+            if String::from_utf8_lossy(&after).contains("FLOOD-DONE") {
+                break;
+            }
+        }
+        assert!(start.elapsed() < Duration::from_secs(20), "no snapshot reached the Window ({} frames)", mine.len());
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(server.id() as i32), nix::sys::signal::Signal::SIGTERM).unwrap();
+    assert!(server.wait().unwrap().success());
+}

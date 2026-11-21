@@ -1666,10 +1666,21 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				// skip-ahead): it replaces everything the terminal had.
 				const snapshot = resyncSnapshot(data);
 				if (snapshot) {
+					console.info(
+						`[skip-ahead] ${paneId}: drawing the Host's screen (${snapshot.length} bytes)`,
+					);
 					if (managed.startupBuffer) managed.startupBuffer.length = 0;
 					managed.restoreData = null;
-					managed.term.reset();
-					managed.term.write(snapshot);
+					// The output still waiting to be written is older than the
+					// snapshot, which replaces it; RIS (ESC c) clears the terminal
+					// in step with what xterm has already been given.
+					managed.writes.discard();
+					const ris = new Uint8Array([0x1b, 0x63]);
+					const replace = new Uint8Array(ris.length + snapshot.length);
+					replace.set(ris);
+					replace.set(snapshot, ris.length);
+					managed.writes.push(replace);
+					managed.queuedAltScreen = scanAlternateScreen(snapshot, false).after;
 					return;
 				}
 				// Always parse and strip shell integration sequences in both modes,

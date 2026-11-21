@@ -272,6 +272,14 @@ impl HostListener for Listener {
 
     fn pty(&self, _client: &str, pty_id: &str, bytes: &[u8]) {
         let Some(router) = self.router.upgrade() else { return };
+        if bytes.starts_with(crate::screen_snapshot::RESYNC_MARK) {
+            log::info!(
+                "[host] {} sent {pty_id}'s screen ({} bytes) to {:?}",
+                self.host,
+                bytes.len(),
+                router.windows_on(&self.host)
+            );
+        }
         let frame = crate::event_sink::frame_pty_output(pty_id, bytes);
         for window in router.windows_on(&self.host) {
             router.sink.pty_frame(&window, &frame);
