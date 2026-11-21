@@ -128,6 +128,8 @@ pub struct PtyManager {
     exit_listener: Arc<std::sync::OnceLock<ExitListener>>,
     /// See [`PtyManager::on_title`] and [`PtyManager::on_shell`].
     output_listeners: Arc<OutputListeners>,
+    /// Each Client's size for each PTY: the last to act sizes it (phase 9).
+    pub sizes: crate::pty_sizes::PtySizes,
 }
 
 impl PtyManager {
@@ -140,6 +142,7 @@ impl PtyManager {
             exit_listener: Arc::new(std::sync::OnceLock::new()),
             output_listeners: Arc::default(),
             scrollback: AtomicUsize::new(crate::screen::DEFAULT_SCROLLBACK),
+            sizes: Default::default(),
         }
     }
 
@@ -603,6 +606,7 @@ impl PtyManager {
             let _ = entry.tx.send(PtyCommand::Kill);
         }
         self.entries.remove(pty_id);
+        self.sizes.forget_pty(pty_id);
         self.spawn_contexts.remove(pty_id);
         self.owner_windows.remove(pty_id);
         self.control_tokens.revoke_pty(pty_id);

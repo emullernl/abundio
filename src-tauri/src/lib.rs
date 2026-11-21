@@ -1330,6 +1330,9 @@ pub fn run() {
                 {
                     st.forget_client(&label);
                 }
+                if let Some(pm) = app_handle.try_state::<PtyManager>() {
+                    pm.sizes.forget_client(&label);
+                }
                 // And its PTYs. Snapshots were saved before the window was
                 // destroyed, and the logs stay, so nothing is lost; a Profile
                 // opened again starts fresh PTYs and never reattaches.

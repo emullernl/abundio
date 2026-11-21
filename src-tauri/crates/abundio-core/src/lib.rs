@@ -48,6 +48,7 @@ pub mod process_monitor;
 pub mod profile_store;
 pub mod prompt_actions;
 pub mod pty_manager;
+pub mod pty_sizes;
 pub mod screen;
 pub mod search;
 pub mod shell_env;

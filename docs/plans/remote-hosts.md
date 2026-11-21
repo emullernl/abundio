@@ -143,6 +143,8 @@ Done in steps: **8a** the probe and checklist (done: `host_setup.rs` in the core
 - Last-actor PTY sizing; bounded per-Client buffers with skip-ahead snapshots.
 - Two-Client tests: a layout edit on one appears on the other; resize follows the last actor; a slow Client skips ahead.
 
+Done in steps: **9a** last-actor sizing (done: `pty_sizes.rs` keeps each Client's size for each PTY; a Client's resize applies at once, and its typing first gives the PTY its size if another Client's is in force; a Client that goes forgets its sizes; `run.rs` has a two-app test against a real server: a Tab made in one app reaches the other's Window, and a pane printing `stty size` follows whichever app last resized or typed), **9b** slow Clients skip ahead to an emulator snapshot, **9c** the shared-state audit and its two-Client tests.
+
 #### 10. Joined profiles
 
 - A local Profile's list of Joined profiles (desktop DB); "+ Join remote profile…", Add Host's last step, "Leave".

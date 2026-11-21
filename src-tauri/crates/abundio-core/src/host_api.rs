@@ -143,12 +143,20 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
         "pty_spawn" => json(pty_spawn(host, client, args(c, raw)?)?)?,
         "pty_write" => {
             let a = a!(c, raw, { pty_id: String, data: String });
+            // Typing from a Client whose view has another size: the PTY
+            // takes its size first (last-actor sizing, phase 9).
+            if let Some((cols, rows)) = host.ptys.sizes.typed(client.as_str(), &a.pty_id) {
+                host.ptys.resize(&a.pty_id, cols, rows)?;
+            }
             // As typed in xterm.js: UTF-8 text.
             json(host.ptys.write(&a.pty_id, a.data.into_bytes())?)?
         }
         "pty_resize" => {
             let a = a!(c, raw, { pty_id: String, cols: u16, rows: u16 });
-            json(host.ptys.resize(&a.pty_id, a.cols, a.rows)?)?
+            match host.ptys.sizes.resized(client.as_str(), &a.pty_id, (a.cols, a.rows)) {
+                Some((cols, rows)) => json(host.ptys.resize(&a.pty_id, cols, rows)?)?,
+                None => json(())?,
+            }
         }
         "pty_kill" => json(host.ptys.kill(&a!(c, raw, { pty_id: String }).pty_id)?)?,
         "pty_redraw" => json(host.ptys.redraw(&a!(c, raw, { pty_id: String }).pty_id)?)?,
@@ -716,6 +724,8 @@ fn pty_spawn(host: &Host, client: &ClientId, a: SpawnArgs) -> Result<String, Abu
         a.inherit_from_workspace_id.as_deref(),
         a.task.as_ref(),
     )?;
+    // The spawning Client's view has this size.
+    host.ptys.sizes.resized(client.as_str(), &pty_id, (a.cols, a.rows));
     // A spawn the Window sent just before it closed can land after its
     // PTYs were killed with it: kill this one too if the Window is gone.
     if !host.clients.is_alive(client) {

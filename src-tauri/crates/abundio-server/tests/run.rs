@@ -379,3 +379,96 @@ fn routes_windows_to(target: abundio_core::host_router::HostTarget, dir: &std::p
     let list = call("w1", "workspace_list", serde_json::json!({ "profileId": profile }));
     assert!(list.to_string().contains(ws["id"].as_str().unwrap()), "{list}");
 }
+
+/// What one desktop app heard from the server.
+#[derive(Default)]
+struct Heard {
+    events: std::sync::Mutex<Vec<(Option<String>, String)>>,
+}
+
+impl abundio_core::host_client::HostListener for Heard {
+    fn event(&self, client: Option<&str>, name: &str, _payload: serde_json::Value) {
+        self.events.lock().unwrap().push((client.map(String::from), name.to_string()));
+    }
+    fn pty(&self, _client: &str, _pty_id: &str, _bytes: &[u8]) {}
+    fn closed(&self, _why: &str) {}
+}
+
+fn until(what: &str, secs: u64, mut done: impl FnMut() -> bool) {
+    let start = Instant::now();
+    while !done() {
+        assert!(start.elapsed() < Duration::from_secs(secs), "{what}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Phase 9: two desktop apps on one Host, each with a Window on the same
+/// Profile. What one changes reaches the other; a pane's PTY takes the size
+/// of whichever app last acted on it.
+#[test]
+fn two_apps_on_one_host_share_its_profile_and_take_turns_sizing_a_pane() {
+    use abundio_core::host_client::HostProcess;
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = server(dir.path());
+    let mut log = BufReader::new(server.stderr.take().unwrap()).lines().map_while(Result::ok);
+    wait_for(&mut log, "waiting for a Client");
+    let (heard_a, heard_b) = (std::sync::Arc::new(Heard::default()), std::sync::Arc::new(Heard::default()));
+    let (a, _pa) = HostProcess::spawn(connect_command(dir.path()), heard_a.clone()).unwrap();
+    let (b, _pb) = HostProcess::spawn(connect_command(dir.path()), heard_b.clone()).unwrap();
+    let call = |app: &abundio_core::host_client::HostClient, w: &str, command: &str, args: serde_json::Value| {
+        app.request(w, command, args, Some(Duration::from_secs(10))).unwrap()
+    };
+    let profile = "00000000-0000-0000-0000-000000000001";
+    call(&a, "laptop", "client_profile_set", serde_json::json!({ "profileId": profile }));
+    call(&b, "desk", "client_profile_set", serde_json::json!({ "profileId": profile }));
+
+    // A Tab made on the laptop reaches the desk's Window.
+    let folder = tempfile::tempdir().unwrap();
+    let ws = call(&a, "laptop", "workspace_create", serde_json::json!({ "name": "R", "rootFolder": folder.path(), "profileId": profile }));
+    call(&a, "laptop", "tab_create", serde_json::json!({ "workspaceId": ws["id"], "name": "Two" }));
+    until("the desk never heard of the new Tab", 10, || {
+        heard_b.events.lock().unwrap().iter().any(|(c, e)| c.as_deref() == Some("desk") && e == "tabs-changed")
+    });
+    assert!(!heard_a.events.lock().unwrap().iter().any(|(_, e)| e == "tabs-changed"), "the laptop made it");
+
+    // A pane that prints its size whenever it changes.
+    let script = folder.path().join("sizes.sh");
+    std::fs::write(&script, "trap 'stty size' WINCH\nstty size\nwhile :; do sleep 0.1; done\n").unwrap();
+    let pty = call(
+        &a,
+        "laptop",
+        "pty_spawn",
+        serde_json::json!({
+            "cwd": folder.path(), "cols": 80, "rows": 24, "workspaceId": ws["id"],
+            "command": format!("/bin/sh {}", script.display()),
+        }),
+    );
+    let pty = pty.as_str().unwrap().to_string();
+    let last_size = || {
+        let screen = call(&b, "desk", "pty_read_screen", serde_json::json!({ "ptyId": pty, "visible": true }));
+        screen
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|l| l.as_str())
+            .filter(|l| l.split_whitespace().count() == 2 && l.split_whitespace().all(|w| w.parse::<u16>().is_ok()))
+            .last()
+            .map(|l| l.trim().to_string())
+    };
+    until("the pane never printed its size", 10, || last_size().as_deref() == Some("24 80"));
+    // Each app sizes its own view: the last one wins.
+    call(&a, "laptop", "pty_resize", serde_json::json!({ "ptyId": pty, "cols": 100, "rows": 30 }));
+    until("the laptop's resize", 10, || last_size().as_deref() == Some("30 100"));
+    call(&b, "desk", "pty_resize", serde_json::json!({ "ptyId": pty, "cols": 160, "rows": 50 }));
+    until("the desk's resize", 10, || last_size().as_deref() == Some("50 160"));
+    // Typing on the laptop gives the pane the laptop's size again.
+    call(&a, "laptop", "pty_write", serde_json::json!({ "ptyId": pty, "data": "" }));
+    until("typing on the laptop", 10, || last_size().as_deref() == Some("30 100"));
+    // The laptop app goes: its size no longer counts.
+    drop(_pa);
+    call(&b, "desk", "pty_write", serde_json::json!({ "ptyId": pty, "data": "" }));
+    until("typing on the desk", 10, || last_size().as_deref() == Some("50 160"));
+
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(server.id() as i32), nix::sys::signal::Signal::SIGTERM).unwrap();
+    assert!(server.wait().unwrap().success());
+}

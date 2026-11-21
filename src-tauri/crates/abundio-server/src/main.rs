@@ -409,6 +409,7 @@ fn run(data_dir: PathBuf) -> Result<(), String> {
         let (status, gone_host) = (status.clone(), host.clone());
         let gone: serve::ClientGone = Arc::new(move |c: &ClientId| {
             status.release_client(c.as_str());
+            gone_host.ptys.sizes.forget_client(c.as_str());
             gone_host.clients.profiles.lock().unwrap().remove(c.as_str());
         });
         serve::listen(&socket_path(&data_dir), connections, host.handler(), gone)?;
