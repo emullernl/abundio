@@ -49,7 +49,7 @@ _Avoid_: space, group, namespace, context
 **Host**: The machine where a Profile's Workspaces, PTYs and Agents live: this computer for a local Profile, a server for a **Remote profile**. A Profile's Host is fixed when the Profile is made.
 _Avoid_: server (for the machine), remote, box, machine
 
-**Host settings**: The settings that belong to a **Host** rather than to the person using the app, because they describe that machine: its Agent list (which Agents are on, and its custom Agents), whether Abundio writes its hooks and skill into the Agents there, whether Agent control is on, its Prompt actions, its default shell and its terminal scrollback. Every Profile on a Host shares them, and so does every Client attached to it. A new Host's Agent list starts as the built-in Agents installed there. Appearance, fonts, the keymap and the rest stay with this computer.
+**Host settings**: The settings that belong to a **Host** rather than to the person using the app, because they describe that machine: its Agent list (which Agents are on, and its custom Agents), whether Abundio writes its hooks and skill into the Agents there, whether Agent control is on, its default shell and its terminal scrollback. Every Profile on a Host shares them, and so does every Client attached to it. A new Host's Agent list starts as the built-in Agents installed there. Appearance, fonts, the keymap, Prompt actions and the rest stay with this computer.
 _Avoid_: remote settings, server settings, per-profile settings
 
 **Remote profile**: A Profile whose **Host** is not the computer the desktop app runs on. Its Agents keep running, keep their status and keep serving Agent control while no Client is attached.
