@@ -2031,7 +2031,7 @@ setRoutingLookups({
 onSharedFromRust<{ profileId: string }>("workspaces-changed", (change) => {
 	// A Joined profile's list is read again by its own section (phase 10).
 	if (change.profileId !== fallbackProfileId()) {
-		joinedListeners.forEach((fn) => fn(change.profileId));
+		for (const fn of joinedListeners) fn(change.profileId);
 		return;
 	}
 	workspacesApi
