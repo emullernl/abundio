@@ -351,6 +351,9 @@ export const pty = {
 	redraw: (ptyId: string) => invoke<boolean>("pty_redraw", { ptyId }),
 
 	kill: (ptyId: string) => invoke<void>("pty_kill", { ptyId }),
+	/** Which of these PTYs still run where the Window's backend is: on a
+	 *  Host, those a Window reattaches to instead of starting afresh. */
+	alive: (ptyIds: string[]) => invoke<string[]>("pty_alive", { ptyIds }),
 
 	/** The PTY's screen as text, from its Rust emulator (ADR-0063): wrapped
 	 *  rows joined, blank rows at the end dropped, a dim suggestion after the

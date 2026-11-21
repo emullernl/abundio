@@ -124,6 +124,20 @@ pub fn send_tabs_changed(
     }
 }
 
+/// The Profile's other Windows (on a Host: those of other apps too), which
+/// must hear what `client` changed in the Profile's shared state (phase 9).
+fn others_on_profile(host: &Host, client: &ClientId, profile_id: &str) -> Vec<ClientId> {
+    crate::layout_store::broadcast_targets(&host.clients.profiles(), profile_id, client)
+}
+
+/// The Profile's Workspaces changed (made, renamed, moved, deleted): its
+/// other Windows read the list again.
+fn workspaces_changed(host: &Host, client: &ClientId, profile_id: &str) {
+    for target in others_on_profile(host, client, profile_id) {
+        host.events.to_client(&target, "workspaces-changed", serde_json::json!({ "profileId": profile_id }));
+    }
+}
+
 /// Run one host command for `client`. `None` when the command is not one of
 /// these.
 pub fn dispatch(host: &Host, client: &ClientId, command: &str, raw: Value) -> Option<Result<Value, AbundioError>> {
@@ -159,6 +173,7 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
             }
         }
         "pty_kill" => json(host.ptys.kill(&a!(c, raw, { pty_id: String }).pty_id)?)?,
+        "pty_alive" => json(host.ptys.alive(&a!(c, raw, { pty_ids: Vec<String> }).pty_ids))?,
         "pty_redraw" => json(host.ptys.redraw(&a!(c, raw, { pty_id: String }).pty_id)?)?,
         "pty_read_screen" => {
             let a = a!(c, raw, { pty_id: String, visible: bool, lines: Option<usize> });
@@ -254,7 +269,9 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
             let a = a!(c, raw, { name: String, root_folder: String, profile_id: String });
             // One folder per Profile, never an Orchestrator folder (GLOSSARY.md).
             crate::workspace_folders::enforce(&folder_check(host, &a.root_folder, &a.profile_id, None)?)?;
-            json(host.workspaces.create(&a.name, &a.root_folder, &a.profile_id)?)?
+            let made = host.workspaces.create(&a.name, &a.root_folder, &a.profile_id)?;
+            workspaces_changed(host, client, &a.profile_id);
+            json(made)?
         }
         "workspace_update" => {
             let a = a!(c, raw, { id: String, updates: WorkspaceUpdate });
@@ -263,9 +280,21 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
                     crate::workspace_folders::enforce(&folder_check(host, folder, &profile_id, Some(&a.id))?)?;
                 }
             }
-            json(host.workspaces.update(&a.id, a.updates)?)?
+            host.workspaces.update(&a.id, a.updates)?;
+            if let Some(profile_id) = host.workspaces.profile_of(&a.id)? {
+                workspaces_changed(host, client, &profile_id);
+            }
+            json(())?
         }
-        "workspace_delete" => json(host.workspaces.delete(&a!(c, raw, { id: String }).id)?)?,
+        "workspace_delete" => {
+            let id = a!(c, raw, { id: String }).id;
+            let profile_id = host.workspaces.profile_of(&id)?;
+            host.workspaces.delete(&id)?;
+            if let Some(profile_id) = profile_id {
+                workspaces_changed(host, client, &profile_id);
+            }
+            json(())?
+        }
         "workspace_folder_check" => {
             let a = a!(c, raw, { root_folder: String, profile_id: String });
             json(folder_check(host, &a.root_folder, &a.profile_id, None)?)?
@@ -274,7 +303,14 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
             let rows = host.workspaces.folder_rows(&a!(c, raw, { profile_id: String }).profile_id)?;
             json(crate::workspace_store::missing_ids(rows, |p| std::path::Path::new(p).is_dir()))?
         }
-        "workspace_reorder" => json(host.workspaces.reorder_workspaces(&a!(c, raw, { ids: Vec<String> }).ids)?)?,
+        "workspace_reorder" => {
+            let ids = a!(c, raw, { ids: Vec<String> }).ids;
+            host.workspaces.reorder_workspaces(&ids)?;
+            if let Some(profile_id) = ids.first().map(|id| host.workspaces.profile_of(id)).transpose()?.flatten() {
+                workspaces_changed(host, client, &profile_id);
+            }
+            json(())?
+        }
         "workspace_restore_set" => json(host.workspaces.restore_set(&a!(c, raw, { profile_id: String }).profile_id)?)?,
         "workspace_set_restore_active" => {
             let a = a!(c, raw, { profile_id: String, id: Option<String> });
@@ -493,7 +529,17 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
         "note_get" => json(host.workspaces.get_note(&a!(c, raw, { workspace_id: String }).workspace_id)?)?,
         "note_set" => {
             let a = a!(c, raw, { workspace_id: String, content: String });
-            json(host.workspaces.set_note(&a.workspace_id, &a.content)?)?
+            host.workspaces.set_note(&a.workspace_id, &a.content)?;
+            if let Some(profile_id) = host.workspaces.profile_of(&a.workspace_id)? {
+                for target in others_on_profile(host, client, &profile_id) {
+                    host.events.to_client(
+                        &target,
+                        "note-changed",
+                        serde_json::json!({ "workspaceId": a.workspace_id, "content": a.content }),
+                    );
+                }
+            }
+            json(())?
         }
         "telemetry_record_turn" => {
             json(host.workspaces.record_agent_turn(&a!(c, raw, { turn: crate::workspace_store::AgentTurnRecord }).turn)?)?
@@ -876,11 +922,27 @@ mod tests {
         let again = call(&w, "w1", "workspace_create", serde_json::json!({ "name": "X", "rootFolder": folder, "profileId": PID }));
         assert!(again.is_err());
 
+        // The Profile's other Window hears of the new Workspace (phase 9).
+        assert_eq!(*w.sink.0.lock().unwrap(), vec![("w2".to_string(), "workspaces-changed".to_string())]);
+        w.sink.0.lock().unwrap().clear();
+
         let tab = call(&w, "w1", "tab_create", serde_json::json!({ "workspaceId": ws_id, "name": "T" })).unwrap();
         assert_eq!(tab["name"], "T");
         assert_eq!(*w.sink.0.lock().unwrap(), vec![("w2".to_string(), "tabs-changed".to_string())]);
+        w.sink.0.lock().unwrap().clear();
+        // A rename, a note and a delete reach it too; never the Window that
+        // made them.
+        call(&w, "w1", "workspace_update", serde_json::json!({ "id": ws_id, "updates": { "name": "Renamed" } })).unwrap();
+        call(&w, "w1", "note_set", serde_json::json!({ "workspaceId": ws_id, "content": "remember" })).unwrap();
+        call(&w, "w1", "workspace_delete", serde_json::json!({ "id": ws_id })).unwrap();
+        let heard: Vec<(String, String)> = w.sink.0.lock().unwrap().clone();
+        assert_eq!(
+            heard,
+            [("w2", "workspaces-changed"), ("w2", "note-changed"), ("w2", "workspaces-changed")]
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+        );
         let listed = call(&w, "w2", "workspace_list", serde_json::json!({ "profileId": PID })).unwrap();
-        assert_eq!(listed.as_array().unwrap().len(), 1);
+        assert_eq!(listed.as_array().unwrap().len(), 0, "deleted above");
         assert_eq!(call(&w, "w1", "default_shell", Value::Null).unwrap().as_str().map(|s| !s.is_empty()), Some(true));
     }
 

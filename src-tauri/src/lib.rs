@@ -1005,8 +1005,8 @@ pub fn run() {
                 app.state::<PtyManager>().on_exit(std::sync::Arc::new(move |pty, code| {
                     use event_sink::EventsExt;
                     let config = status_machine::StatusConfig::default();
-                    if let Some((owner, update)) = status.exit_update(pty, code, &config) {
-                        events.to_client(&owner, "status-updates", vec![update]);
+                    for (watcher, update) in status.exit_update(pty, code, &config) {
+                        events.to_client(&watcher, "status-updates", vec![update]);
                     }
                 }));
             }

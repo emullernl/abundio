@@ -221,8 +221,10 @@ pub fn listen(
     ptys.on_shell(std::sync::Arc::new(move |pty: &str, commands: Vec<ShellCommand>| {
         let config = crate::status_machine::StatusConfig::default();
         let updates = status.shell_commands(pty, &commands, &agents, crate::hook_apply::now_ms(), &config);
-        if let (false, Some(owner)) = (updates.is_empty(), status.owner(pty)) {
-            events.to_client(&owner, "status-updates", updates);
+        if !updates.is_empty() {
+            for watcher in status.watchers(pty) {
+                events.to_client(&watcher, "status-updates", updates.clone());
+            }
         }
     }));
 }

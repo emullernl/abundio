@@ -24,6 +24,7 @@ vi.mock("../../lib/ipc", () => ({
 	pty: {
 		deleteLog: vi.fn(() => Promise.resolve()),
 		cleanupStaleLogs: vi.fn(() => Promise.resolve()),
+		alive: vi.fn(() => Promise.resolve([])),
 	},
 }));
 
@@ -82,6 +83,7 @@ import {
 import { useSettingsStore } from "../settingsStore";
 import {
 	findMutatedTabLayout,
+	mergeRemoteWorkspaces,
 	restoreTabFocus,
 	useWorkspaceStore,
 } from "../workspaceStore";
@@ -141,6 +143,55 @@ beforeEach(() => {
 });
 
 describe("workspaceStore", () => {
+	describe("mergeRemoteWorkspaces (phase 9: another app's Workspace changes)", () => {
+		it("keeps this Window's Tabs, adds new Workspaces without PTYs, drops deleted ones", () => {
+			const liveTab = makeTab({
+				layoutJson: JSON.stringify({
+					type: "terminal",
+					id: "pane-1",
+					ptyId: "running",
+				}),
+			});
+			const mine = makeWorkspace({
+				id: "a",
+				name: "Old name",
+				tabs: [liveTab],
+			});
+			const gone = makeWorkspace({ id: "gone" });
+			const fresh = [
+				makeWorkspace({
+					id: "b",
+					name: "New",
+					tabs: [
+						makeTab({
+							id: "t-b",
+							layoutJson: JSON.stringify({
+								type: "terminal",
+								id: "pb",
+								ptyId: "elsewhere",
+							}),
+						}),
+					],
+				}),
+				makeWorkspace({
+					id: "a",
+					name: "Renamed",
+					tabs: [makeTab({ id: "stale-copy" })],
+				}),
+			];
+			const out = mergeRemoteWorkspaces(
+				{ workspaces: [mine, gone], activeWorkspaceId: "gone" },
+				fresh,
+			);
+			expect(out.workspaces.map((w) => w.id)).toEqual(["b", "a"]);
+			expect(out.workspaces[1].name).toBe("Renamed");
+			expect(out.workspaces[1].tabs).toEqual([liveTab]);
+			expect(JSON.parse(out.workspaces[0].tabs[0].layoutJson).ptyId).toBe("");
+			expect(out.removedIds).toEqual(["gone"]);
+			expect(out.activeWorkspaceId).toBeNull();
+		});
+	});
+
 	describe("loadWorkspaces", () => {
 		it("sets workspacesInitialized to true after loading", async () => {
 			const { workspaces } = await import("../../lib/ipc");
@@ -180,6 +231,26 @@ describe("workspaceStore", () => {
 
 			beforeEach(() => {
 				useSettingsStore.setState({ resumeAgentSessions: true });
+			});
+
+			it("reattaches a pane whose PTY still runs, and never relaunches its Agent (phase 9)", async () => {
+				const { pty } = await import("../../lib/ipc");
+				vi.mocked(pty.alive).mockResolvedValueOnce(["live-pty"]);
+				await load(
+					split(
+						agentPane("p1", { ptyId: "live-pty", agentSessionId: "sid-1" }),
+						agentPane("p2", { ptyId: "dead-pty", agentSessionId: "sid-2" }),
+					),
+				);
+				const layout = JSON.parse(
+					useWorkspaceStore.getState().workspaces[0].tabs[0].layoutJson,
+				);
+				expect(layout.first.ptyId).toBe("live-pty");
+				expect(layout.second.ptyId).toBe("");
+				expect(takePendingAgent("p1")).toBeUndefined();
+				expect(takePendingAgent("p2")).toEqual({
+					command: "claude --resume sid-2",
+				});
 			});
 
 			it("resumes a pane's remembered session by id", async () => {

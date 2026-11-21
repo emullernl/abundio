@@ -75,4 +75,23 @@ describe("notesStore", () => {
 		vi.advanceTimersByTime(500);
 		expect(notes.set).not.toHaveBeenCalled();
 	});
+
+	describe("applyRemoteNote (phase 9: another app saved the note)", () => {
+		it("takes another Window's save", () => {
+			useNotesStore.getState().applyRemoteNote("w1", '{"type":"doc"}');
+			expect(useNotesStore.getState().contentByWorkspaceId.w1).toBe(
+				'{"type":"doc"}',
+			);
+			expect(notes.set).not.toHaveBeenCalled();
+		});
+
+		it("keeps this Window's typing that is still to be saved", () => {
+			vi.useFakeTimers();
+			useNotesStore.getState().updateNoteLocal("w1", "mine");
+			useNotesStore.getState().applyRemoteNote("w1", "theirs");
+			expect(useNotesStore.getState().contentByWorkspaceId.w1).toBe("mine");
+			vi.runAllTimers();
+			expect(notes.set).toHaveBeenCalledWith("w1", "mine");
+		});
+	});
 });

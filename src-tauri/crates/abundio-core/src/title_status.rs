@@ -153,8 +153,10 @@ pub fn listen(ptys: &crate::pty_manager::PtyManager, status: Arc<StatusStore>, e
 }
 
 fn send(status: &StatusStore, events: &Events, pty: &str, update: Option<crate::status_store::StatusUpdate>) {
-    if let (Some(update), Some(owner)) = (update, status.owner(pty)) {
-        events.to_client(&owner, "status-updates", vec![update]);
+    if let Some(update) = update {
+        for watcher in status.watchers(pty) {
+            events.to_client(&watcher, "status-updates", vec![update.clone()]);
+        }
     }
 }
 

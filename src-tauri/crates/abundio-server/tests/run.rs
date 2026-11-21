@@ -456,6 +456,22 @@ fn two_apps_on_one_host_share_its_profile_and_take_turns_sizing_a_pane() {
             .map(|l| l.trim().to_string())
     };
     until("the pane never printed its size", 10, || last_size().as_deref() == Some("24 80"));
+
+    // The desk app opens the Profile: the laptop's pane still runs, so it
+    // reattaches (no second shell) and takes the pane's status as it is.
+    let alive = call(&b, "desk", "pty_alive", serde_json::json!({ "ptyIds": [pty, "gone-pty"] }));
+    assert_eq!(alive, serde_json::json!([pty]));
+    call(&a, "laptop", "status_apply", serde_json::json!({ "ops": [{ "op": "init", "ptyId": pty, "mode": "shell" }] }));
+    let joined = call(&b, "desk", "status_apply", serde_json::json!({ "ops": [{ "op": "init", "ptyId": pty, "mode": null }] }));
+    assert_eq!(joined[0]["ptyId"], pty, "the desk did not get the pane's status");
+    // A rename and a note save on the laptop reach the desk.
+    call(&a, "laptop", "workspace_update", serde_json::json!({ "id": ws["id"], "updates": { "name": "Renamed" } }));
+    call(&a, "laptop", "note_set", serde_json::json!({ "workspaceId": ws["id"], "content": "from the laptop" }));
+    until("the desk never heard of the rename and the note", 10, || {
+        let heard = heard_b.events.lock().unwrap().clone();
+        let has = |e: &str| heard.iter().any(|(c, n)| c.as_deref() == Some("desk") && n == e);
+        has("workspaces-changed") && has("note-changed")
+    });
     // Each app sizes its own view: the last one wins.
     call(&a, "laptop", "pty_resize", serde_json::json!({ "ptyId": pty, "cols": 100, "rows": 30 }));
     until("the laptop's resize", 10, || last_size().as_deref() == Some("30 100"));

@@ -172,6 +172,13 @@ impl PtyManager {
         true
     }
 
+    /// Which of `pty_ids` still run here: a Window loading its layouts
+    /// reattaches to these and starts the rest afresh (phase 9: a second
+    /// app, or a Window reloaded after a reconnect, on a Host).
+    pub fn alive(&self, pty_ids: &[String]) -> Vec<String> {
+        pty_ids.iter().filter(|id| self.entries.contains_key(id.as_str())).cloned().collect()
+    }
+
     pub fn read_screen(
         &self,
         pty_id: &str,

@@ -27,8 +27,10 @@ pub struct StatusStore {
     by_pty: DashMap<String, StatusState>,
     /// Activity times for PTYs with no entry yet (`touchLastOutput` first).
     touched: DashMap<String, i64>,
-    /// The Client (Window) each PTY's status updates go to.
-    owners: DashMap<String, crate::event_sink::ClientId>,
+    /// The Clients (Windows) each PTY's status updates go to: every Window
+    /// that shows it (phase 9: two apps on one Host), the one that started
+    /// it first.
+    owners: DashMap<String, Vec<crate::event_sink::ClientId>>,
     /// Per-PTY update counter, so a Client never applies an older update
     /// over a newer one (command replies and tick events can interleave).
     seqs: DashMap<String, u64>,
@@ -343,10 +345,14 @@ impl StatusStore {
     ) -> Option<StatusUpdate> {
         match op {
             StatusOp::Init { pty_id, mode } => {
-                self.owners.insert(pty_id.clone(), client.clone());
+                // A Window attaching to a running pane (another app, or this
+                // one after a reload, its store empty) takes its status as
+                // it is now.
+                let existed = self.by_pty.contains_key(&pty_id);
+                self.watch(&pty_id, client);
                 let before = self.view(&pty_id);
                 self.init(&pty_id, mode);
-                (self.view(&pty_id) != before).then(|| self.update(&pty_id, None))
+                (existed || self.view(&pty_id) != before).then(|| self.update(&pty_id, None))
             }
             StatusOp::ShellCommandRunning { pty_id, running } => {
                 let before = self.view(&pty_id);
@@ -376,9 +382,9 @@ impl StatusStore {
                 update
             }
             StatusOp::Apply { pty_id, event } => {
-                self.owners
-                    .entry(pty_id.clone())
-                    .or_insert_with(|| client.clone());
+                if !self.owners.contains_key(&pty_id) {
+                    self.watch(&pty_id, client);
+                }
                 self.apply_change(&pty_id, event, config)
             }
         }
@@ -430,9 +436,22 @@ impl StatusStore {
         self.by_pty.contains_key(pty_id)
     }
 
-    /// The Window a PTY's status updates go to.
+    /// The Window that started showing a PTY first (where its Agent
+    /// control and hook notices are routed).
     pub fn owner(&self, pty_id: &str) -> Option<crate::event_sink::ClientId> {
-        self.owners.get(pty_id).map(|o| o.clone())
+        self.owners.get(pty_id).and_then(|o| o.first().cloned())
+    }
+
+    /// Every Window a PTY's status updates go to.
+    pub fn watchers(&self, pty_id: &str) -> Vec<crate::event_sink::ClientId> {
+        self.owners.get(pty_id).map(|o| o.clone()).unwrap_or_default()
+    }
+
+    fn watch(&self, pty_id: &str, client: &crate::event_sink::ClientId) {
+        let mut list = self.owners.entry(pty_id.to_string()).or_default();
+        if !list.contains(client) {
+            list.push(client.clone());
+        }
     }
 
     pub fn title_status_seen(&self, pty_id: &str) -> bool {
@@ -601,15 +620,14 @@ impl StatusStore {
         pty_id: &str,
         code: Option<u32>,
         config: &StatusConfig,
-    ) -> Option<(crate::event_sink::ClientId, StatusUpdate)> {
+    ) -> Vec<(crate::event_sink::ClientId, StatusUpdate)> {
         let failed = matches!(code, Some(c) if c != 0 && !SHELL_USER_STOP_CODES.contains(&c));
         if !failed && !self.by_pty.contains_key(pty_id) {
-            return None;
+            return Vec::new();
         }
         let event = if failed { StatusEvent::RecordError } else { StatusEvent::RecordExitSuccess };
-        let update = self.apply_from_host(pty_id, event, config)?;
-        let owner = self.owners.get(pty_id).map(|o| o.clone())?;
-        Some((owner, update))
+        let Some(update) = self.apply_from_host(pty_id, event, config) else { return Vec::new() };
+        self.watchers(pty_id).into_iter().map(|w| (w, update.clone())).collect()
     }
 
     /// The idle scan, with what each Window should apply. A change names the
@@ -632,9 +650,10 @@ impl StatusStore {
             if after == b {
                 continue;
             }
-            let Some(owner) = self.owners.get(&pty_id).map(|o| o.clone()) else {
+            let watchers = self.watchers(&pty_id);
+            if watchers.is_empty() {
                 continue;
-            };
+            }
             let change = (after.state != b.state).then(|| Change {
                 prev: Snapshot::from(&b),
                 next: Snapshot::from(&after),
@@ -650,28 +669,35 @@ impl StatusStore {
                     ),
                 },
             });
-            let update = self.by_host(Some(self.update(&pty_id, change)));
-            out.extend(update.map(|u| (owner, u)));
+            if let Some(u) = self.by_host(Some(self.update(&pty_id, change))) {
+                out.extend(watchers.into_iter().map(|w| (w, u.clone())));
+            }
         }
         out
     }
 
     /// A Client went away from a Host, whose PTYs keep running: their
-    /// status is kept, but no longer sent to it (phase 9 hands each PTY to
-    /// the next Client that shows it).
+    /// status is kept, and sent to the other Windows that show them, or to
+    /// the next one that does.
     pub fn release_client(&self, client: &str) {
-        self.owners.retain(|_, owner| owner.as_str() != client);
+        for mut list in self.owners.iter_mut() {
+            list.retain(|c| c.as_str() != client);
+        }
+        self.owners.retain(|_, list| !list.is_empty());
     }
 
-    /// Every PTY a closed Window owned is forgotten with it.
+    /// A closed Window's PTYs that no other Window shows are forgotten
+    /// with it (on the desktop they die with it).
     pub fn forget_client(&self, client: &str) {
-        let ids: Vec<String> = self
-            .owners
-            .iter()
-            .filter(|e| e.value().as_str() == client)
-            .map(|e| e.key().clone())
-            .collect();
-        for id in ids {
+        let mut gone = Vec::new();
+        for mut e in self.owners.iter_mut() {
+            let before = e.len();
+            e.retain(|c| c.as_str() != client);
+            if e.is_empty() && before > 0 {
+                gone.push(e.key().clone());
+            }
+        }
+        for id in gone {
             self.remove(&id);
             self.seqs.remove(&id);
         }
@@ -720,8 +746,8 @@ pub fn listen_activity(
     }));
     ptys.on_output(std::sync::Arc::new(move |pty: &str, data: &[u8]| {
         if let Some(update) = store.output(pty, data.len(), crate::hook_apply::now_ms()) {
-            if let Some(owner) = store.owner(pty) {
-                events.to_client(&owner, "status-updates", vec![update]);
+            for watcher in store.watchers(pty) {
+                events.to_client(&watcher, "status-updates", vec![update.clone()]);
             }
         }
     }));
@@ -1013,7 +1039,7 @@ mod tests {
             },
             &config,
         );
-        let (to, u) = store.exit_update("p", Some(1), &config).unwrap();
+        let (to, u) = store.exit_update("p", Some(1), &config).pop().unwrap();
         assert_eq!(to, w);
         assert_eq!(u.view.unwrap().state, DotState::Error);
         assert_eq!(u.change.unwrap().cause, StatusEvent::RecordError);
@@ -1030,17 +1056,17 @@ mod tests {
             StatusOp::Apply { pty_id: "p".into(), event: StatusEvent::ShellCommandStarted { now: 1 } },
             &config,
         );
-        let (_, u) = store.exit_update("p", Some(130), &config).unwrap();
+        let (_, u) = store.exit_update("p", Some(130), &config).pop().unwrap();
         assert_eq!(u.change.unwrap().cause, StatusEvent::RecordExitSuccess);
-        assert!(store.exit_update("never-seen", Some(0), &config).is_none());
-        assert!(store.exit_update("never-seen", None, &config).is_none());
+        assert!(store.exit_update("never-seen", Some(0), &config).is_empty());
+        assert!(store.exit_update("never-seen", None, &config).is_empty());
     }
 
     #[test]
     fn a_host_keeps_an_exit_with_no_window_to_tell() {
         let store = StatusStore::new();
         let config = StatusConfig::default();
-        assert!(store.exit_update("p", Some(2), &config).is_none());
+        assert!(store.exit_update("p", Some(2), &config).is_empty());
         assert_eq!(store.view("p").unwrap().state, DotState::Error);
     }
 
@@ -1235,5 +1261,31 @@ mod tests {
         )
         .unwrap();
         assert_eq!(ops.len(), 4);
+    }
+
+    /// Phase 9: a pane two Windows show (two apps on one Host) tells both;
+    /// one going leaves the other, and the last one going forgets the pane.
+    #[test]
+    fn every_window_showing_a_pane_hears_its_status() {
+        use crate::event_sink::ClientId;
+        let store = StatusStore::new();
+        let config = StatusConfig::default();
+        let (a, b) = (ClientId::from("laptop"), ClientId::from("desk"));
+        store.run_op(&a, StatusOp::Init { pty_id: "p".into(), mode: Some(Mode::Shell) }, &config);
+        // The desk attaches to the running pane: it hears its status now
+        // (and again after a reload of its Window).
+        assert!(store.run_op(&b, StatusOp::Init { pty_id: "p".into(), mode: None }, &config).is_some());
+        assert!(store.run_op(&b, StatusOp::Init { pty_id: "p".into(), mode: None }, &config).is_some());
+        assert_eq!(store.watchers("p"), vec![a.clone(), b.clone()]);
+        assert_eq!(store.owner("p"), Some(a.clone()));
+        let to: Vec<String> = store.exit_update("p", Some(1), &config).into_iter().map(|(c, _)| c.0).collect();
+        assert_eq!(to, ["laptop", "desk"]);
+        // The laptop app goes: the desk still hears, and is the owner now.
+        store.release_client("laptop");
+        assert_eq!(store.watchers("p"), vec![b.clone()]);
+        assert_eq!(store.owner("p"), Some(b));
+        // The desk's Window closes: nobody shows it, so it is forgotten.
+        store.forget_client("desk");
+        assert!(store.view("p").is_none());
     }
 }

@@ -185,6 +185,7 @@ const HOST = [
 	"pty_cleanup_stale_logs",
 	"pty_delete_log",
 	"pty_kill",
+	"pty_alive",
 	"pty_read_log",
 	"pty_read_screen",
 	"pty_read_snapshot",

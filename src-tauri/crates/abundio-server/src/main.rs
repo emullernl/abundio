@@ -131,11 +131,16 @@ impl HookHost for ServerHookHost {
             &status_machine::StatusConfig::default(),
         );
         let Some(host) = self.host.get() else { return };
-        let owner = self.status.owner(pty_id).or_else(|| self.ptys.owner_window(pty_id).map(ClientId));
-        let Some(owner) = owner else { return };
-        host.events.to_client(&owner, "agent-hook-applied", &applied.notice);
-        if !applied.updates.is_empty() {
-            host.events.to_client(&owner, "status-updates", applied.updates);
+        // Every Window that shows the pane (phase 9: several apps).
+        let mut watchers = self.status.watchers(pty_id);
+        if watchers.is_empty() {
+            watchers.extend(self.ptys.owner_window(pty_id).map(ClientId));
+        }
+        for watcher in watchers {
+            host.events.to_client(&watcher, "agent-hook-applied", &applied.notice);
+            if !applied.updates.is_empty() {
+                host.events.to_client(&watcher, "status-updates", &applied.updates);
+            }
         }
     }
     fn ptys(&self) -> Option<&pty_manager::PtyManager> {
@@ -370,8 +375,8 @@ fn run(data_dir: PathBuf) -> Result<(), String> {
         let (status, events) = (status.clone(), events.clone());
         ptys.on_exit(Arc::new(move |pty, code| {
             use abundio_core::event_sink::EventsExt;
-            if let Some((owner, update)) = status.exit_update(pty, code, &status_machine::StatusConfig::default()) {
-                events.to_client(&owner, "status-updates", vec![update]);
+            for (watcher, update) in status.exit_update(pty, code, &status_machine::StatusConfig::default()) {
+                events.to_client(&watcher, "status-updates", vec![update]);
             }
         }));
     }

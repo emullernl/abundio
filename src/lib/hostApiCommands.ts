@@ -11,6 +11,7 @@ export const HOST_API_COMMANDS: ReadonlySet<string> = new Set([
 	"pty_write",
 	"pty_resize",
 	"pty_kill",
+	"pty_alive",
 	"pty_redraw",
 	"pty_read_screen",
 	"pty_set_scrollback",

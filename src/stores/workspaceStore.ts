@@ -18,6 +18,7 @@ import {
 	forgetLayout,
 	isRustLayoutAuthority,
 	onLayoutFromRust,
+	onSharedFromRust,
 	onTabsFromRust,
 	type TabsChanged,
 } from "../lib/layoutSync";
@@ -432,17 +433,83 @@ function seedFocalPane(
 	return { firstTabId, firstPaneId, tabName };
 }
 
-/** Clear all ptyIds in a layout tree so fresh PTYs get spawned on render. */
-function clearPtyIds(node: PaneNode): PaneNode {
+/** Clear the ptyIds in a layout tree that no longer run, so fresh PTYs get
+ *  spawned on render; a pane whose PTY still runs (`alive`: on a Host,
+ *  where PTYs outlive the app) keeps it and reattaches. */
+export function clearPtyIds(
+	node: PaneNode,
+	alive: ReadonlySet<string> = new Set(),
+): PaneNode {
 	if (node.type === "terminal") {
-		return { ...node, ptyId: "" };
+		return alive.has(node.ptyId) ? node : { ...node, ptyId: "" };
 	}
 	if (node.type !== "split") return node;
 	return {
 		...node,
-		first: clearPtyIds(node.first),
-		second: clearPtyIds(node.second),
+		first: clearPtyIds(node.first, alive),
+		second: clearPtyIds(node.second, alive),
 	};
+}
+
+/** Which of the layouts' PTYs still run (none after an app restart on this
+ *  computer; on a Host, those the app left running). */
+async function alivePtys(
+	workspaces: { tabs: { layoutJson: string }[] }[],
+): Promise<Set<string>> {
+	const ids: string[] = [];
+	for (const ws of workspaces) {
+		for (const t of ws.tabs) {
+			const layout = parseTabLayout(t.layoutJson);
+			if (!layout) continue;
+			for (const node of terminalNodes(layout)) {
+				if (node.ptyId) ids.push(node.ptyId);
+			}
+		}
+	}
+	if (ids.length === 0) return new Set();
+	try {
+		return new Set(await pty.alive(ids));
+	} catch {
+		return new Set();
+	}
+}
+
+/**
+ * The Profile's Workspaces as another Window left them (phase 9,
+ * `workspaces-changed`): `fresh` is the list as Rust has it now. A Workspace
+ * this Window has keeps its own Tabs (`tabs-changed` and `layout-changed`
+ * bring theirs); a new one comes with its Tabs, no PTYs yet; one deleted is
+ * dropped, and stops being the Active workspace. Exported for tests.
+ */
+export function mergeRemoteWorkspaces(
+	state: Pick<WorkspaceState, "workspaces" | "activeWorkspaceId">,
+	fresh: WorkspaceWithTabs[],
+): Pick<WorkspaceState, "workspaces" | "activeWorkspaceId"> & {
+	removedIds: string[];
+} {
+	const mine = new Map(state.workspaces.map((w) => [w.id, w]));
+	const workspaces = fresh.map((w) => {
+		const have = mine.get(w.id);
+		if (have) return { ...w, tabs: have.tabs };
+		return {
+			...w,
+			tabs: w.tabs.map((t) => {
+				const layout = parseTabLayout(t.layoutJson);
+				return layout
+					? { ...t, layoutJson: JSON.stringify(clearPtyIds(layout)) }
+					: t;
+			}),
+		};
+	});
+	const kept = new Set(fresh.map((w) => w.id));
+	const removedIds = state.workspaces
+		.map((w) => w.id)
+		.filter((id) => !kept.has(id));
+	const activeWorkspaceId =
+		state.activeWorkspaceId && kept.has(state.activeWorkspaceId)
+			? state.activeWorkspaceId
+			: null;
+	return { workspaces, activeWorkspaceId, removedIds };
 }
 
 /**
@@ -453,6 +520,8 @@ function clearPtyIds(node: PaneNode): PaneNode {
  */
 function seedPendingAgentsForLayout(layout: PaneNode): void {
 	for (const node of terminalNodes(layout)) {
+		// Still running (reattached): its Agent is running too.
+		if (node.ptyId) continue;
 		const command = relaunchCommandForPane(node);
 		if (!command) continue;
 		setPendingAgent(node.id, { command });
@@ -605,8 +674,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 	loadWorkspaces: async () => {
 		const profileId = fallbackProfileId();
 		const workspacesWithTabs = await workspacesApi.list(profileId);
-		// Clear stale ptyIds from all tabs' layouts and re-seed pending agents
-		// for any pane whose layout remembers an agentId from a previous session.
+		const alive = await alivePtys(workspacesWithTabs);
+		// Clear stale ptyIds from all tabs' layouts (keeping those still
+		// running, to reattach) and re-seed pending agents for any pane that
+		// starts afresh and remembers an agentId from a previous session.
 		const allPaneIds: string[] = [];
 		const cleaned = workspacesWithTabs.map((s) => ({
 			...s,
@@ -617,7 +688,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				// no longer exists) before clearing stale ptyIds.
 				const pruned = pruneOrphanDerived(layout) ?? layout;
 				allPaneIds.push(...collectPaneIds(pruned));
-				const cleared = clearPtyIds(pruned);
+				const cleared = clearPtyIds(pruned, alive);
 				return { ...t, layoutJson: JSON.stringify(cleared) };
 			}),
 		}));
@@ -1802,6 +1873,32 @@ onLayoutFromRust((tabId, layoutJson) => {
 	useWorkspaceStore.setState((state) => ({
 		workspaces: updateTabInWorkspaces(state.workspaces, tabId, layoutJson),
 	}));
+});
+
+// Another Window of this Profile made, renamed, moved or deleted a
+// Workspace (phase 9: another app on the same Host).
+onSharedFromRust<{ profileId: string }>("workspaces-changed", (change) => {
+	if (change.profileId !== fallbackProfileId()) return;
+	workspacesApi
+		.list(change.profileId)
+		.then((fresh) => {
+			const state = useWorkspaceStore.getState();
+			const { removedIds, ...next } = mergeRemoteWorkspaces(state, fresh);
+			for (const id of removedIds) {
+				const ws = state.workspaces.find((w) => w.id === id);
+				for (const tab of ws?.tabs ?? []) {
+					const layout = parseTabLayout(tab.layoutJson);
+					if (!layout) continue;
+					for (const paneId of collectPaneIds(layout)) teardownTerminal(paneId);
+					forgetLayout(tab.id);
+				}
+				useNotesStore.getState().cancelPendingSave(id);
+				usePtyActivityStore.getState().unmarkWorkspaceOpened(id);
+				useWorkspaceGitStore.getState().remove(id);
+			}
+			useWorkspaceStore.setState(next);
+		})
+		.catch((e) => console.warn("[sync] cannot read the Workspaces again", e));
 });
 
 // Another Window of this Profile created, closed, renamed or moved a Tab.

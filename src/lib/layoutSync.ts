@@ -183,6 +183,21 @@ export interface TabsChanged {
 	tabs: Tab[];
 }
 
+/** Hear an event Rust sends this Window about another Window's change to
+ *  the Profile's shared state (phase 9: `workspaces-changed`,
+ *  `note-changed`). Nothing in tests and the demo, which have no Rust. */
+export function onSharedFromRust<T>(
+	event: string,
+	fn: (payload: T) => void,
+): void {
+	if (!isRustLayoutAuthority()) return;
+	ipc()
+		.then(({ listenToThisWindow }) =>
+			listenToThisWindow<T>(event, (e) => fn(e.payload)),
+		)
+		.catch((e) => console.warn(`[sync] cannot hear ${event}`, e));
+}
+
 /** The store registers how to take another Window's Tab changes. */
 export function onTabsFromRust(fn: (change: TabsChanged) => void): void {
 	if (!isRustLayoutAuthority()) return;
