@@ -96,6 +96,8 @@ const DESKTOP = [
 
 const HOST = [
 	"agent_control_enabled",
+	"host_settings_get",
+	"host_settings_set",
 	"agent_control_pane_closed",
 	"agent_control_pane_for_number",
 	"agent_control_pane_numbers",

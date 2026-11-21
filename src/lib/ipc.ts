@@ -12,6 +12,7 @@ import { mockInvoke } from "./demo/mockInvoke";
 import { mockListen } from "./demo/mockListen";
 import { HOST_API_COMMANDS } from "./hostApiCommands";
 import { mergeAnswers, type RoutedCall, routeCall } from "./hostRouting";
+import type { HostSettings } from "./hostSettings";
 import type { LayoutOp } from "./layoutOps";
 import type { LayoutState } from "./layoutSync";
 import type { StatusOp, StatusUpdate } from "./statusSync";
@@ -235,6 +236,16 @@ export type HostTarget =
 /** Remote Hosts (docs/plans/remote-hosts.md phase 7c): connect once per
  *  Host, then put this Window on it; its host commands, events and PTY
  *  output then come from there. */
+/** **Host settings** (ADR-0064) of the Window's own Host. */
+export const hostSettingsApi = {
+	/** `null` before they were ever written (this computer, before 10d-1). */
+	get: () => invoke<HostSettings | null>("host_settings_get"),
+	set: (settings: HostSettings) =>
+		invoke<void>("host_settings_set", { settings }),
+	onChanged: (cb: (settings: HostSettings) => void): Promise<UnlistenFn> =>
+		listen<HostSettings>("host-settings-changed", (e) => cb(e.payload)),
+};
+
 /** A Joined profile as this app keeps it (`joined_profiles.rs`). */
 export interface JoinedProfileRow {
 	hostId: string;

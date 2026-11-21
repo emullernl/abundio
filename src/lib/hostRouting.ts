@@ -181,6 +181,10 @@ export const HOST_ROUTES: Record<string, Route> = {
 	env_vars_upsert: w(),
 	env_vars_upsert_many: w(),
 	// Agents and Agent control
+	// Host settings (ADR-0064): the Window's own Host's; a joined Host's
+	// are read and written on it explicitly (`joinedApi.callOn`).
+	host_settings_get: own,
+	host_settings_set: own,
 	agent_control_enabled: own,
 	agent_control_pane_for_number: w(),
 	agent_control_pane_numbers: w(),

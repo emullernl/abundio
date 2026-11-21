@@ -264,6 +264,41 @@ impl ServerHost {
     }
 }
 
+/// This Host's own settings (ADR-0064), no app needed: written from what
+/// is installed here on the first start, then the scrollback, and the hooks
+/// and skill provisioned for its Agents. The startup guards are claimed, so
+/// an app's own startup push cannot provision another computer's choices.
+fn apply_host_settings(host: &ServerHost) {
+    let installed = |cmd: &str| abundio_core::shell_env::find_in_path(cmd).is_some();
+    let settings = match abundio_core::host_settings::ensure_seeded(&host.workspaces, installed) {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("Host settings: {e}");
+            return;
+        }
+    };
+    if let Some(n) = settings.scrollback {
+        host.ptys.set_scrollback(n);
+    }
+    let agents = settings.enabled_builtins();
+    if host.hooks_guard.claim() {
+        log::info!("hook provisioning from Host settings: enabled={}, agents={agents:?}", settings.agent_hooks_enabled);
+        if let Err(e) = abundio_core::agent_hooks::provision(settings.agent_hooks_enabled, &agents) {
+            log::warn!("hook provisioning failed: {e}");
+        }
+    }
+    if host.skill_guard.claim() {
+        match abundio_core::agent_skills::SkillPaths::for_user() {
+            Ok(paths) => {
+                if let Err(e) = abundio_core::agent_skills::provision_at(&paths, settings.agent_skill_enabled, &agents) {
+                    log::warn!("skill provisioning failed: {e}");
+                }
+            }
+            Err(e) => log::warn!("skill provisioning: {e}"),
+        }
+    }
+}
+
 // ── Running ──
 
 /// Holds the data folder for this process: a second server on the same
@@ -429,6 +464,7 @@ fn run(data_dir: PathBuf) -> Result<(), String> {
         waits: Default::default(),
     });
     let _ = hook_host.host.set(host.clone());
+    apply_host_settings(&host);
     #[cfg(unix)]
     {
         // A Client going away never stops its PTYs: their status is kept,

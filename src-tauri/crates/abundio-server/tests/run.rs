@@ -31,10 +31,16 @@ impl Drop for Server {
 }
 
 fn server(dir: &std::path::Path) -> Server {
+    // A home of its own: the server provisions Agent hooks and the skill at
+    // start (Host settings, ADR-0064), never into the real user's configs.
+    let home = dir.join("home");
+    std::fs::create_dir_all(&home).unwrap();
     Server(
         Command::new(env!("CARGO_BIN_EXE_abundio-server"))
             .args(["run", "--data-dir"])
             .arg(dir)
+            .env("HOME", &home)
+            .env_remove("XDG_CONFIG_HOME")
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()

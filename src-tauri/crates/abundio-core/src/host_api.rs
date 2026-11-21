@@ -494,6 +494,19 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
             let a = a!(c, raw, { workspace_id: String, pane_id: String });
             json(host.handles.take_default(host.workspaces, &a.workspace_id, &a.pane_id)?)?
         }
+        // ── Host settings (ADR-0064) ──
+        "host_settings_get" => json(crate::host_settings::get(host.workspaces)?)?,
+        "host_settings_set" => {
+            let settings = a!(c, raw, { settings: crate::host_settings::HostSettings }).settings;
+            crate::host_settings::set(host.workspaces, &settings)?;
+            if let Some(n) = settings.scrollback {
+                host.ptys.set_scrollback(n);
+            }
+            // Every Client of this Host, the one that changed them too: its
+            // other Windows and Settings follow.
+            host.events.broadcast(crate::host_settings::CHANGED_EVENT, &settings);
+            Value::Null
+        }
         "agent_control_enabled" => json(crate::control_protocol::enabled(host.workspaces))?,
         "agent_control_set_enabled" => {
             let on = a!(c, raw, { enabled: bool }).enabled;
@@ -750,6 +763,12 @@ fn pty_spawn(host: &Host, client: &ClientId, a: SpawnArgs) -> Result<String, Abu
         None => None,
     };
     let cwd = crate::pty_manager::resolve_spawn_cwd(&a.cwd, root.as_deref(), |p| std::path::Path::new(p).is_dir())?;
+    // No shell asked for: this Host's default (Host settings, ADR-0064).
+    let host_shell = match a.shell {
+        Some(_) => None,
+        None => crate::host_settings::get(host.workspaces).ok().flatten().and_then(|s| s.shell_path),
+    };
+    let shell = a.shell.as_deref().or(host_shell.as_deref());
     let pty_id = host.ptys.spawn(
         crate::pty_manager::SpawnDeps {
             events: host.events.clone(),
@@ -759,7 +778,7 @@ fn pty_spawn(host: &Host, client: &ClientId, a: SpawnArgs) -> Result<String, Abu
         client.as_str(),
         &cwd,
         a.command.as_deref(),
-        a.shell.as_deref(),
+        shell,
         a.cols,
         a.rows,
         a.log_id.as_deref(),

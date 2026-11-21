@@ -70,9 +70,11 @@ import {
 	workspaceViewOnly,
 } from "./lib/fleetFocus";
 import { installFocusSweep } from "./lib/focusSweep";
+import { hostSettingsFromApp } from "./lib/hostSettings";
 import {
 	agentRegistry,
 	appMenu,
+	hostSettingsApi,
 	hostsApi,
 	listen,
 	listenToThisWindow,
@@ -673,6 +675,28 @@ export function App() {
 	// burn it on a seed that never happened. Nothing reaches disk until the
 	// toggles are actually set, so any failure in between simply leaves the
 	// claim for the next launch. See ADR-0037.
+	// This computer's Host settings (ADR-0064) move from the app's own
+	// storage into its database, once: the first local Window to find none
+	// there writes the values the app has (phase 10d-1). A failed read waits
+	// for the next start; a remote Window's Host seeds its own.
+	useEffect(() => {
+		void (async () => {
+			if (await hostsApi.remoteProfileForWindow().catch(() => null)) return;
+			const have = await hostSettingsApi.get().catch(() => undefined);
+			if (have !== null) return;
+			await hostSettingsApi
+				.set(hostSettingsFromApp(useSettingsStore.getState()))
+				.then(() =>
+					console.info(
+						"[host settings] this computer's moved into its database",
+					),
+				)
+				.catch((e) =>
+					console.warn("[host settings] cannot write this computer's", e),
+				);
+		})();
+	}, []);
+
 	// Coming to the front, scan again if the last scan is old: an Agent
 	// installed meanwhile (in a pane, on a Host) shows up without a restart.
 	useEffect(

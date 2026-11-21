@@ -100,6 +100,8 @@ export const HOST_API_COMMANDS: ReadonlySet<string> = new Set([
 	"env_vars_upsert",
 	"env_vars_upsert_many",
 	// Agents
+	"host_settings_get",
+	"host_settings_set",
 	"agent_control_enabled",
 	"agent_control_pane_for_number",
 	"agent_control_pane_numbers",
