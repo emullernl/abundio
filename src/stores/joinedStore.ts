@@ -11,6 +11,7 @@ import type { WorkspaceWithTabs } from "../lib/types";
 import { isOrchestrator } from "../lib/workspaceKind";
 import { fallbackProfileId, useProfileStore } from "./profileStore";
 import { usePtyActivityStore } from "./ptyActivityStore";
+import { useSettingsStore } from "./settingsStore";
 import {
 	clearPtyIds,
 	onJoinedWorkspacesChanged,
@@ -105,6 +106,41 @@ function noteAway(hostId: string): void {
 	missed.set(hostId, ids);
 }
 
+/** Hosts whose Opened workspaces this load already reopened. */
+const restored = new Set<string>();
+
+/**
+ * **Workspace restore** (ADR-0052) for a Joined profile: reopen the
+ * Workspaces its Profile has Opened, once per load, on the first answer of
+ * its Host. Its panes still running there reattach. The Active workspace
+ * stays the local Profile's to restore.
+ */
+async function restoreOpened(entry: JoinedEntry): Promise<void> {
+	if (restored.has(entry.hostId)) return;
+	restored.add(entry.hostId);
+	if (!useSettingsStore.getState().reopenWorkspacesOnOpen) return;
+	const set = await joinedApi
+		.callOn<{ opened: string[]; active: string | null }>(
+			entry.hostId,
+			"workspace_restore_set",
+			{ profileId: entry.remoteProfileId },
+		)
+		.catch(() => null);
+	if (!set) return;
+	const mine = new Set(
+		useWorkspaceStore
+			.getState()
+			.workspaces.filter((w) => w.joined?.hostId === entry.hostId)
+			.map((w) => w.id),
+	);
+	const activity = usePtyActivityStore.getState();
+	for (const id of set.opened ?? []) {
+		if (mine.has(id) && !activity.openedWorkspaceIds.has(id)) {
+			activity.markWorkspaceOpened(id);
+		}
+	}
+}
+
 /** Recover each of a Host's joined Workspaces open in this Window: only the
  *  panes it had when it went away, and only once. */
 async function recoverOpened(hostId: string): Promise<void> {
@@ -175,6 +211,7 @@ export const useJoinedStore = create<JoinedState>((set, get) => {
 			await joinedApi.join(entry.hostId, entry.remoteProfileId, ask);
 			await refresh(entry);
 			setLink(entry.hostId, { state: "online" });
+			await restoreOpened(entry);
 			// Its Workspaces open here missed the time it was away.
 			await recoverOpened(entry.hostId);
 		} catch (e) {
@@ -232,6 +269,7 @@ export const useJoinedStore = create<JoinedState>((set, get) => {
 				setJoinedProfile(e.remoteProfileId, null);
 			}
 			set({ entries: [], links: {} });
+			restored.clear();
 			// Joining is a local Profile's (a remote Window shows one Host).
 			if (useProfileStore.getState().remote) return;
 			let rows: JoinedProfileRow[];

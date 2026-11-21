@@ -40,7 +40,10 @@ vi.mock("../../lib/ipc", () => ({
 	},
 	listenToThisWindow: vi.fn(() => Promise.resolve(() => {})),
 	fileWindows: { close: vi.fn(() => Promise.resolve()) },
-	workspaces: { list: vi.fn(() => Promise.resolve([])) },
+	workspaces: {
+		list: vi.fn(() => Promise.resolve([])),
+		setRestoreOpened: vi.fn(() => Promise.resolve()),
+	},
 	tabs: {},
 	pty: {
 		kill: vi.fn(() => Promise.resolve()),
@@ -51,6 +54,8 @@ vi.mock("../../lib/ipc", () => ({
 import { joinedHostOfWorkspace, resetRouting } from "../../lib/hostRouting";
 import { joinedApi } from "../../lib/ipc";
 import { needsSignIn, useJoinedStore } from "../joinedStore";
+import { usePtyActivityStore } from "../ptyActivityStore";
+import { useSettingsStore } from "../settingsStore";
 import { useWorkspaceStore } from "../workspaceStore";
 
 const joinedIds = () =>
@@ -65,6 +70,8 @@ describe("joinedStore (phase 10)", () => {
 		resetRouting();
 		useWorkspaceStore.setState({ workspaces: [], activeWorkspaceId: null });
 		useJoinedStore.setState({ entries: [], links: {} });
+		useSettingsStore.setState({ reopenWorkspacesOnOpen: true });
+		usePtyActivityStore.setState({ openedWorkspaceIds: new Set() });
 	});
 
 	it("shows the rows the Host last listed, then its own, reattaching to live panes", async () => {
@@ -86,7 +93,9 @@ describe("joinedStore (phase 10)", () => {
 				? new Promise((r) => {
 						answer = r;
 					})
-				: Promise.resolve(["live-pty"]),
+				: command === "workspace_restore_set"
+					? Promise.resolve({ opened: ["app", "not-here"], active: "app" })
+					: Promise.resolve(["live-pty"]),
 		);
 		await useJoinedStore.getState().loadJoined();
 		// Cached, while the Host has not answered: no PTY id kept.
@@ -105,6 +114,14 @@ describe("joinedStore (phase 10)", () => {
 		expect(JSON.parse(live.tabs[0].layoutJson).ptyId).toBe("live-pty");
 		expect(joinedHostOfWorkspace("app")).toBe("box");
 		expect(joinedApi.seen).toHaveBeenCalled();
+		// Its Profile's Opened workspace reopens here (ADR-0052); the Active
+		// one stays the local Profile's.
+		await vi.waitFor(() =>
+			expect(usePtyActivityStore.getState().openedWorkspaceIds.has("app")).toBe(
+				true,
+			),
+		);
+		expect(useWorkspaceStore.getState().activeWorkspaceId).toBeNull();
 	});
 
 	it("says Sign in needed when ssh wants the user, and Leave removes the section", async () => {
