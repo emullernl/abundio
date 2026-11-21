@@ -144,6 +144,16 @@ impl Connections {
         }
     }
 
+    /// `client` missed these panes' output (its app was away, phase 10):
+    /// its connection gets their screens, in order with their output, as
+    /// one that fell behind does.
+    pub fn resync(&self, client: &str, pty_ids: &[String]) {
+        let Some(conn) = self.conn_of(client) else { return };
+        if let Some(c) = self.conns.lock().unwrap().get(&conn) {
+            c.behind.lock().unwrap().extend(pty_ids.iter().cloned());
+        }
+    }
+
     /// The Clients a connection speaks for.
     fn clients_of(&self, conn: u64) -> Vec<String> {
         self.clients.lock().unwrap().iter().filter(|(_, c)| **c == conn).map(|(k, _)| k.clone()).collect()

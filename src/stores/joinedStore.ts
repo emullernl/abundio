@@ -10,11 +10,13 @@ import { parseTabLayout } from "../lib/paneTree";
 import type { WorkspaceWithTabs } from "../lib/types";
 import { isOrchestrator } from "../lib/workspaceKind";
 import { fallbackProfileId, useProfileStore } from "./profileStore";
+import { usePtyActivityStore } from "./ptyActivityStore";
 import {
 	clearPtyIds,
 	onJoinedWorkspacesChanged,
 	prepareLoadedWorkspaces,
 	setJoinedWorkspaces,
+	useWorkspaceStore,
 } from "./workspaceStore";
 
 /**
@@ -82,6 +84,22 @@ const shown = (list: WorkspaceWithTabs[]) =>
 
 let listening = false;
 
+/** Recover each of a Host's joined Workspaces open in this Window. */
+async function recoverOpened(hostId: string): Promise<void> {
+	const opened = usePtyActivityStore.getState().openedWorkspaceIds;
+	const mine = useWorkspaceStore
+		.getState()
+		.workspaces.filter((w) => w.joined?.hostId === hostId && opened.has(w.id));
+	const { recoverJoinedWorkspace } = await import("../lib/paneRestart");
+	for (const ws of mine) {
+		await recoverJoinedWorkspace(ws.id, hostId, {
+			alive: (ptyIds) =>
+				joinedApi.callOn<string[]>(hostId, "pty_alive", { ptyIds }),
+			resync: (ptyIds) => joinedApi.callOn(hostId, "pty_resync", { ptyIds }),
+		});
+	}
+}
+
 export const useJoinedStore = create<JoinedState>((set, get) => {
 	const setLink = (hostId: string, link: JoinedLink) =>
 		set((s) => ({ links: { ...s.links, [hostId]: link } }));
@@ -131,6 +149,8 @@ export const useJoinedStore = create<JoinedState>((set, get) => {
 			await joinedApi.join(entry.hostId, entry.remoteProfileId, ask);
 			await refresh(entry);
 			setLink(entry.hostId, { state: "online" });
+			// Its Workspaces open here missed the time it was away.
+			await recoverOpened(entry.hostId);
 		} catch (e) {
 			const reason = String(e);
 			setLink(entry.hostId, {

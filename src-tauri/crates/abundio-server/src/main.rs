@@ -245,6 +245,16 @@ impl ServerHost {
     fn handler(self: Arc<Self>) -> serve::Handler {
         let builtin = serve::builtin_handler();
         Arc::new(move |client, command, args| {
+            // A Window that was away from this Host asks for its panes'
+            // screens (phase 10, a Joined profile reconnecting).
+            if command == "pty_resync" {
+                let ids: Vec<String> = args
+                    .get("ptyIds")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+                self.clients.connections.resync(client.as_str(), &ids);
+                return Ok(serde_json::Value::Null);
+            }
             match self.with_host(|host| abundio_core::host_api::dispatch(host, client, command, args.clone())) {
                 Some(result) => result
                     .map_err(|e| serde_json::to_value(&e).unwrap_or_else(|_| serde_json::Value::String(e.to_string()))),

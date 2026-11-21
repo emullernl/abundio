@@ -152,6 +152,44 @@ async function restartLivePane(pane: LivePane): Promise<void> {
 	}
 }
 
+/**
+ * A Joined profile's Workspace open in this Window, after its Host came back
+ * (phase 10): a pane whose PTY died with the Host (a restart, a reboot)
+ * starts again, its Agent resuming its session; one whose PTY ran on
+ * rejoins its status and gets its screen from the Host, which it missed
+ * while away. Nothing to do for a Workspace with no live panes.
+ */
+export async function recoverJoinedWorkspace(
+	workspaceId: string,
+	hostId: string,
+	api: {
+		alive: (ptyIds: string[]) => Promise<string[]>;
+		resync: (ptyIds: string[]) => Promise<unknown>;
+	},
+): Promise<{ restarted: number; resynced: number }> {
+	const panes = collectLivePanes(workspaceId);
+	if (panes.length === 0) return { restarted: 0, resynced: 0 };
+	const ids = panes.map((p) => p.ptyId);
+	// Unsure: treat every pane as alive (a resync costs nothing).
+	const alive = new Set(await api.alive(ids).catch(() => ids));
+	let restarted = 0;
+	for (const pane of panes.filter((p) => !alive.has(p.ptyId))) {
+		try {
+			await restartLivePane(pane);
+			restarted++;
+		} catch (e) {
+			console.warn(`[joined] cannot restart ${pane.paneId} on ${hostId}`, e);
+		}
+	}
+	const live = panes.filter((p) => alive.has(p.ptyId)).map((p) => p.ptyId);
+	if (live.length > 0) {
+		const act = usePtyActivityStore.getState();
+		for (const id of live) act.initPty(id);
+		await api.resync(live).catch(() => {});
+	}
+	return { restarted, resynced: live.length };
+}
+
 export type RestartAgentResult = "restarted" | "no-pty" | "failed";
 
 /**

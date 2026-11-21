@@ -636,3 +636,52 @@ fn a_paused_connection_brings_its_windows_the_screen() {
     nix::sys::signal::kill(nix::unistd::Pid::from_raw(server.id() as i32), nix::sys::signal::Signal::SIGTERM).unwrap();
     assert!(server.wait().unwrap().success());
 }
+
+/// Phase 10: an app back on a Host after being away asks for its panes'
+/// screens, and gets each as a snapshot on its output.
+#[test]
+fn an_app_back_from_away_gets_its_panes_screens() {
+    use abundio_core::host_client::HostProcess;
+    use abundio_core::screen_snapshot::RESYNC_MARK;
+    #[derive(Default)]
+    struct Frames(std::sync::Mutex<Vec<(String, Vec<u8>)>>);
+    impl abundio_core::host_client::HostListener for Frames {
+        fn event(&self, _c: Option<&str>, _n: &str, _p: serde_json::Value) {}
+        fn pty(&self, _c: &str, pty_id: &str, bytes: &[u8]) {
+            self.0.lock().unwrap().push((pty_id.to_string(), bytes.to_vec()));
+        }
+        fn closed(&self, _why: &str) {}
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = server(dir.path());
+    let mut log = BufReader::new(server.stderr.take().unwrap()).lines().map_while(Result::ok);
+    wait_for(&mut log, "waiting for a Client");
+    let frames = std::sync::Arc::new(Frames::default());
+    let (app, _p) = HostProcess::spawn(connect_command(dir.path()), frames.clone()).unwrap();
+    let call = |command: &str, args: serde_json::Value| app.request("w", command, args, Some(Duration::from_secs(10))).unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let profile = "00000000-0000-0000-0000-000000000001";
+    let ws = call("workspace_create", serde_json::json!({ "name": "R", "rootFolder": folder.path(), "profileId": profile }));
+    let pty = call(
+        "pty_spawn",
+        serde_json::json!({
+            "cwd": folder.path(), "cols": 80, "rows": 24, "workspaceId": ws["id"],
+            "command": "/bin/sh -c 'echo screen-before; sleep 30'",
+        }),
+    );
+    let pty = pty.as_str().unwrap().to_string();
+    until("the pane never printed", 10, || {
+        call("pty_read_screen", serde_json::json!({ "ptyId": pty, "visible": true })).to_string().contains("screen-before")
+    });
+    call("pty_resync", serde_json::json!({ "ptyIds": [pty] }));
+    until("no snapshot came", 10, || {
+        frames
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(id, b)| id == &pty && b.starts_with(RESYNC_MARK) && String::from_utf8_lossy(b).contains("screen-before"))
+    });
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(server.id() as i32), nix::sys::signal::Signal::SIGTERM).unwrap();
+    assert!(server.wait().unwrap().success());
+}
