@@ -108,6 +108,25 @@ pub fn verify(pubkey_b64: &str, sig_b64: &str, bytes: &[u8]) -> Result<(), Strin
 mod tests {
     use super::*;
 
+    /// A server signed as CI signs it (`tauri signer sign`), checked as the
+    /// app checks a download. Opt-in, on files given:
+    /// `ABUNDIO_VERIFY_ASSET=<binary> ABUNDIO_VERIFY_PUBKEY=<key.pub> cargo test -p abundio -- --ignored signed_asset`
+    /// (the binary's `.sig` next to it; the public key as `tauri signer
+    /// generate` writes it, or as tauri.conf.json holds it).
+    #[test]
+    #[ignore]
+    fn a_signed_asset_passes_the_apps_check() {
+        let asset = std::env::var("ABUNDIO_VERIFY_ASSET").expect("ABUNDIO_VERIFY_ASSET");
+        let pubkey = std::env::var("ABUNDIO_VERIFY_PUBKEY").expect("ABUNDIO_VERIFY_PUBKEY");
+        let bytes = std::fs::read(&asset).unwrap();
+        let sig = std::fs::read_to_string(format!("{asset}.sig")).unwrap();
+        let pubkey = std::fs::read_to_string(pubkey).unwrap();
+        verify(pubkey.trim(), sig.trim(), &bytes).unwrap();
+        let mut damaged = bytes.clone();
+        damaged[100] ^= 1;
+        assert!(verify(pubkey.trim(), sig.trim(), &damaged).is_err());
+    }
+
     // A throwaway key made for this test (`tauri signer generate`), and its
     // signature of BLOB (`tauri signer sign`).
     const PUBKEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQzNUFCRkVDMEM2MEQxRUEKUldUcTBXQU03TDlhMDBuMGtLaHVqZklIYlhIUjE3WjN5TVZtdUJNUUJZd05SRFNJaWVqMFdvQ2QK";

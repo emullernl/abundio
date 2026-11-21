@@ -78,3 +78,108 @@ jobs:
           releaseName: "Abundio v__VERSION__"
           releaseDraft: true
           prerelease: false
+
+  # The headless server a Host runs (docs/plans/remote-hosts.md phase 8e).
+  # The app installs `abundio-server-<platform>` from its own version's
+  # release and checks `<asset>.sig` with the updater's public key, so each
+  # one is signed with the same key as the app's update bundles.
+  server:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            runner: ubuntu-24.04
+          - platform: linux-aarch64
+            runner: ubuntu-24.04-arm
+          - platform: macos-universal
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Static (musl), in the same Alpine container as a development build.
+      - name: Build (Linux)
+        if: startsWith(matrix.platform, 'linux-')
+        run: |
+          sh scripts/build-server-linux.sh "${MATRIX_PLATFORM#linux-}"
+          cp "src-tauri/target/server-dist/$MATRIX_PLATFORM/abundio-server" "abundio-server-$MATRIX_PLATFORM"
+        env:
+          MATRIX_PLATFORM: ${{ matrix.platform }}
+
+      - name: Setup Rust (macOS)
+        if: matrix.platform == 'macos-universal'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Build (macOS universal)
+        if: matrix.platform == 'macos-universal'
+        working-directory: src-tauri
+        run: |
+          for t in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release --locked -p abundio-server --target "$t"
+          done
+          lipo -create -output ../abundio-server-macos-universal \
+            target/aarch64-apple-darwin/release/abundio-server \
+            target/x86_64-apple-darwin/release/abundio-server
+
+      # The handshake needs the exact version: never ship another one.
+      - name: Check its version
+        run: |
+          got="$(./abundio-server-$MATRIX_PLATFORM version)"
+          want="abundio-server ${GITHUB_REF_NAME#v}"
+          echo "$got"
+          [ "$got" = "$want" ] || { echo "expected $want" >&2; exit 1; }
+        env:
+          MATRIX_PLATFORM: ${{ matrix.platform }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: abundio-server-${{ matrix.platform }}
+          path: abundio-server-${{ matrix.platform }}
+          if-no-files-found: error
+
+  # Sign every server and attach them to the draft release the app's build
+  # made (it must exist first: `needs: build`).
+  server-release:
+    needs: [build, server]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: abundio-server-*
+          path: dist
+          merge-multiple: true
+
+      - name: Sign
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          for f in dist/abundio-server-*; do
+            pnpm tauri signer sign "$f"
+          done
+          ls -l dist
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/* --clobber
