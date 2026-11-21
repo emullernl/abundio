@@ -67,10 +67,10 @@ fn starts_alone_on_its_data_folder_and_stops_on_sigterm() {
     let mut log = BufReader::new(first.stderr.take().unwrap()).lines().map_while(Result::ok);
     wait_for(&mut log, "hook server on 127.0.0.1:");
     wait_for(&mut log, "waiting for a Client");
-    assert!(dir.path().join("v2").join("abundio.db").exists());
+    assert!(dir.path().join(abundio_core::app_paths::DATA_EPOCH).join("abundio.db").exists());
     // What a pane runs with is in the server's own folder.
     assert!(dir.path().join("hooks").join("abundio-hook.sh").exists());
-    let integration = dir.path().join("v2").join("shell-integration");
+    let integration = dir.path().join(abundio_core::app_paths::DATA_EPOCH).join("shell-integration");
     for name in [".zshrc", "abundio", "abundio-env"] {
         assert!(integration.join(name).exists(), "{name}");
     }

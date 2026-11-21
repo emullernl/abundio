@@ -38,8 +38,16 @@ use std::time::Duration;
 use rusqlite::{Connection, OpenFlags};
 
 /// Bumped only when a schema change makes older builds unable to read the
-/// database. Not the app version — several app versions share one epoch.
-pub const DATA_EPOCH: &str = "v2";
+/// database, or when a line of work must not touch the one in daily use. Not
+/// the app version — several app versions share one epoch.
+///
+/// `v3`: remote Hosts (docs/plans/remote-hosts.md) add Joined profiles and
+/// Host settings (ADR-0064) to the database, and the release in daily use
+/// stays on `v2`, untouched by this work.
+pub const DATA_EPOCH: &str = "v3";
+
+/// The epoch this one's first start copies its state from.
+pub const PREVIOUS_EPOCH: &str = "v2";
 
 /// State shared with every other installed Abundio version.
 pub fn shared_root() -> PathBuf {
@@ -70,10 +78,10 @@ pub fn db_path() -> PathBuf {
     versioned_root().join("abundio.db")
 }
 
-/// The pre-epoch database, which older builds still use. Read only once, to
+/// The previous epoch's database, which older builds still use. Read only once, to
 /// seed this epoch — never written to.
 pub fn legacy_db_path() -> PathBuf {
-    shared_root().join("abundio.db")
+    shared_root().join(PREVIOUS_EPOCH).join("abundio.db")
 }
 
 pub fn pty_logs_dir() -> PathBuf {
@@ -81,7 +89,7 @@ pub fn pty_logs_dir() -> PathBuf {
 }
 
 fn legacy_pty_logs_dir() -> PathBuf {
-    shared_root().join("pty-logs")
+    shared_root().join(PREVIOUS_EPOCH).join("pty-logs")
 }
 
 pub fn shell_integration_dir() -> PathBuf {
@@ -167,6 +175,11 @@ fn import_legacy_state(
     if let Err(e) = copy_dir_shallow(logs_from, logs_to) {
         log::warn!("[paths] could not copy PTY scrollback logs: {e}");
     }
+    // And the Windows to reopen. Best-effort too: a missing one opens a
+    // default Window.
+    if let (Some(from), Some(to)) = (legacy.parent(), target.parent()) {
+        let _ = std::fs::copy(from.join("windows.json"), to.join("windows.json"));
+    }
     true
 }
 
@@ -231,8 +244,9 @@ mod tests {
         }
     }
 
-    /// The legacy database and the hook relay scripts must NOT be epoch-scoped:
-    /// the first is what we import from, the second is deliberately shared.
+    /// The previous epoch's database and the hook relay scripts must NOT be in
+    /// this epoch: the first is what we import from, the second is
+    /// deliberately shared.
     #[test]
     fn shared_paths_are_not_epoch_scoped() {
         for path in [legacy_db_path(), hooks_dir()] {
@@ -241,6 +255,36 @@ mod tests {
                 "{path:?} should be shared across versions"
             );
         }
+    }
+
+    /// A new epoch's first start: the previous epoch's database, logs and
+    /// Windows are copied; the previous epoch's own stay as they were.
+    #[test]
+    fn a_new_epoch_starts_as_a_copy_of_the_previous_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let (old, new) = (dir.path().join("v2"), dir.path().join("v3"));
+        std::fs::create_dir_all(old.join("pty-logs")).unwrap();
+        {
+            let c = Connection::open(old.join("abundio.db")).unwrap();
+            c.execute_batch("CREATE TABLE t (x); INSERT INTO t VALUES (7);").unwrap();
+        }
+        std::fs::write(old.join("pty-logs/pane.log"), "scrollback").unwrap();
+        std::fs::write(old.join("windows.json"), "[]").unwrap();
+        assert!(import_legacy_state(
+            &new.join("abundio.db"),
+            &old.join("abundio.db"),
+            &new,
+            &old.join("pty-logs"),
+            &new.join("pty-logs"),
+        ));
+        let c = Connection::open(new.join("abundio.db")).unwrap();
+        let x: i64 = c.query_row("SELECT x FROM t", [], |r| r.get(0)).unwrap();
+        assert_eq!(x, 7);
+        assert_eq!(std::fs::read_to_string(new.join("pty-logs/pane.log")).unwrap(), "scrollback");
+        assert_eq!(std::fs::read_to_string(new.join("windows.json")).unwrap(), "[]");
+        // The previous epoch's own files are where they were.
+        assert!(old.join("abundio.db").exists() && old.join("windows.json").exists());
+        assert!(legacy_db_path().to_string_lossy().contains(&format!("/{PREVIOUS_EPOCH}/")));
     }
 
     #[test]
