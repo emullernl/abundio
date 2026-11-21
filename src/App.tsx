@@ -73,6 +73,7 @@ import { installFocusSweep } from "./lib/focusSweep";
 import {
 	agentRegistry,
 	appMenu,
+	hostsApi,
 	listen,
 	listenToThisWindow,
 	settingsWindow,
@@ -689,6 +690,10 @@ export function App() {
 		registry
 			.load(settings.agents.map((a) => a.command))
 			.then(async () => {
+				// The Agent list is this computer's (every Window shares it): a
+				// remote Window's scan is its Host's, which must never switch this
+				// computer's Agents on or off (phase 10).
+				if (await hostsApi.remoteProfileForWindow().catch(() => null)) return;
 				const { installedCommands: installed, scannedCommands: scanned } =
 					useAgentRegistryStore.getState();
 				if (installed.size === 0) return;
