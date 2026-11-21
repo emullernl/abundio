@@ -1056,11 +1056,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		const state = get();
 		const workspace = state.workspaces.find((s) => s.id === id);
 		if (!workspace) return;
-		// A Joined profile's Workspace only stops being shown here: its panes
-		// and Agents run on, on its Host, and stay Opened for its Profile's
-		// other Windows (phase 10: joining is a view).
-		const joined = !!workspace.joined;
-		if (!joined && (opts?.forget ?? true)) forgetOpened(id);
+		// A Joined profile's Workspace closes as any other: its terminals stop
+		// (on its Host), as closing means. Only Leave and a Profile switch
+		// stop showing one without stopping it (`detachTerminal`, phase 10).
+		if (opts?.forget ?? true) forgetOpened(id);
 
 		const activityStore = usePtyActivityStore.getState();
 
@@ -1070,8 +1069,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			const layout = parseTabLayout(tab.layoutJson);
 			if (!layout) continue;
 			for (const paneId of collectPaneIds(layout)) {
-				if (joined) detachTerminal(paneId);
-				else teardownTerminal(paneId);
+				teardownTerminal(paneId);
 			}
 			// Clean up file pane state
 			useExplorerStore.getState().clearWorkspaceFilePanes(id);
@@ -1094,8 +1092,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 							...s,
 							tabs: s.tabs.map((t) => {
 								const layout = parseTabLayout(t.layoutJson);
-								// A joined pane keeps its PTY, to reattach next time.
-								if (!layout || joined) return t;
+								if (!layout) return t;
 								const cleared = clearPtyIds(layout);
 								if (!isOrchestrator(s)) {
 									seedPendingAgentsForLayout(cleared);

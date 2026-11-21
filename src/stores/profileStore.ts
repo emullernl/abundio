@@ -252,6 +252,10 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 		);
 		const wsStore = useWorkspaceStore.getState();
 		for (const wid of openedIds) {
+			// A Joined profile's Workspace is not closed: its Agents keep
+			// working on its Host, and the joins reload below only stop
+			// showing it (phase 10).
+			if (wsStore.workspaces.find((w) => w.id === wid)?.joined) continue;
 			// Kept on the old Profile's restore list: it reopens when that
 			// Profile is opened again (ADR-0052).
 			await wsStore.closeWorkspace(wid, { forget: false }).catch(() => {});
