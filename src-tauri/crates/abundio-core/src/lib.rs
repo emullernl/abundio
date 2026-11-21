@@ -48,6 +48,7 @@ pub mod process_monitor;
 pub mod profile_store;
 pub mod prompt_actions;
 pub mod host_settings;
+pub mod stderr_log;
 pub mod joined_profiles;
 pub mod pty_manager;
 pub mod pty_sizes;

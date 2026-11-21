@@ -21,7 +21,7 @@ dashmap = "6"
 base64 = "0.22"
 crossbeam-channel = "0.5"
 thiserror = "2"
-log = "0.4"
+log = { version = "0.4", features = ["std"] }
 notify = "7"
 ignore = "0.4"
 git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2"] }

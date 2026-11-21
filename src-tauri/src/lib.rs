@@ -833,6 +833,8 @@ fn upgrade_settings_default_size() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // First: every `log::` line from here on reaches the terminal.
+    abundio_core::stderr_log::init();
     // Must happen before the window-state plugin is initialised below. Returns
     // the precomputed plan (rare case) for setup() to reuse.
     let preplan = adopt_survivor_geometry_into_main();
