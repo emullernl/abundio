@@ -352,6 +352,18 @@ fn run(data_dir: PathBuf) -> Result<(), String> {
     let status = Arc::new(status_store::StatusStore::new());
     let agents = Arc::new(abundio_core::shell_integration::AgentCommands::default());
     let connections = Arc::new(serve::Connections::default());
+    {
+        // Skip-ahead (phase 9): a Client that fell behind gets the screen.
+        let (shot, draw) = (Arc::downgrade(&ptys), Arc::downgrade(&ptys));
+        connections.use_screens(serve::Screens {
+            snapshot: Box::new(move |pty, send| shot.upgrade().is_some_and(|p| p.with_screen_snapshot(pty, send))),
+            redraw: Box::new(move |pty| {
+                if let Some(ptys) = draw.upgrade() {
+                    let _ = ptys.redraw(pty);
+                }
+            }),
+        });
+    }
     let events: Events = connections.clone();
     {
         // A PTY's exit reaches its status here, Window or not (phase 6d).

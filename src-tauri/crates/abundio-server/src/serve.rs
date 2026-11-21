@@ -3,7 +3,7 @@
 //! (each one desktop app, which speaks for any number of Windows, its
 //! Clients), and the event sink that routes events to them.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufReader, BufWriter};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -20,13 +20,34 @@ pub type Handler = Arc<dyn Fn(&ClientId, &str, Value) -> Result<Value, Value> + 
 /// to forget what it held.
 pub type ClientGone = Arc<dyn Fn(&ClientId) + Send + Sync>;
 
-/// PTY output frames a connection may have queued before more are dropped:
-/// a slow Client never slows a PTY (phase 9 sends it a fresh snapshot).
-const PTY_QUEUE: usize = 256;
+/// PTY output frames a connection may have queued (each at most 16 KB, so
+/// about 1 MB) before more are dropped: a slow Client never slows a PTY.
+/// It skips ahead instead (phase 9): once its queue is half empty again it
+/// gets the pane's screen as a snapshot, and live output from there.
+const PTY_QUEUE: usize = 64;
+
+/// How often connections that fell behind are looked at.
+const CATCH_UP_EVERY: std::time::Duration = std::time::Duration::from_millis(100);
 
 struct Conn {
     control: crossbeam_channel::Sender<Frame>,
     pty: crossbeam_channel::Sender<Frame>,
+    /// The panes this connection fell behind on: their output is dropped for
+    /// it until a snapshot is sent.
+    behind: Mutex<HashSet<String>>,
+}
+
+/// See [`Screens::snapshot`].
+pub type SnapshotFn = Box<dyn Fn(&str, &mut dyn FnMut(Vec<u8>)) -> bool + Send + Sync>;
+
+/// What skip-ahead needs from the PTYs.
+pub struct Screens {
+    /// Hand the callback a pane's screen as bytes, with the pane's output
+    /// held back meanwhile (`PtyManager::with_screen_snapshot`); `false`
+    /// when there is no such pane.
+    pub snapshot: SnapshotFn,
+    /// Ask a pane's program to draw again.
+    pub redraw: Box<dyn Fn(&str) + Send + Sync>,
 }
 
 /// Every open connection and the Clients each speaks for.
@@ -36,6 +57,7 @@ pub struct Connections {
     /// Client → its connection, learnt from the Client's requests.
     clients: Mutex<HashMap<String, u64>>,
     next: AtomicU64,
+    screens: std::sync::OnceLock<Screens>,
 }
 
 impl Connections {
@@ -65,6 +87,60 @@ impl Connections {
                 pty_id: pty_id.to_string(),
                 bytes: bytes.to_vec(),
             });
+        }
+    }
+
+    /// Give skip-ahead the PTYs' screens, and start sending snapshots to
+    /// connections that fell behind once they have room again.
+    pub fn use_screens(self: &Arc<Self>, screens: Screens) {
+        if self.screens.set(screens).is_err() {
+            return;
+        }
+        let me = Arc::downgrade(self);
+        std::thread::Builder::new()
+            .name("skip-ahead".into())
+            .spawn(move || loop {
+                std::thread::sleep(CATCH_UP_EVERY);
+                let Some(me) = me.upgrade() else { return };
+                me.catch_up();
+            })
+            .expect("skip-ahead thread");
+    }
+
+    /// Every connection behind on a pane with room again gets its screen.
+    fn catch_up(&self) {
+        let Some(screens) = self.screens.get() else { return };
+        let due: Vec<(u64, String)> = self
+            .conns
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, c)| c.pty.len() <= PTY_QUEUE / 2)
+            .flat_map(|(id, c)| c.behind.lock().unwrap().iter().map(|p| (*id, p.clone())).collect::<Vec<_>>())
+            .collect();
+        for (conn, pty) in due {
+            let mut sent = false;
+            // Under the pane's screen lock: no output of it is sent until
+            // this returns, so the snapshot and what follows join exactly.
+            let exists = (screens.snapshot)(&pty, &mut |bytes| {
+                let conns = self.conns.lock().unwrap();
+                let Some(c) = conns.get(&conn) else { return };
+                let frame = Frame::Pty { client: String::new(), pty_id: pty.clone(), bytes };
+                if c.pty.try_send(frame).is_ok() {
+                    c.behind.lock().unwrap().remove(&pty);
+                    sent = true;
+                }
+            });
+            if !exists {
+                if let Some(c) = self.conns.lock().unwrap().get(&conn) {
+                    c.behind.lock().unwrap().remove(&pty);
+                }
+            } else if sent {
+                log::info!("connection {conn} skipped ahead on {pty}");
+                // What a snapshot cannot carry (a scroll region), a
+                // full-screen program sets again as it redraws.
+                (screens.redraw)(&pty);
+            }
         }
     }
 
@@ -100,15 +176,20 @@ impl EventSink for Connections {
 
     /// Once to every connection: the desktop app puts it in the output
     /// channel of each Window it has on this Host, as local output goes to
-    /// every Window. Dropped for a connection that is behind (phase 9 sends it
-    /// a fresh snapshot instead).
+    /// every Window. A connection whose queue is full falls behind on this
+    /// pane: its output is dropped for it until [`Connections::catch_up`]
+    /// sends it the pane's screen. Called with the pane's screen locked.
     fn pty_output(&self, pty_id: &str, data: &[u8]) {
-        for c in self.conns.lock().unwrap().values() {
-            let _ = c.pty.try_send(Frame::Pty {
-                client: String::new(),
-                pty_id: pty_id.to_string(),
-                bytes: data.to_vec(),
-            });
+        for (id, c) in self.conns.lock().unwrap().iter() {
+            let mut behind = c.behind.lock().unwrap();
+            if behind.contains(pty_id) {
+                continue;
+            }
+            let frame = Frame::Pty { client: String::new(), pty_id: pty_id.to_string(), bytes: data.to_vec() };
+            if c.pty.try_send(frame).is_err() {
+                behind.insert(pty_id.to_string());
+                log::info!("connection {id} fell behind on {pty_id}");
+            }
         }
     }
 }
@@ -141,7 +222,11 @@ pub fn serve(
     let id = connections.next.fetch_add(1, Ordering::SeqCst);
     let (control_tx, control_rx) = crossbeam_channel::unbounded::<Frame>();
     let (pty_tx, pty_rx) = crossbeam_channel::bounded::<Frame>(PTY_QUEUE);
-    connections.conns.lock().unwrap().insert(id, Conn { control: control_tx, pty: pty_tx });
+    connections
+        .conns
+        .lock()
+        .unwrap()
+        .insert(id, Conn { control: control_tx, pty: pty_tx, behind: Mutex::default() });
     log::info!("a Client connection opened ({id})");
 
     // One writer: answers and events first, then PTY output.

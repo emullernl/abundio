@@ -158,6 +158,20 @@ impl PtyManager {
 
     /// The text of a PTY's screen (`abundio pane read`), read from its Rust
     /// emulator. See `screen::Screen::read`.
+    /// Hand `send` the bytes that draw this PTY's screen again (phase 9
+    /// skip-ahead), while its output is held back: the PTY's reader sends
+    /// output under the same lock, so nothing is sent between the snapshot
+    /// and `send`. `send` must not touch this PTY's screen. `false`: no
+    /// such PTY.
+    pub fn with_screen_snapshot(&self, pty_id: &str, send: &mut dyn FnMut(Vec<u8>)) -> bool {
+        let Some(entry) = self.entries.get(pty_id) else { return false };
+        let screen = entry.screen.clone();
+        drop(entry);
+        let Ok(screen) = screen.lock() else { return false };
+        send(screen.snapshot());
+        true
+    }
+
     pub fn read_screen(
         &self,
         pty_id: &str,
@@ -2018,9 +2032,21 @@ fn pty_thread(
                 }
             }
 
-            // Keep the screen, then emit the coalesced batch as one message.
-            let titles = screen.lock().map(|mut s| s.feed(&accum)).unwrap_or_default();
-            read_events.pty_output(&read_pty_id, &accum);
+            // Keep the screen, then emit the coalesced batch as one message,
+            // under the screen's lock: a skip-ahead snapshot (phase 9) is
+            // taken under it too, so it is either before this batch or
+            // after it, never both.
+            let titles = match screen.lock() {
+                Ok(mut s) => {
+                    let titles = s.feed(&accum);
+                    read_events.pty_output(&read_pty_id, &accum);
+                    titles
+                }
+                Err(_) => {
+                    read_events.pty_output(&read_pty_id, &accum);
+                    Vec::new()
+                }
+            };
             tell_listeners(&on_output, &mut shell, &read_pty_id, &accum, titles);
             accum.clear();
         }
@@ -2031,8 +2057,17 @@ fn pty_thread(
             accum.extend_from_slice(&chunk);
         }
         if !accum.is_empty() {
-            let titles = screen.lock().map(|mut s| s.feed(&accum)).unwrap_or_default();
-            read_events.pty_output(&read_pty_id, &accum);
+            let titles = match screen.lock() {
+                Ok(mut s) => {
+                    let titles = s.feed(&accum);
+                    read_events.pty_output(&read_pty_id, &accum);
+                    titles
+                }
+                Err(_) => {
+                    read_events.pty_output(&read_pty_id, &accum);
+                    Vec::new()
+                }
+            };
             tell_listeners(&on_output, &mut shell, &read_pty_id, &accum, titles);
         }
 

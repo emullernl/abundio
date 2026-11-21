@@ -50,6 +50,7 @@ pub mod prompt_actions;
 pub mod pty_manager;
 pub mod pty_sizes;
 pub mod screen;
+pub mod screen_snapshot;
 pub mod search;
 pub mod shell_env;
 pub mod shell_integration;

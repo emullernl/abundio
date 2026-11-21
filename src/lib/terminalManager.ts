@@ -68,6 +68,7 @@ import {
 import { isMac } from "./platform";
 import { trackPtyResize } from "./projectionResize";
 import { stripControlChars } from "./promptActions";
+import { resyncSnapshot } from "./ptyResync";
 import { ShellIntegrationParser } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { isRustStatusAuthority } from "./statusSync";
@@ -1661,6 +1662,16 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 	const [unlistenOutput, unlistenActivity, unlistenStatus, unlistenHook] =
 		await Promise.all([
 			pty.onOutput(currentPtyId, (data) => {
+				// A remote pane's screen after this Window fell behind (phase 9
+				// skip-ahead): it replaces everything the terminal had.
+				const snapshot = resyncSnapshot(data);
+				if (snapshot) {
+					if (managed.startupBuffer) managed.startupBuffer.length = 0;
+					managed.restoreData = null;
+					managed.term.reset();
+					managed.term.write(snapshot);
+					return;
+				}
 				// Always parse and strip shell integration sequences in both modes,
 				// so command_end is detected even while in agent mode.
 				const { cleaned, commands } = shellIntegration.parse(data);

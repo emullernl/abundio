@@ -472,3 +472,81 @@ fn two_apps_on_one_host_share_its_profile_and_take_turns_sizing_a_pane() {
     nix::sys::signal::kill(nix::unistd::Pid::from_raw(server.id() as i32), nix::sys::signal::Signal::SIGTERM).unwrap();
     assert!(server.wait().unwrap().success());
 }
+
+/// Phase 9 skip-ahead: an app that stops reading while a pane floods its
+/// output falls behind on that pane; once it reads again it gets the pane's
+/// screen as a snapshot, then live output, and the PTY never waited for it.
+#[test]
+fn an_app_that_falls_behind_skips_ahead_to_the_screen() {
+    use abundio_core::host_client::HostProcess;
+    use abundio_core::host_protocol::{self, Frame, Message};
+    use abundio_core::screen_snapshot::RESYNC_MARK;
+    use std::process::Stdio;
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = server(dir.path());
+    let mut log = BufReader::new(server.stderr.take().unwrap()).lines().map_while(Result::ok);
+    wait_for(&mut log, "waiting for a Client");
+
+    // The slow app: it shakes hands, then reads nothing for a while.
+    let mut slow = connect_command(dir.path()).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut to_server = slow.stdin.take().unwrap();
+    let mut from_server = std::io::BufReader::new(slow.stdout.take().unwrap());
+    Frame::Message(host_protocol::hello()).write_to(&mut to_server).unwrap();
+    assert!(matches!(Frame::read_from(&mut from_server).unwrap(), Some(Frame::Message(Message::Welcome { .. }))));
+
+    // The quick app makes a pane that floods once told to.
+    let (quick, _qp) = HostProcess::spawn(connect_command(dir.path()), std::sync::Arc::new(Quiet)).unwrap();
+    let call = |command: &str, args: serde_json::Value| quick.request("w", command, args, Some(Duration::from_secs(10))).unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let profile = "00000000-0000-0000-0000-000000000001";
+    let ws = call("workspace_create", serde_json::json!({ "name": "R", "rootFolder": folder.path(), "profileId": profile }));
+    let script = folder.path().join("flood.sh");
+    std::fs::write(
+        &script,
+        "while [ ! -f go ]; do sleep 0.1; done\ni=0\nwhile [ $i -lt 40000 ]; do echo \"flood line $i\"; i=$((i+1)); done\necho FLOOD-DONE\nwhile :; do sleep 1; done\n",
+    )
+    .unwrap();
+    let pty = call(
+        "pty_spawn",
+        serde_json::json!({
+            "cwd": folder.path(), "cols": 80, "rows": 24, "workspaceId": ws["id"],
+            "command": format!("/bin/sh {}", script.display()),
+        }),
+    );
+    let pty = pty.as_str().unwrap().to_string();
+    std::fs::write(folder.path().join("go"), "").unwrap();
+    // The PTY never waits for the slow app: the flood ends regardless.
+    let start = Instant::now();
+    loop {
+        let screen = call("pty_read_screen", serde_json::json!({ "ptyId": pty, "visible": true }));
+        if screen.to_string().contains("FLOOD-DONE") {
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(60), "the flood never ended");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    wait_for(&mut log, "fell behind on");
+
+    // Reading again: a snapshot of the screen arrives, with the flood's end.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let pty2 = pty.clone();
+    std::thread::spawn(move || {
+        while let Ok(Some(frame)) = Frame::read_from(&mut from_server) {
+            if let Frame::Pty { pty_id, bytes, .. } = frame {
+                if pty_id == pty2 && bytes.starts_with(RESYNC_MARK) {
+                    let _ = tx.send(bytes);
+                    return;
+                }
+            }
+        }
+    });
+    let snapshot = rx.recv_timeout(Duration::from_secs(20)).expect("no snapshot arrived");
+    let text = String::from_utf8_lossy(&snapshot);
+    assert!(text.contains("FLOOD-DONE"), "the snapshot is not the screen now");
+    assert!(text.contains("flood line 39999"));
+    wait_for(&mut log, "skipped ahead on");
+
+    let _ = slow.kill();
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(server.id() as i32), nix::sys::signal::Signal::SIGTERM).unwrap();
+    assert!(server.wait().unwrap().success());
+}

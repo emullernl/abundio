@@ -126,6 +126,12 @@ impl Screen {
         }
     }
 
+    /// The bytes that draw this screen again on a cleared terminal, for a
+    /// Client that skipped ahead (phase 9, `screen_snapshot.rs`).
+    pub fn snapshot(&self) -> Vec<u8> {
+        crate::screen_snapshot::snapshot(&self.term)
+    }
+
     /// The text as drawn, for `abundio pane read`. `visible` limits it to the
     /// screen; `lines` keeps only the last N lines after joining.
     pub fn read(&self, visible: bool, lines: Option<usize>) -> Vec<String> {
@@ -214,6 +220,53 @@ fn suggestion_start(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A snapshot drawn on a fresh screen gives the same screen: text and
+    /// scrollback, wrapped lines, colours, the cursor and the modes.
+    #[test]
+    fn a_snapshot_draws_the_same_screen_again() {
+        use alacritty_terminal::term::TermMode;
+        use crate::screen_snapshot::RESYNC_MARK;
+        let mut a = Screen::new(20, 5, 100);
+        for i in 0..12 {
+            a.feed(format!("line {i}\r\n").as_bytes());
+        }
+        a.feed(b"\x1b[1;31mred\x1b[0m \x1b[48;5;22mbg\x1b[0m \x1b[38;2;1;2;3mrgb\x1b[0m\r\n");
+        a.feed("a line long enough to wrap around twice, \u{4e16}\u{754c}\r\n".as_bytes());
+        a.feed(b"\x1b[?2004h\x1b[?1h\x1b[?1000h\x1b[?1006h\x1b[?25lprompt> ");
+        let snap = a.snapshot();
+        assert!(snap.starts_with(RESYNC_MARK));
+        let mut b = Screen::new(20, 5, 100);
+        b.feed(&snap[RESYNC_MARK.len()..]);
+        assert_eq!(b.read(false, None), a.read(false, None));
+        assert_eq!(b.read(true, None), a.read(true, None));
+        let (ga, gb) = (a.term.grid(), b.term.grid());
+        assert_eq!(gb.cursor.point, ga.cursor.point);
+        let modes = TermMode::BRACKETED_PASTE | TermMode::APP_CURSOR | TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
+        assert!(b.term.mode().contains(modes));
+        assert!(!b.term.mode().contains(TermMode::SHOW_CURSOR));
+        // Every cell looks the same.
+        let mut line = ga.topmost_line();
+        while line <= ga.bottommost_line() {
+            for x in 0..ga.columns() {
+                let (ca, cb) = (&ga[line][Column(x)], &gb[line][Column(x)]);
+                assert_eq!((ca.c, ca.fg, ca.bg), (cb.c, cb.fg, cb.bg), "{line:?} {x}");
+            }
+            line += 1;
+        }
+    }
+
+    #[test]
+    fn a_snapshot_of_the_alternate_screen_puts_each_row_in_place() {
+        use crate::screen_snapshot::RESYNC_MARK;
+        let mut a = Screen::new(20, 5, 100);
+        a.feed(b"shell history\r\n\x1b[?1049h\x1b[2J\x1b[1;1Htop\x1b[5;3Hbottom\x1b[3;4H");
+        let mut b = Screen::new(20, 5, 100);
+        b.feed(&a.snapshot()[RESYNC_MARK.len()..]);
+        assert_eq!(b.read(true, None), a.read(true, None));
+        assert_eq!(b.term.grid().cursor.point, a.term.grid().cursor.point);
+        assert!(b.term.mode().contains(alacritty_terminal::term::TermMode::ALT_SCREEN));
+    }
 
     fn screen(cols: u16, rows: u16, input: &str) -> Screen {
         let mut s = Screen::new(cols, rows, 100);
