@@ -71,8 +71,8 @@ pub fn default_shell() -> String {
 /// pane. Interactive config may print to stdout (prompts, plugins), so the
 /// PATH is wrapped in sentinels and extracted rather than parsing the whole
 /// stream.
-pub fn shell_path() -> &'static str {
-    &resolved_shell_path().0
+pub fn shell_path() -> String {
+    resolved_shell_path().0
 }
 
 /// True when [`shell_path`] is the user's real login-shell `PATH`, false when
@@ -84,28 +84,72 @@ pub fn shell_path_is_resolved() -> bool {
     resolved_shell_path().1
 }
 
-fn resolved_shell_path() -> &'static (String, bool) {
-    static PATH: OnceLock<(String, bool)> = OnceLock::new();
-    PATH.get_or_init(|| {
-        if cfg!(target_os = "windows") {
-            return (env::var("PATH").unwrap_or_default(), true);
-        }
+/// The resolved PATH, whether it is the login shell's, and when it was read.
+type Resolved = (String, bool, std::time::Instant);
 
-        let shell = default_shell();
-        if let Some(stdout) = capture_login_shell_path(&shell) {
-            if let Some(path) =
-                extract_between(&stdout, "__ABUNDIO_PATH_START__", "__ABUNDIO_PATH_END__")
-            {
-                if !path.is_empty() {
-                    return (path.to_string(), true);
-                }
+fn cache() -> &'static std::sync::RwLock<Option<Resolved>> {
+    static PATH: OnceLock<std::sync::RwLock<Option<Resolved>>> = OnceLock::new();
+    PATH.get_or_init(|| std::sync::RwLock::new(None))
+}
+
+fn resolved_shell_path() -> (String, bool) {
+    if let Some((path, ok, _)) = cache().read().ok().and_then(|c| c.clone()) {
+        return (path, ok);
+    }
+    let fresh = resolve_now();
+    let mut c = cache().write().unwrap_or_else(|e| e.into_inner());
+    let got = c.get_or_insert((fresh.0, fresh.1, std::time::Instant::now()));
+    (got.0.clone(), got.1)
+}
+
+/// Read the login shell's PATH again when the copy is older than `max_age`
+/// (an Abundio server runs for weeks, and an Agent installed meanwhile adds
+/// itself to `.bashrc`). A failed read keeps the last good one.
+pub fn refresh_shell_path_if_older(max_age: Duration) {
+    refresh_in(cache(), max_age, resolve_now);
+}
+
+fn refresh_in(
+    cache: &std::sync::RwLock<Option<Resolved>>,
+    max_age: Duration,
+    resolve: impl FnOnce() -> (String, bool),
+) {
+    let stale = cache
+        .read()
+        .ok()
+        .and_then(|c| c.as_ref().map(|(_, _, at)| at.elapsed() > max_age))
+        .unwrap_or(true);
+    if !stale {
+        return;
+    }
+    let (path, ok) = resolve();
+    let mut c = cache.write().unwrap_or_else(|e| e.into_inner());
+    match c.as_mut() {
+        // Keep a good PATH over a failed read; note the try either way.
+        Some(old) if old.1 && !ok => old.2 = std::time::Instant::now(),
+        _ => *c = Some((path, ok, std::time::Instant::now())),
+    }
+}
+
+fn resolve_now() -> (String, bool) {
+    if cfg!(target_os = "windows") {
+        return (env::var("PATH").unwrap_or_default(), true);
+    }
+
+    let shell = default_shell();
+    if let Some(stdout) = capture_login_shell_path(&shell) {
+        if let Some(path) =
+            extract_between(&stdout, "__ABUNDIO_PATH_START__", "__ABUNDIO_PATH_END__")
+        {
+            if !path.is_empty() {
+                return (path.to_string(), true);
             }
         }
+    }
 
-        // Fallback: current PATH + common Homebrew locations
-        let current = env::var("PATH").unwrap_or_default();
-        (format!("{current}:/opt/homebrew/bin:/usr/local/bin"), false)
-    })
+    // Fallback: current PATH + common Homebrew locations
+    let current = env::var("PATH").unwrap_or_default();
+    (format!("{current}:/opt/homebrew/bin:/usr/local/bin"), false)
 }
 
 /// Upper bound on how long we wait for the login+interactive shell to print its
@@ -342,7 +386,7 @@ fn where_command(exe: &str) -> Option<String> {
 pub fn find_in_path(name: &str) -> Option<std::path::PathBuf> {
     let path_var = crate::shell_env::shell_path();
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
-    let mut dirs: Vec<std::path::PathBuf> = std::env::split_paths(path_var).collect();
+    let mut dirs: Vec<std::path::PathBuf> = std::env::split_paths(&path_var).collect();
     #[cfg(target_os = "macos")]
     {
         for extra in ["/usr/local/bin", "/opt/homebrew/bin"] {
@@ -398,6 +442,21 @@ mod tests {
             extract_between(stream, "__ABUNDIO_PATH_START__", "__ABUNDIO_PATH_END__"),
             Some("/usr/local/bin:/usr/bin")
         );
+    }
+
+    #[test]
+    fn the_login_paths_copy_is_read_again_once_old_and_a_failed_read_keeps_the_good_one() {
+        let cache = std::sync::RwLock::new(None);
+        refresh_in(&cache, Duration::from_secs(30), || ("/usr/bin".into(), true));
+        // Fresh: not read again.
+        refresh_in(&cache, Duration::from_secs(30), || panic!("read again too soon"));
+        // Old: an Agent installed meanwhile is on the new PATH.
+        refresh_in(&cache, Duration::ZERO, || ("/home/dev/.opencode/bin:/usr/bin".into(), true));
+        assert_eq!(cache.read().unwrap().as_ref().unwrap().0, "/home/dev/.opencode/bin:/usr/bin");
+        // The shell timing out does not lose it.
+        refresh_in(&cache, Duration::ZERO, || ("/fallback".into(), false));
+        let kept = cache.read().unwrap().clone().unwrap();
+        assert_eq!((kept.0.as_str(), kept.1), ("/home/dev/.opencode/bin:/usr/bin", true));
     }
 
     #[test]

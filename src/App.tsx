@@ -109,6 +109,7 @@ import {
 } from "./lib/terminalClipboard";
 import { setAllTerminalsFontSize } from "./lib/terminalManager";
 import { unsavedFilePaths } from "./lib/unsavedFiles";
+import { addWindowFocusListener } from "./lib/windowFocus";
 import { cycleOpenedWorkspace } from "./lib/workspaceCycle";
 import { isOrchestrator, workWorkspaces } from "./lib/workspaceKind";
 import {
@@ -116,7 +117,10 @@ import {
 	buildWorkspaceRows,
 	flattenRowsToIds,
 } from "./lib/worktreeGrouping";
-import { useAgentRegistryStore } from "./stores/agentRegistryStore";
+import {
+	rescanIfStale,
+	useAgentRegistryStore,
+} from "./stores/agentRegistryStore";
 import {
 	panesWantingAttention,
 	useAgentSignalsStore,
@@ -668,6 +672,17 @@ export function App() {
 	// burn it on a seed that never happened. Nothing reaches disk until the
 	// toggles are actually set, so any failure in between simply leaves the
 	// claim for the next launch. See ADR-0037.
+	// Coming to the front, scan again if the last scan is old: an Agent
+	// installed meanwhile (in a pane, on a Host) shows up without a restart.
+	useEffect(
+		() =>
+			addWindowFocusListener((focused) => {
+				if (!focused) return;
+				rescanIfStale(useSettingsStore.getState().agents.map((a) => a.command));
+			}),
+		[],
+	);
+
 	useEffect(() => {
 		const settings = useSettingsStore.getState();
 		const registry = useAgentRegistryStore.getState();

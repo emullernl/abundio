@@ -30,11 +30,20 @@ interface AgentRegistryState {
  *  error, that it isn't installed. */
 let inFlight: { promise: Promise<void>; commands: Set<string> } | null = null;
 
+/** When the last scan started (ms), for `rescanIfStale`. */
+let lastScanAt = 0;
+
+/** How old a scan may get before a Window coming to the front scans again:
+ *  an Agent installed meanwhile (in a pane, on a Host) shows up without a
+ *  restart. */
+export const RESCAN_AFTER_MS = 60_000;
+
 function scan(
 	set: (partial: Partial<AgentRegistryState>) => void,
 	commands: string[],
 ): Promise<void> {
 	set({ loading: true });
+	lastScanAt = Date.now();
 	const promise = agentRegistryApi
 		.listInstalled(commands)
 		.then((installed) => {
@@ -93,3 +102,11 @@ export const useAgentRegistryStore = create<AgentRegistryState>((set, get) => ({
 		await scan(set, commands);
 	},
 }));
+
+/** Scan again if the last scan is older than `RESCAN_AFTER_MS` (the Window
+ *  came to the front). */
+export function rescanIfStale(commands: string[], now = Date.now()): void {
+	const s = useAgentRegistryStore.getState();
+	if (!s.loaded || now - lastScanAt < RESCAN_AFTER_MS) return;
+	void s.reload(commands);
+}

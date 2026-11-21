@@ -366,7 +366,7 @@ pub fn launch(
     for cli in def.cli_names {
         if let Some(bin) = resolve_cli(def, cli) {
             let args = build_cli_args(def.launch_style, workspace_folder, file);
-            launch_command(&bin, &args, crate::shell_env::shell_path())
+            launch_command(&bin, &args, &crate::shell_env::shell_path())
                 .spawn()
                 .map_err(AbundioError::Io)?;
             return Ok(());

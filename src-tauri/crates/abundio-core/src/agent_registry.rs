@@ -9,6 +9,9 @@ use crate::workspace_store::WorkspaceStore;
 /// (plus `/usr/local/bin` and `/opt/homebrew/bin` on macOS).
 /// Pure filesystem check — no subprocesses spawned.
 pub fn list_installed_agent_commands(commands: Vec<String>) -> Vec<String> {
+    // An Agent installed since the PATH was read (on a Host that has run
+    // for weeks) is found at the next check.
+    crate::shell_env::refresh_shell_path_if_older(std::time::Duration::from_secs(30));
     commands
         .into_iter()
         .filter(|cmd| find_in_path(cmd).is_some())

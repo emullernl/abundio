@@ -129,7 +129,7 @@ pub fn invalidate_gh_auth_cache() {
 fn check_gh_auth() -> (bool, bool) {
 	let path = crate::shell_env::shell_path();
 	let mut cmd = Command::new("gh");
-	cmd.arg("--version").env("PATH", path);
+	cmd.arg("--version").env("PATH", &path);
 	#[cfg(target_os = "windows")]
 	cmd.creation_flags(crate::shell_env::CREATE_NO_WINDOW);
 	let available = cmd.output().map(|o| o.status.success()).unwrap_or(false);
@@ -137,7 +137,7 @@ fn check_gh_auth() -> (bool, bool) {
 		return (false, false);
 	}
 	let mut cmd = Command::new("gh");
-	cmd.args(["auth", "status"]).env("PATH", path);
+	cmd.args(["auth", "status"]).env("PATH", &path);
 	#[cfg(target_os = "windows")]
 	cmd.creation_flags(crate::shell_env::CREATE_NO_WINDOW);
 	let authenticated = cmd.output().map(|o| o.status.success()).unwrap_or(false);
