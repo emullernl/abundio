@@ -5,7 +5,10 @@ import type { Rollups } from "../stores/ptyActivityStore";
  * how many Workspaces it has, then its Agents by status, most urgent first,
  * leaving out what is zero: "3 workspaces · 1 waiting · 2 working".
  */
-export function sectionSummary(count: number, rollups: Rollups | undefined): string {
+export function sectionSummary(
+	count: number,
+	rollups: Rollups | undefined,
+): string {
 	const parts = [count === 1 ? "1 workspace" : `${count} workspaces`];
 	const c = rollups?.agent?.counts;
 	if (c) {

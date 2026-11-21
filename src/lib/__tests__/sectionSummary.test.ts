@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { sectionSummary } from "../sectionSummary";
 
-const agent = (counts: Partial<Record<"error" | "waiting" | "ready" | "working" | "idle", number>>) => ({
+const agent = (
+	counts: Partial<
+		Record<"error" | "waiting" | "ready" | "working" | "idle", number>
+	>,
+) => ({
 	agent: {
 		status: "green" as const,
 		counts: { error: 0, waiting: 0, ready: 0, working: 0, idle: 0, ...counts },
