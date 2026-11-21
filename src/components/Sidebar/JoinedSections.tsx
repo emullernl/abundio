@@ -1,11 +1,15 @@
 import { Cloud, MoreHorizontal, Plus } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import { type JoinedEntry, useJoinedStore } from "../../stores/joinedStore";
 import { useProfileStore } from "../../stores/profileStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { OpenRemoteProfileDialog } from "../OpenRemoteProfileDialog";
 import { PaneContextMenu } from "../Terminal/PaneContextMenu";
+import {
+	useSectionFolded,
+	WorkspaceSectionHeader,
+} from "./WorkspaceSectionHeader";
 
 /** "last seen 5 min ago", for a section whose Host is not reachable. */
 export function lastSeen(ms: number | null, now = Date.now()): string {
@@ -75,7 +79,12 @@ function JoinedSection({
 	const link = useJoinedStore((s) => s.links[entry.hostId]);
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-	const mine = workspaces.filter((w) => w.joined?.hostId === entry.hostId);
+	const mine = useMemo(
+		() => workspaces.filter((w) => w.joined?.hostId === entry.hostId),
+		[workspaces, entry.hostId],
+	);
+	const sectionKey = `host:${entry.hostId}`;
+	const folded = useSectionFolded(sectionKey);
 	const online = link?.state === "online";
 	const offline = !online;
 	const dot =
@@ -84,7 +93,7 @@ function JoinedSection({
 			: link?.state === "connecting"
 				? "var(--warning, #d29922)"
 				: "var(--fg-secondary)";
-	const status =
+	const away =
 		link?.state === "offline"
 			? link.signIn
 				? "Sign in needed"
@@ -97,88 +106,67 @@ function JoinedSection({
 			aria-label={`${entry.hostName} · ${entry.remoteProfileName}`}
 			style={{ marginTop: 10 }}
 		>
-			<div
-				className="group flex items-center gap-2"
-				style={{ padding: "4px 8px 4px 12px" }}
-			>
-				<Cloud
-					size={12}
-					style={{ flexShrink: 0, color: "var(--fg-secondary)" }}
-				/>
-				<span
-					className="truncate flex-1 min-w-0 uppercase"
-					style={{
-						fontSize: 10,
-						letterSpacing: "0.06em",
-						fontWeight: 600,
-						color: "var(--fg-secondary)",
-					}}
-					title={link?.state === "offline" ? link.reason : undefined}
-				>
-					{entry.hostName} · {entry.remoteProfileName}
-				</span>
-				<span
-					role="img"
-					aria-label={online ? "connected" : "not connected"}
-					style={{
-						width: 7,
-						height: 7,
-						borderRadius: 4,
-						flexShrink: 0,
-						backgroundColor: dot,
-					}}
-				/>
-				<button
-					type="button"
-					aria-label={`${entry.hostName} menu`}
-					className="opacity-0 group-hover:opacity-100 w-5 h-5 rounded flex items-center justify-center hover:bg-[var(--bg-tertiary)] transition-opacity"
-					style={{ color: "var(--fg-secondary)" }}
-					onClick={(e) => setMenu({ x: e.clientX, y: e.clientY })}
-				>
-					<MoreHorizontal size={13} />
-				</button>
-			</div>
-			{status && (
-				<div
-					className="flex items-center gap-2"
-					style={{ padding: "0 12px 4px 32px", fontSize: 11 }}
-				>
-					<span style={{ color: "var(--fg-secondary)" }}>{status}</span>
-					{link?.state === "offline" && (
+			<WorkspaceSectionHeader
+				sectionKey={sectionKey}
+				icon={<Cloud size={12} />}
+				label={`${entry.hostName} · ${entry.remoteProfileName}`}
+				title={link?.state === "offline" ? link.reason : undefined}
+				workspaces={mine}
+				trailing={
+					<>
+						<span
+							role="img"
+							aria-label={online ? "connected" : "not connected"}
+							style={{
+								width: 7,
+								height: 7,
+								borderRadius: 4,
+								flexShrink: 0,
+								backgroundColor: dot,
+							}}
+						/>
 						<button
 							type="button"
-							className="rounded hover:underline"
-							style={{ color: "var(--accent)", fontSize: 11 }}
-							onClick={() =>
-								void useJoinedStore.getState().signIn(entry.hostId)
-							}
+							aria-label={`${entry.hostName} menu`}
+							className="opacity-0 group-hover:opacity-100 w-5 h-5 rounded flex items-center justify-center hover:bg-[var(--bg-tertiary)] transition-opacity"
+							style={{ color: "var(--fg-secondary)" }}
+							onClick={(e) => setMenu({ x: e.clientX, y: e.clientY })}
 						>
-							{link.signIn ? "Sign in" : "Try now"}
+							<MoreHorizontal size={13} />
 						</button>
-					)}
+					</>
+				}
+				status={
+					away && (
+						<span className="flex items-center gap-2">
+							<span>{away}</span>
+							{link?.state === "offline" && (
+								<button
+									type="button"
+									className="rounded hover:underline"
+									style={{ color: "var(--accent)", fontSize: 11 }}
+									onClick={() =>
+										void useJoinedStore.getState().signIn(entry.hostId)
+									}
+								>
+									{link.signIn ? "Sign in" : "Try now"}
+								</button>
+							)}
+						</span>
+					)
+				}
+			/>
+			{!folded && (
+				<div
+					style={{
+						opacity: offline ? 0.5 : 1,
+						pointerEvents: offline ? "none" : undefined,
+					}}
+					aria-disabled={offline}
+				>
+					{renderRows(mine, offline)}
 				</div>
 			)}
-			<div
-				style={{
-					opacity: offline ? 0.5 : 1,
-					pointerEvents: offline ? "none" : undefined,
-				}}
-				aria-disabled={offline}
-			>
-				{mine.length === 0 && online ? (
-					<div
-						style={{
-							padding: "2px 12px 4px 32px",
-							fontSize: 11,
-							color: "var(--fg-secondary)",
-						}}
-					>
-						No workspaces
-					</div>
-				) : (
-					renderRows(mine, offline)
-				)}
-			</div>
 			{menu && (
 				<PaneContextMenu
 					x={menu.x}

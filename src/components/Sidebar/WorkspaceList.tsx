@@ -1,3 +1,4 @@
+import { Cloud, Monitor } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConfirmCloseWorkspace } from "../../hooks/useConfirmCloseWorkspace";
 import {
@@ -18,6 +19,7 @@ import {
 	type WorkspaceRow,
 } from "../../lib/worktreeGrouping";
 import { confirmFileWindowsClean } from "../../stores/fileWindowCloseConfirmStore";
+import { useProfileStore } from "../../stores/profileStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
@@ -38,6 +40,10 @@ import { WorktreeProgressDialog } from "../WorktreeProgressDialog";
 import { CollapsedStrip } from "./CollapsedStrip";
 import { JoinedSections } from "./JoinedSections";
 import { WorkspaceItem } from "./WorkspaceItem";
+import {
+	useSectionFolded,
+	WorkspaceSectionHeader,
+} from "./WorkspaceSectionHeader";
 
 const NO_HIDDEN_MEMBERS: WorkspaceWithTabs[] = [];
 
@@ -107,6 +113,7 @@ export function WorkspaceList({
 	const [lastCreatePayload, setLastCreatePayload] =
 		useState<AddWorktreePayload | null>(null);
 
+	const ownFolded = useSectionFolded("local");
 	// This Window's own Profile's Workspaces; a Joined profile's are drawn
 	// in their own section below (phase 10, `JoinedSections`).
 	const ownWorkspaces = useMemo(
@@ -589,7 +596,9 @@ export function WorkspaceList({
 
 	return (
 		<div className="flex flex-col" ref={containerRef}>
-			{ownWorkspaces.length === 0 && !collapsed && (
+			{!collapsed && <OwnSectionHeader workspaces={ownWorkspaces} />}
+
+			{ownWorkspaces.length === 0 && !collapsed && !ownFolded && (
 				<div
 					className="px-3 py-4 text-center text-xs"
 					style={{ color: "var(--fg-secondary)" }}
@@ -615,7 +624,8 @@ export function WorkspaceList({
 							renderCollapsedStrip(row.workspace, 0)
 						),
 					)
-				: rows.map((row, i) => {
+				: !ownFolded &&
+					rows.map((row, i) => {
 						const id = rowId(row);
 						return (
 							<div
@@ -961,5 +971,26 @@ function DragGhost({
 				</div>
 			)}
 		</div>
+	);
+}
+
+/** The header of this Window's own Profile's section: its name, on this
+ *  computer, or `host · Profile` in a remote Window (phase 10). */
+function OwnSectionHeader({ workspaces }: { workspaces: WorkspaceWithTabs[] }) {
+	const remote = useProfileStore((s) => s.remote);
+	const name = useProfileStore(
+		(s) => s.profiles.find((p) => p.id === s.activeProfileId)?.name ?? "",
+	);
+	return (
+		<WorkspaceSectionHeader
+			sectionKey="local"
+			icon={remote ? <Cloud size={12} /> : <Monitor size={12} />}
+			label={
+				remote
+					? `${remote.hostName} · ${remote.profileName}`
+					: `${name} · this computer`
+			}
+			workspaces={workspaces}
+		/>
 	);
 }

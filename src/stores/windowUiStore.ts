@@ -92,6 +92,10 @@ interface WindowUiState {
 	 *  called "collapsed" — that word means the sidebar itself is narrow. */
 	foldedSetKeys: string[];
 	toggleSetFolded: (groupKey: string) => void;
+	/** The Workspace list's sections folded to their header: `local` and
+	 *  `host:<id>` for each Joined profile (phase 10). Per Window, persisted. */
+	foldedSectionKeys: string[];
+	toggleSectionFolded: (key: string) => void;
 	setSetFolded: (groupKey: string, folded: boolean) => void;
 
 	/** The Statistics overlay covers the workspace stack (terminals stay alive
@@ -241,6 +245,13 @@ export const useWindowUiStore = create<WindowUiState>()(
 				set((s) => ({ commitsSectionCollapsed: !s.commitsSectionCollapsed })),
 			toggleAgentsListCollapsed: () =>
 				set((s) => ({ agentsListCollapsed: !s.agentsListCollapsed })),
+			foldedSectionKeys: [],
+			toggleSectionFolded: (key) =>
+				set((s) => ({
+					foldedSectionKeys: s.foldedSectionKeys.includes(key)
+						? s.foldedSectionKeys.filter((k) => k !== key)
+						: [...s.foldedSectionKeys, key],
+				})),
 			foldedSetKeys: [],
 			toggleSetFolded: (groupKey) =>
 				set((s) => ({
@@ -459,6 +470,7 @@ export const useWindowUiStore = create<WindowUiState>()(
 				peekExplorerWidth: s.peekExplorerWidth,
 				peekTerminalWidth: s.peekTerminalWidth,
 				foldedSetKeys: s.foldedSetKeys,
+				foldedSectionKeys: s.foldedSectionKeys,
 				fleetGrid: s.fleetGrid,
 			}),
 		},
