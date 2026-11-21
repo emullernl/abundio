@@ -83,4 +83,17 @@ describe("recoverJoinedWorkspace (phase 10: a joined Host came back)", () => {
 		expect(resync).toHaveBeenCalledWith(["live-pty"]);
 		expect(initPty).toHaveBeenCalledWith("live-pty");
 	});
+
+	it("leaves alone a pane started since the Host went away", async () => {
+		const resync = vi.fn(() => Promise.resolve());
+		const out = await recoverJoinedWorkspace("ws", "box", {
+			alive: () => Promise.resolve(["live-pty", "dead-pty"]),
+			resync,
+			only: new Set(["dead-pty"]),
+		});
+		// "live-pty" is not one it had: never resynced (that would wipe the
+		// scrollback its restart restored).
+		expect(out).toEqual({ restarted: 0, resynced: 1 });
+		expect(resync).toHaveBeenCalledWith(["dead-pty"]);
+	});
 });

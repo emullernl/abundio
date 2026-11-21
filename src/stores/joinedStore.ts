@@ -84,8 +84,33 @@ const shown = (list: WorkspaceWithTabs[]) =>
 
 let listening = false;
 
-/** Recover each of a Host's joined Workspaces open in this Window. */
+/** Host → the PTYs of its panes open here when it went away: what a
+ *  reconnect recovers, once. A PTY started after (a pane restarted by the
+ *  recovery) missed nothing, and resyncing it would replace the scrollback
+ *  it restored with its Host's fresh screen. */
+const missed = new Map<string, Set<string>>();
+
+/** The Host went away: remember its panes open here. */
+function noteAway(hostId: string): void {
+	if (missed.has(hostId)) return;
+	const act = usePtyActivityStore.getState();
+	const store = useWorkspaceStore.getState();
+	const ids = new Set<string>();
+	for (const [paneId, ptyId] of Object.entries(act.panePtyMap)) {
+		const ws = store.findWorkspaceForPane(paneId);
+		if (ws?.joined?.hostId === hostId && act.openedWorkspaceIds.has(ws.id)) {
+			ids.add(ptyId);
+		}
+	}
+	missed.set(hostId, ids);
+}
+
+/** Recover each of a Host's joined Workspaces open in this Window: only the
+ *  panes it had when it went away, and only once. */
 async function recoverOpened(hostId: string): Promise<void> {
+	const only = missed.get(hostId);
+	missed.delete(hostId);
+	if (!only || only.size === 0) return;
 	const opened = usePtyActivityStore.getState().openedWorkspaceIds;
 	const mine = useWorkspaceStore
 		.getState()
@@ -96,6 +121,7 @@ async function recoverOpened(hostId: string): Promise<void> {
 			alive: (ptyIds) =>
 				joinedApi.callOn<string[]>(hostId, "pty_alive", { ptyIds }),
 			resync: (ptyIds) => joinedApi.callOn(hostId, "pty_resync", { ptyIds }),
+			only,
 		});
 	}
 }
@@ -170,6 +196,7 @@ export const useJoinedStore = create<JoinedState>((set, get) => {
 		});
 		const down = (host: string, reason: string, signIn?: boolean) => {
 			if (!entryOf(host)) return;
+			noteAway(host);
 			setLink(host, {
 				state: "offline",
 				reason,

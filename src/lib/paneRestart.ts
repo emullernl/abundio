@@ -165,9 +165,13 @@ export async function recoverJoinedWorkspace(
 	api: {
 		alive: (ptyIds: string[]) => Promise<string[]>;
 		resync: (ptyIds: string[]) => Promise<unknown>;
+		/** Only these PTYs: the ones the Window had when the Host went away. */
+		only?: ReadonlySet<string>;
 	},
 ): Promise<{ restarted: number; resynced: number }> {
-	const panes = collectLivePanes(workspaceId);
+	const panes = collectLivePanes(workspaceId).filter(
+		(p) => !api.only || api.only.has(p.ptyId),
+	);
 	if (panes.length === 0) return { restarted: 0, resynced: 0 };
 	const ids = panes.map((p) => p.ptyId);
 	// Unsure: treat every pane as alive (a resync costs nothing).
