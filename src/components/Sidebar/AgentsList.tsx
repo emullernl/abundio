@@ -3,6 +3,7 @@ import { useAgentsListGroups } from "../../hooks/useAgentPanes";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { HostChip } from "../HostChip";
 import { AgentRow } from "./AgentRow";
 
 const HEADER_HEIGHT = 30;
@@ -160,7 +161,7 @@ function GroupLabel({ workspaceId }: { workspaceId: string }) {
 	if (!name) return null;
 	return (
 		<div
-			className="truncate select-none"
+			className="flex items-center gap-1.5 min-w-0 select-none"
 			data-testid="agents-group-label"
 			style={{
 				fontSize: 10.5,
@@ -170,7 +171,8 @@ function GroupLabel({ workspaceId }: { workspaceId: string }) {
 				padding: "3px 10px 1px",
 			}}
 		>
-			{name}
+			<span className="truncate">{name}</span>
+			<HostChip workspaceId={workspaceId} />
 		</div>
 	);
 }

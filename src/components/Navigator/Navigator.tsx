@@ -61,6 +61,7 @@ import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { AgentStatusIcon } from "../AgentStatusIcon";
+import { HostChip } from "../HostChip";
 import { StatusComposite } from "../StatusComposite";
 
 const STATUS_CHIPS: Record<NavStatus, { label: string; icon: DotStatus }> = {
@@ -679,6 +680,7 @@ function WorkspaceLine({
 			>
 				{row.name}
 			</span>
+			<HostChip workspaceId={workspace?.id} />
 			{row.branch && (
 				<span
 					className="flex items-center gap-1 truncate"

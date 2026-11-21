@@ -64,7 +64,7 @@ export function sameHandle(a: string | undefined, b: string): boolean {
 }
 
 /** Every handle in `tree`, as stored, with its pane id. */
-function handlesIn(
+export function handlesIn(
 	tree: PaneNode,
 	visit: (handle: string, paneId: string) => void,
 ): void {
