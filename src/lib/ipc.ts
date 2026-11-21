@@ -235,6 +235,62 @@ export type HostTarget =
 /** Remote Hosts (docs/plans/remote-hosts.md phase 7c): connect once per
  *  Host, then put this Window on it; its host commands, events and PTY
  *  output then come from there. */
+/** A Joined profile as this app keeps it (`joined_profiles.rs`). */
+export interface JoinedProfileRow {
+	hostId: string;
+	remoteProfileId: string;
+	remoteProfileName: string;
+	/** The Workspaces as the Host last listed them. */
+	workspacesJson: string;
+	lastSeenMs: number | null;
+}
+
+/** **Joined profiles** (phase 10): the Remote profiles a local Profile shows. */
+export const joinedApi = {
+	list: (profileId: string) =>
+		invoke<JoinedProfileRow[]>("joined_profiles_list", { profileId }),
+	add: (
+		profileId: string,
+		hostId: string,
+		remoteProfileId: string,
+		remoteProfileName: string,
+	) =>
+		invoke<void>("joined_profile_add", {
+			profileId,
+			hostId,
+			remoteProfileId,
+			remoteProfileName,
+		}),
+	remove: (profileId: string, hostId: string) =>
+		invoke<void>("joined_profile_remove", { profileId, hostId }),
+	seen: (
+		profileId: string,
+		hostId: string,
+		remoteProfileName: string,
+		workspacesJson: string,
+	) =>
+		invoke<void>("joined_profile_seen", {
+			profileId,
+			hostId,
+			remoteProfileName,
+			workspacesJson,
+		}),
+	/** Put this Window on the Host for its joined Profile, connecting first
+	 *  (`ask`: ssh may ask in Abundio's dialog). */
+	join: (hostId: string, remoteProfileId: string, ask: boolean) =>
+		invoke<void>("host_join", { hostId, remoteProfileId, ask }),
+	/** A host command on a joined Host, before its Workspaces are known to
+	 *  the router (`hostRouting.ts`). */
+	callOn: <T>(
+		hostId: string,
+		command: string,
+		args: Record<string, unknown>,
+	) =>
+		isDemoMode()
+			? Promise.reject(new Error("no Hosts in the demo"))
+			: realInvoke<T>("host_call", { command, args, host: hostId }),
+};
+
 export const hostsApi = {
 	connect: (host: string, target: HostTarget) =>
 		invoke<string>("host_connect", { host, target }),

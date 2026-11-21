@@ -78,6 +78,11 @@ const DESKTOP = [
 	// Setting up a Host from Settings ▸ Hosts (phase 8).
 	"host_check",
 	"host_install",
+	"host_join",
+	"joined_profile_add",
+	"joined_profile_remove",
+	"joined_profile_seen",
+	"joined_profiles_list",
 	"host_start",
 	"host_uninstall",
 	"updater_check",

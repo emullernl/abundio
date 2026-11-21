@@ -177,7 +177,9 @@ interface PtyActivityState_Store {
 	registerPane: (paneId: string, ptyId: string) => void;
 	markWorkspaceOpened: (workspaceId: string) => void;
 	unmarkWorkspaceOpened: (workspaceId: string) => void;
-	removePty: (ptyId: string) => void;
+	/** Forget a PTY. `local`: only in this Window, its status kept in Rust
+	 *  (a Joined profile's pane that runs on, phase 10). */
+	removePty: (ptyId: string, opts?: { local?: boolean }) => void;
 	removePane: (paneId: string) => void;
 }
 
@@ -723,8 +725,8 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			set({ openedWorkspaceIds: next });
 		},
 
-		removePty: (ptyId) => {
-			sendStatusOp({ op: "remove", ptyId });
+		removePty: (ptyId, opts) => {
+			if (!opts?.local) sendStatusOp({ op: "remove", ptyId });
 			lastOutputTimestamps.delete(ptyId);
 			subagentState.delete(ptyId);
 			preErrorStates.delete(ptyId);

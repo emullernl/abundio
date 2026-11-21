@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useEscapeKey } from "../hooks/useEscapeKey";
 import { type HostEntry, hostsApi, settingsWindow } from "../lib/ipc";
 import type { Profile } from "../lib/types";
+import { useJoinedStore } from "../stores/joinedStore";
 import {
 	paramTextInputStyle,
 	primaryButtonClass,
@@ -17,7 +18,16 @@ import {
  * a new one) in a Window of its own. The server must already run there
  * until phase 8 installs it.
  */
-export function OpenRemoteProfileDialog({ onClose }: { onClose: () => void }) {
+export function OpenRemoteProfileDialog({
+	onClose,
+	mode = "open",
+}: {
+	onClose: () => void;
+	/** `join`: show the picked Profile in this Window's Profile, in a section
+	 *  of its own (a **Joined profile**, phase 10), instead of opening it in a
+	 *  Window of its own. */
+	mode?: "open" | "join";
+}) {
 	const [hosts, setHosts] = useState<HostEntry[] | null>(null);
 	const [hostId, setHostId] = useState<string | null>(null);
 	const [phase, setPhase] = useState<"pick" | "connecting" | "profiles">(
@@ -60,7 +70,13 @@ export function OpenRemoteProfileDialog({ onClose }: { onClose: () => void }) {
 	const open = async (p: Profile) => {
 		if (!hostId) return;
 		try {
-			await hostsApi.openRemoteProfile(hostId, p.id, p.name);
+			if (mode === "join") {
+				await useJoinedStore
+					.getState()
+					.join(hostId, { id: p.id, name: p.name });
+			} else {
+				await hostsApi.openRemoteProfile(hostId, p.id, p.name);
+			}
 			onClose();
 		} catch (e) {
 			setError(String(e));
@@ -92,7 +108,9 @@ export function OpenRemoteProfileDialog({ onClose }: { onClose: () => void }) {
 		>
 			<motion.div
 				role="dialog"
-				aria-label="Open Remote Profile"
+				aria-label={
+					mode === "join" ? "Join Remote Profile" : "Open Remote Profile"
+				}
 				className="rounded-2xl flex flex-col gap-4"
 				initial={{ opacity: 0, scale: 0.95, y: 10 }}
 				animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -113,7 +131,7 @@ export function OpenRemoteProfileDialog({ onClose }: { onClose: () => void }) {
 						className="font-semibold"
 						style={{ fontSize: 15, color: "var(--fg-primary)" }}
 					>
-						Open Remote Profile
+						{mode === "join" ? "Join Remote Profile" : "Open Remote Profile"}
 					</h2>
 				</div>
 

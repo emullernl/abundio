@@ -2779,6 +2779,22 @@ export function teardownTerminal(paneId: string): void {
 	actStore.removePane(paneId);
 }
 
+/**
+ * Stop showing a pane whose PTY lives on elsewhere: a Joined profile's pane
+ * when the Window leaves it (phase 10). Like `teardownTerminal`, but the PTY
+ * keeps running on its Host and its log stays.
+ */
+export function detachTerminal(paneId: string): void {
+	const actStore = usePtyActivityStore.getState();
+	const ptyId =
+		instances.get(paneId)?.ptyId || actStore.panePtyMap[paneId] || "";
+	if (ptyId) stopBackgroundTracking(ptyId);
+	paneMouseOverrides.delete(paneId);
+	disposeInstance(paneId, false);
+	if (ptyId) actStore.removePty(ptyId, { local: true });
+	actStore.removePane(paneId);
+}
+
 // Hand the settings store its setters, now that every binding above exists.
 //
 // This line, and not a static import in `settingsStore`, is what keeps the

@@ -1,6 +1,7 @@
 pub mod agent_control;
 pub mod hosts;
 pub mod host_setup_commands;
+mod joined_commands;
 pub mod server_binary;
 pub mod remote_windows;
 pub use abundio_core::agent_names;
@@ -57,6 +58,7 @@ pub use abundio_core::process_monitor;
 pub use abundio_core::profile_store;
 pub use abundio_core::prompt_actions;
 pub mod prompt_attachments;
+pub use abundio_core::joined_profiles;
 pub use abundio_core::pty_manager;
 pub use abundio_core::search;
 pub mod updater;
@@ -1657,6 +1659,11 @@ pub fn run() {
             hosts::hosts_remove,
             host_setup_commands::host_check,
             host_setup_commands::host_install,
+            joined_commands::joined_profiles_list,
+            joined_commands::joined_profile_add,
+            joined_commands::joined_profile_remove,
+            joined_commands::joined_profile_seen,
+            joined_commands::host_join,
             host_setup_commands::host_start,
             host_setup_commands::host_uninstall,
             remote_windows::remote_profile_for_window,

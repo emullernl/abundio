@@ -259,6 +259,10 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 
 		set({ activeProfileId: id });
 		await useWorkspaceStore.getState().loadWorkspaces();
+		// And the new Profile's Joined profiles (phase 10).
+		void import("./joinedStore").then((m) =>
+			m.useJoinedStore.getState().loadJoined(),
+		);
 
 		// Re-sync the window title to the new active profile.
 		const newActive = get().profiles.find((p) => p.id === id);

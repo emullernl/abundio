@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useJoinedStore } from "../stores/joinedStore";
 import { useProfileStore } from "../stores/profileStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
@@ -15,6 +16,8 @@ export async function loadWindow(): Promise<void> {
 		return;
 	}
 	await useWorkspaceStore.getState().loadWorkspaces();
+	// The Joined profiles connect in the background (phase 10).
+	void useJoinedStore.getState().loadJoined();
 }
 
 export function useWorkspace() {

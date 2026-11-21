@@ -5,7 +5,7 @@ import {
 	normalizeHandle,
 } from "../lib/agentHandle";
 import { raiseFileWindows } from "../lib/fileWindowRaise";
-import { setRoutingLookups } from "../lib/hostRouting";
+import { setJoinedWorkspace, setRoutingLookups } from "../lib/hostRouting";
 import {
 	agentControl as agentControlApi,
 	fileWindows,
@@ -44,7 +44,7 @@ import { setPendingAgent, setPendingTask } from "../lib/pendingAgentRegistry";
 import { perfMark } from "../lib/perfMarks";
 import { relaunchCommandForPane, terminalNodes } from "../lib/sessionResume";
 import { FIRST_TAB_NAME, nextTabName } from "../lib/tabName";
-import { teardownTerminal } from "../lib/terminalManager";
+import { detachTerminal, teardownTerminal } from "../lib/terminalManager";
 import type {
 	CodingAgent,
 	PaneNode,
@@ -452,6 +452,43 @@ export function clearPtyIds(
 	};
 }
 
+/**
+ * Workspaces as a backend listed them, ready for the Window: orphaned
+ * preview panes pruned, PTY ids no longer running cleared (`alive` keeps the
+ * rest, to reattach), and each pane that starts afresh seeded with its
+ * Agent's relaunch line (by session id only, ADR-0060). `paneIds` collects
+ * every pane id. Used for the Window's own Profile and each Joined one.
+ */
+export function prepareLoadedWorkspaces(
+	list: WorkspaceWithTabs[],
+	alive: ReadonlySet<string>,
+	paneIds: string[] = [],
+): WorkspaceWithTabs[] {
+	const cleaned = list.map((s) => ({
+		...s,
+		tabs: s.tabs.map((t) => {
+			const layout = parseTabLayout(t.layoutJson);
+			if (!layout) return t;
+			// Prune preview panes orphaned across sessions (their source pane
+			// no longer exists) before clearing stale ptyIds.
+			const pruned = pruneOrphanDerived(layout) ?? layout;
+			paneIds.push(...collectPaneIds(pruned));
+			const cleared = clearPtyIds(pruned, alive);
+			return { ...t, layoutJson: JSON.stringify(cleared) };
+		}),
+	}));
+	for (const ws of cleaned) {
+		// The Orchestrator starts when its view opens, through the spawn
+		// (lib/orchestratorLaunch.ts), never by a typed relaunch line.
+		if (isOrchestrator(ws)) continue;
+		for (const t of ws.tabs) {
+			const layout = parseTabLayout(t.layoutJson);
+			if (layout) seedPendingAgentsForLayout(layout);
+		}
+	}
+	return cleaned;
+}
+
 /** Which of the layouts' PTYs still run (none after an app restart on this
  *  computer; on a Host, those the app left running). */
 async function alivePtys(
@@ -485,6 +522,9 @@ async function alivePtys(
 export function mergeRemoteWorkspaces(
 	state: Pick<WorkspaceState, "workspaces" | "activeWorkspaceId">,
 	fresh: WorkspaceWithTabs[],
+	/** `fresh` is ready as it is (`prepareLoadedWorkspaces`: a Joined
+	 *  profile's, whose running panes keep their PTYs). */
+	prepared = false,
 ): Pick<WorkspaceState, "workspaces" | "activeWorkspaceId"> & {
 	removedIds: string[];
 } {
@@ -492,6 +532,7 @@ export function mergeRemoteWorkspaces(
 	const workspaces = fresh.map((w) => {
 		const have = mine.get(w.id);
 		if (have) return { ...w, tabs: have.tabs };
+		if (prepared) return w;
 		return {
 			...w,
 			tabs: w.tabs.map((t) => {
@@ -680,29 +721,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		// running, to reattach) and re-seed pending agents for any pane that
 		// starts afresh and remembers an agentId from a previous session.
 		const allPaneIds: string[] = [];
-		const cleaned = workspacesWithTabs.map((s) => ({
-			...s,
-			tabs: s.tabs.map((t) => {
-				const layout = parseTabLayout(t.layoutJson);
-				if (!layout) return t;
-				// Prune preview panes orphaned across sessions (their source pane
-				// no longer exists) before clearing stale ptyIds.
-				const pruned = pruneOrphanDerived(layout) ?? layout;
-				allPaneIds.push(...collectPaneIds(pruned));
-				const cleared = clearPtyIds(pruned, alive);
-				return { ...t, layoutJson: JSON.stringify(cleared) };
-			}),
-		}));
-		// Seed each pane's relaunch line (by session id only, ADR-0060).
-		for (const ws of cleaned) {
-			// The Orchestrator starts when its view opens, through the spawn
-			// (lib/orchestratorLaunch.ts), never by a typed relaunch line.
-			if (isOrchestrator(ws)) continue;
-			for (const t of ws.tabs) {
-				const layout = parseTabLayout(t.layoutJson);
-				if (layout) seedPendingAgentsForLayout(layout);
-			}
-		}
+		const cleaned = prepareLoadedWorkspaces(
+			workspacesWithTabs,
+			alive,
+			allPaneIds,
+		);
 
 		// Set default active tab for each workspace
 		const activeTabByWorkspace: Record<string, string> = {};
@@ -719,7 +742,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		// workspace no longer in the store.
 		const newIds = new Set(cleaned.map((w) => w.id));
 		set((state) => ({
-			workspaces: cleaned,
+			// Joined profiles' Workspaces are loaded on their own (phase 10).
+			workspaces: [...cleaned, ...state.workspaces.filter((w) => w.joined)],
 			activeTabByWorkspace,
 			workspacesInitialized: true,
 			activeWorkspaceId:
@@ -1032,7 +1056,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		const state = get();
 		const workspace = state.workspaces.find((s) => s.id === id);
 		if (!workspace) return;
-		if (opts?.forget ?? true) forgetOpened(id);
+		// A Joined profile's Workspace only stops being shown here: its panes
+		// and Agents run on, on its Host, and stay Opened for its Profile's
+		// other Windows (phase 10: joining is a view).
+		const joined = !!workspace.joined;
+		if (!joined && (opts?.forget ?? true)) forgetOpened(id);
 
 		const activityStore = usePtyActivityStore.getState();
 
@@ -1042,7 +1070,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			const layout = parseTabLayout(tab.layoutJson);
 			if (!layout) continue;
 			for (const paneId of collectPaneIds(layout)) {
-				teardownTerminal(paneId);
+				if (joined) detachTerminal(paneId);
+				else teardownTerminal(paneId);
 			}
 			// Clean up file pane state
 			useExplorerStore.getState().clearWorkspaceFilePanes(id);
@@ -1065,7 +1094,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 							...s,
 							tabs: s.tabs.map((t) => {
 								const layout = parseTabLayout(t.layoutJson);
-								if (!layout) return t;
+								// A joined pane keeps its PTY, to reattach next time.
+								if (!layout || joined) return t;
 								const cleared = clearPtyIds(layout);
 								if (!isOrchestrator(s)) {
 									seedPendingAgentsForLayout(cleared);
@@ -1124,7 +1154,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		);
 		if (id && !missing) {
 			usePtyActivityStore.getState().markWorkspaceOpened(id);
-			if (!orchestrator) rememberActive(fallbackProfileId(), id);
+			// A Joined profile's Workspace is never the local Profile's
+			// Active one to reopen on (phase 10).
+			const joined = get().workspaces.find((w) => w.id === id)?.joined;
+			if (!orchestrator && !joined) rememberActive(fallbackProfileId(), id);
 		}
 		set((state) => {
 			const focusedPaneByTab = { ...state.focusedPaneByTab };
@@ -1876,6 +1909,82 @@ onLayoutFromRust((tabId, layoutJson) => {
 	}));
 });
 
+/** Told when a Joined profile's Workspaces changed on its Host. */
+const joinedListeners = new Set<(profileId: string) => void>();
+export function onJoinedWorkspacesChanged(
+	fn: (profileId: string) => void,
+): () => void {
+	joinedListeners.add(fn);
+	return () => joinedListeners.delete(fn);
+}
+
+/** Tear down what this Window shows of Workspaces it no longer has: their
+ *  panes (the PTYs are killed only where they run on this computer; a
+ *  Host's keep running) and their per-Workspace state. */
+function dropWorkspacesLocally(ids: string[]): void {
+	const state = useWorkspaceStore.getState();
+	for (const id of ids) {
+		const ws = state.workspaces.find((w) => w.id === id);
+		for (const tab of ws?.tabs ?? []) {
+			const layout = parseTabLayout(tab.layoutJson);
+			if (!layout) continue;
+			for (const paneId of collectPaneIds(layout)) {
+				if (ws?.joined) detachTerminal(paneId);
+				else teardownTerminal(paneId);
+			}
+			forgetLayout(tab.id);
+		}
+		useNotesStore.getState().cancelPendingSave(id);
+		usePtyActivityStore.getState().unmarkWorkspaceOpened(id);
+		useWorkspaceGitStore.getState().remove(id);
+		setJoinedWorkspace(id, null);
+	}
+}
+
+/**
+ * A Joined profile's Workspaces as its Host listed them now (`fresh`, PTY ids
+ * of panes no longer running already cleared), or `null` to drop them all
+ * (Leave). One the Window already has keeps its Tabs (`tabs-changed` and
+ * `layout-changed` bring the Host's); one gone is dropped (phase 10).
+ */
+export function setJoinedWorkspaces(
+	hostId: string,
+	fresh: WorkspaceWithTabs[] | null,
+): void {
+	const all = useWorkspaceStore.getState();
+	const mine = all.workspaces.filter((w) => w.joined?.hostId === hostId);
+	const others = all.workspaces.filter((w) => w.joined?.hostId !== hostId);
+	// Only a Workspace Opened here keeps the Tabs it shows; the rest (the
+	// rows cached while the Host was away, too) take the Host's.
+	const opened = usePtyActivityStore.getState().openedWorkspaceIds;
+	const merged = mergeRemoteWorkspaces(
+		{
+			workspaces: mine.filter((w) => opened.has(w.id)),
+			activeWorkspaceId: null,
+		},
+		(fresh ?? []).map((w) => ({ ...w, joined: { hostId } })),
+		true,
+	);
+	const kept = new Set((fresh ?? []).map((w) => w.id));
+	const removedIds = mine.map((w) => w.id).filter((id) => !kept.has(id));
+	dropWorkspacesLocally(removedIds);
+	for (const w of merged.workspaces) setJoinedWorkspace(w.id, hostId);
+	const activeGone =
+		all.activeWorkspaceId !== null &&
+		removedIds.includes(all.activeWorkspaceId);
+	const activeTabByWorkspace = { ...all.activeTabByWorkspace };
+	for (const w of merged.workspaces) {
+		if (!activeTabByWorkspace[w.id] && w.tabs[0]) {
+			activeTabByWorkspace[w.id] = w.tabs[0].id;
+		}
+	}
+	useWorkspaceStore.setState({
+		workspaces: [...others, ...merged.workspaces],
+		activeTabByWorkspace,
+		...(activeGone ? { activeWorkspaceId: null } : {}),
+	});
+}
+
 // Which Workspace a Tab, pane, PTY or path belongs to, for routing calls
 // about a Joined profile's Workspace to its Host (phase 10).
 setRoutingLookups({
@@ -1886,6 +1995,14 @@ setRoutingLookups({
 	workspaceOfPane: (paneId) =>
 		useWorkspaceStore.getState().findWorkspaceForPane(paneId)?.id,
 	workspaceOfPty: (ptyId) => {
+		// A new pane's PTY is in this map before its layout says so.
+		const map = usePtyActivityStore.getState().panePtyMap;
+		for (const [paneId, id] of Object.entries(map)) {
+			if (id === ptyId) {
+				const ws = useWorkspaceStore.getState().findWorkspaceForPane(paneId);
+				if (ws) return ws.id;
+			}
+		}
 		for (const ws of useWorkspaceStore.getState().workspaces) {
 			for (const t of ws.tabs) {
 				const layout = parseTabLayout(t.layoutJson);
@@ -1915,24 +2032,31 @@ setRoutingLookups({
 // Another Window of this Profile made, renamed, moved or deleted a
 // Workspace (phase 9: another app on the same Host).
 onSharedFromRust<{ profileId: string }>("workspaces-changed", (change) => {
-	if (change.profileId !== fallbackProfileId()) return;
+	// A Joined profile's list is read again by its own section (phase 10).
+	if (change.profileId !== fallbackProfileId()) {
+		joinedListeners.forEach((fn) => fn(change.profileId));
+		return;
+	}
 	workspacesApi
 		.list(change.profileId)
 		.then((fresh) => {
-			const state = useWorkspaceStore.getState();
-			const { removedIds, ...next } = mergeRemoteWorkspaces(state, fresh);
-			for (const id of removedIds) {
-				const ws = state.workspaces.find((w) => w.id === id);
-				for (const tab of ws?.tabs ?? []) {
-					const layout = parseTabLayout(tab.layoutJson);
-					if (!layout) continue;
-					for (const paneId of collectPaneIds(layout)) teardownTerminal(paneId);
-					forgetLayout(tab.id);
-				}
-				useNotesStore.getState().cancelPendingSave(id);
-				usePtyActivityStore.getState().unmarkWorkspaceOpened(id);
-				useWorkspaceGitStore.getState().remove(id);
-			}
+			const all = useWorkspaceStore.getState();
+			const joined = all.workspaces.filter((w) => w.joined);
+			const state = {
+				...all,
+				workspaces: all.workspaces.filter((w) => !w.joined),
+			};
+			const merged = mergeRemoteWorkspaces(state, fresh);
+			const { removedIds } = merged;
+			const next = {
+				workspaces: [...merged.workspaces, ...joined],
+				activeWorkspaceId:
+					all.activeWorkspaceId &&
+					joined.some((w) => w.id === all.activeWorkspaceId)
+						? all.activeWorkspaceId
+						: merged.activeWorkspaceId,
+			};
+			dropWorkspacesLocally(removedIds);
 			useWorkspaceStore.setState(next);
 		})
 		.catch((e) => console.warn("[sync] cannot read the Workspaces again", e));

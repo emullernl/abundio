@@ -36,6 +36,7 @@ import {
 import { WorkspaceSettingsDialog } from "../WorkspaceSettingsDialog";
 import { WorktreeProgressDialog } from "../WorktreeProgressDialog";
 import { CollapsedStrip } from "./CollapsedStrip";
+import { JoinedSections } from "./JoinedSections";
 import { WorkspaceItem } from "./WorkspaceItem";
 
 const NO_HIDDEN_MEMBERS: WorkspaceWithTabs[] = [];
@@ -106,10 +107,16 @@ export function WorkspaceList({
 	const [lastCreatePayload, setLastCreatePayload] =
 		useState<AddWorktreePayload | null>(null);
 
+	// This Window's own Profile's Workspaces; a Joined profile's are drawn
+	// in their own section below (phase 10, `JoinedSections`).
+	const ownWorkspaces = useMemo(
+		() => workspaces.filter((w) => !w.joined),
+		[workspaces],
+	);
 	// Derived grouping into render blocks (sets + standalones).
 	const rows = useMemo(
-		() => buildWorkspaceRows(workspaces, worktreeFacts),
-		[workspaces, worktreeFacts],
+		() => buildWorkspaceRows(ownWorkspaces, worktreeFacts),
+		[ownWorkspaces, worktreeFacts],
 	);
 
 	// workspaceId → worktree role, for the context menu.
@@ -375,6 +382,8 @@ export function WorkspaceList({
 							onClick: () => beginWorkspaceSwitch(workspaceId),
 						},
 			];
+			// A Joined profile's Workspace is only shown here (phase 10).
+			if (ws?.joined) return items;
 			const setRow = rows.find(
 				(r): r is SetRow => r.kind === "set" && r.primary.id === workspaceId,
 			);
@@ -580,7 +589,7 @@ export function WorkspaceList({
 
 	return (
 		<div className="flex flex-col" ref={containerRef}>
-			{workspaces.length === 0 && !collapsed && (
+			{ownWorkspaces.length === 0 && !collapsed && (
 				<div
 					className="px-3 py-4 text-center text-xs"
 					style={{ color: "var(--fg-secondary)" }}
@@ -638,6 +647,31 @@ export function WorkspaceList({
 					})}
 
 			{!collapsed && nearestSlot === rows.length && <DropIndicator />}
+
+			{!collapsed && (
+				<JoinedSections
+					renderRows={(list) =>
+						buildWorkspaceRows(list, worktreeFacts).map((row) => (
+							<WorkspaceRowView
+								key={rowId(row)}
+								row={row}
+								isDragging={false}
+								// A Joined profile's rows are never dragged.
+								itemHandlers={(w, id) => ({
+									...itemHandlers(w, id),
+									onMouseDown: () => {},
+								})}
+								folded={row.kind === "set" && foldedKeys.has(row.groupKey)}
+								onToggleFold={
+									row.kind === "set"
+										? () => toggleSetFolded(row.groupKey)
+										: undefined
+								}
+							/>
+						))
+					}
+				/>
+			)}
 
 			{!collapsed && draggedRow && (
 				<DragGhost row={draggedRow} mousePos={mousePos} width={ghostWidth} />
