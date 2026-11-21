@@ -43,11 +43,14 @@ _Avoid_: combo, key sequence.
 
 **Settings ▸ Editor**: A UI label, not a domain term — the section configures the **file pane**: wrap long lines, and **Open markdown rendered** (whether a markdown file opens in the rendered view or in source). It is named for what users call Monaco, and is deliberately not folded into Appearance: which view a file opens in is behaviour, not look. The **Preview color mode** stays on the preview's title bar per ADR-0013; the section points at it rather than duplicating it.
 
-**Profile**: A top-level grouping of Workspaces — a named bundle the user uses to organize unrelated bodies of work (e.g. "Work", "Personal"). Each **Workspace** belongs to exactly one Profile and cannot be moved between Profiles after creation. The only per-Profile data today is the Workspace list; appearance, custom agents and GitHub identity remain global, and environment variables are per-**Workspace** (see Environment Bundle). Scope is intentionally narrow so the term may broaden later. Every Profile lives on exactly one **Host**. A local Profile is bound to at most one **Window** at any moment; a **Remote profile** may be shown by several **Clients** at once, all seeing the same state.
+**Profile**: A top-level grouping of Workspaces — a named bundle the user uses to organize unrelated bodies of work (e.g. "Work", "Personal"). Each **Workspace** belongs to exactly one Profile and cannot be moved between Profiles after creation. The only per-Profile data today is the Workspace list; appearance and GitHub identity are this computer's, the Agent list is its **Host**'s (see **Host settings**), and environment variables are per-**Workspace** (see Environment Bundle). Scope is intentionally narrow so the term may broaden later. Every Profile lives on exactly one **Host**. A local Profile is bound to at most one **Window** at any moment; a **Remote profile** may be shown by several **Clients** at once, all seeing the same state.
 _Avoid_: space, group, namespace, context
 
 **Host**: The machine where a Profile's Workspaces, PTYs and Agents live: this computer for a local Profile, a server for a **Remote profile**. A Profile's Host is fixed when the Profile is made.
 _Avoid_: server (for the machine), remote, box, machine
+
+**Host settings**: The settings that belong to a **Host** rather than to the person using the app, because they describe that machine: its Agent list (which Agents are on, and its custom Agents), whether Abundio writes its hooks and skill into the Agents there, whether Agent control is on, its Prompt actions, its default shell and its terminal scrollback. Every Profile on a Host shares them, and so does every Client attached to it. A new Host's Agent list starts as the built-in Agents installed there. Appearance, fonts, the keymap and the rest stay with this computer.
+_Avoid_: remote settings, server settings, per-profile settings
 
 **Remote profile**: A Profile whose **Host** is not the computer the desktop app runs on. Its Agents keep running, keep their status and keep serving Agent control while no Client is attached.
 _Avoid_: remote workspace, server profile, cloud profile
