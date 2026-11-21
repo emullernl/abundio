@@ -11,6 +11,7 @@ import { isDemoMode } from "./demo";
 import { mockInvoke } from "./demo/mockInvoke";
 import { mockListen } from "./demo/mockListen";
 import { HOST_API_COMMANDS } from "./hostApiCommands";
+import { mergeAnswers, type RoutedCall, routeCall } from "./hostRouting";
 import type { LayoutOp } from "./layoutOps";
 import type { LayoutState } from "./layoutSync";
 import type { StatusOp, StatusUpdate } from "./statusSync";
@@ -56,7 +57,18 @@ function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
 	// The host commands run through one handler (`host_api.rs`), the same
 	// code an Abundio server runs for a remote Profile (phase 7b).
 	if (HOST_API_COMMANDS.has(cmd)) {
-		return realInvoke<T>("host_call", { command: cmd, args: args ?? {} });
+		// To the backend of the Workspace it concerns: a Joined profile's
+		// Host, or the Window's own (phase 10, `hostRouting.ts`).
+		const calls = routeCall(cmd, args ?? {});
+		const run = (c: RoutedCall) =>
+			realInvoke<T>(
+				"host_call",
+				c.host
+					? { command: cmd, args: c.args, host: c.host }
+					: { command: cmd, args: c.args },
+			);
+		if (calls.length === 1) return run(calls[0]);
+		return Promise.all(calls.map(run)).then((a) => mergeAnswers(a) as T);
 	}
 	return realInvoke<T>(cmd, args);
 }

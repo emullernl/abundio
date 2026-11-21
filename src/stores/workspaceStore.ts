@@ -5,6 +5,7 @@ import {
 	normalizeHandle,
 } from "../lib/agentHandle";
 import { raiseFileWindows } from "../lib/fileWindowRaise";
+import { setRoutingLookups } from "../lib/hostRouting";
 import {
 	agentControl as agentControlApi,
 	fileWindows,
@@ -1873,6 +1874,42 @@ onLayoutFromRust((tabId, layoutJson) => {
 	useWorkspaceStore.setState((state) => ({
 		workspaces: updateTabInWorkspaces(state.workspaces, tabId, layoutJson),
 	}));
+});
+
+// Which Workspace a Tab, pane, PTY or path belongs to, for routing calls
+// about a Joined profile's Workspace to its Host (phase 10).
+setRoutingLookups({
+	workspaceOfTab: (tabId) =>
+		useWorkspaceStore
+			.getState()
+			.workspaces.find((w) => w.tabs.some((t) => t.id === tabId))?.id,
+	workspaceOfPane: (paneId) =>
+		useWorkspaceStore.getState().findWorkspaceForPane(paneId)?.id,
+	workspaceOfPty: (ptyId) => {
+		for (const ws of useWorkspaceStore.getState().workspaces) {
+			for (const t of ws.tabs) {
+				const layout = parseTabLayout(t.layoutJson);
+				if (layout && terminalNodes(layout).some((n) => n.ptyId === ptyId)) {
+					return ws.id;
+				}
+			}
+		}
+		return undefined;
+	},
+	workspaceOfPath: (path) => {
+		let best: { id: string; len: number } | undefined;
+		for (const ws of useWorkspaceStore.getState().workspaces) {
+			const root = ws.rootFolder.replace(/[\\/]+$/, "");
+			const inside =
+				path === root ||
+				path.startsWith(`${root}/`) ||
+				path.startsWith(`${root}\\`);
+			if (inside && (!best || root.length > best.len)) {
+				best = { id: ws.id, len: root.length };
+			}
+		}
+		return best?.id;
+	},
 });
 
 // Another Window of this Profile made, renamed, moved or deleted a

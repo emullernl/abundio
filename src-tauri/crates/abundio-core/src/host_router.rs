@@ -198,6 +198,13 @@ struct State {
     connections: HashMap<String, Connection>,
     /// Window → the Host it is bound to.
     windows: HashMap<String, String>,
+    /// Window → the Hosts whose Profiles it joined (phase 10): it hears
+    /// their events and output too, and sends them the calls about their
+    /// Workspaces (`call_on`).
+    joins: HashMap<String, HashSet<String>>,
+    /// (Window, Agent control request id) → the Host that asked, so the
+    /// Window's reply goes back there.
+    requests: HashMap<(String, String), String>,
     /// How each Host was last reached, for the retries.
     targets: HashMap<String, HostTarget>,
     /// Hosts being tried again in the background.
@@ -258,7 +265,17 @@ impl HostListener for Listener {
         let Some(router) = self.router.upgrade() else { return };
         match client {
             Some(window) => {
-                if router.host_of(window).as_deref() == Some(self.host.as_str()) {
+                if router.is_on(window, &self.host) {
+                    if name == "agent-control-request" {
+                        if let Some(id) = payload.get("id").and_then(Value::as_str) {
+                            router
+                                .state
+                                .lock()
+                                .unwrap()
+                                .requests
+                                .insert((window.to_string(), id.to_string()), self.host.clone());
+                        }
+                    }
                     router.sink.emit_to(window, name, payload);
                 }
             }
@@ -459,12 +476,60 @@ impl HostRouter {
         self.state.lock().unwrap().windows.get(window).cloned()
     }
 
-    /// The Windows on `host`.
+    /// The Windows on `host`: bound to it, or joined to one of its Profiles.
     pub fn windows_on(&self, host: &str) -> Vec<String> {
         let s = self.state.lock().unwrap();
-        let mut out: Vec<String> = s.windows.iter().filter(|(_, h)| h.as_str() == host).map(|(w, _)| w.clone()).collect();
+        let mut out: Vec<String> = s
+            .windows
+            .iter()
+            .filter(|(_, h)| h.as_str() == host)
+            .map(|(w, _)| w.clone())
+            .chain(s.joins.iter().filter(|(_, hs)| hs.contains(host)).map(|(w, _)| w.clone()))
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// Whether `window` is on `host`, bound or joined.
+    pub fn is_on(&self, window: &str, host: &str) -> bool {
+        let s = self.state.lock().unwrap();
+        s.windows.get(window).is_some_and(|h| h == host) || s.joins.get(window).is_some_and(|hs| hs.contains(host))
+    }
+
+    /// `window` joined a Profile on `host` (phase 10): it hears the Host and
+    /// may send it calls.
+    pub fn join(&self, window: &str, host: &str) {
+        self.state.lock().unwrap().joins.entry(window.to_string()).or_default().insert(host.to_string());
+    }
+
+    /// `window` left every Profile it joined on `host`; the Host forgets it
+    /// unless the Window is bound there.
+    pub fn leave(&self, window: &str, host: &str) {
+        let bound = {
+            let mut s = self.state.lock().unwrap();
+            if let Some(hs) = s.joins.get_mut(window) {
+                hs.remove(host);
+            }
+            s.windows.get(window).is_some_and(|h| h == host)
+        };
+        if !bound {
+            self.forget_window_on(window, host);
+        }
+    }
+
+    /// The Hosts `window` joined.
+    pub fn joined_hosts(&self, window: &str) -> Vec<String> {
+        let mut out: Vec<String> =
+            self.state.lock().unwrap().joins.get(window).map(|hs| hs.iter().cloned().collect()).unwrap_or_default();
         out.sort();
         out
+    }
+
+    /// The Host that sent `window` Agent control request `id`, once: where
+    /// the Window's reply goes.
+    pub fn request_host(&self, window: &str, id: &str) -> Option<String> {
+        self.state.lock().unwrap().requests.remove(&(window.to_string(), id.to_string()))
     }
 
     fn client_of(&self, host: &str) -> Option<Arc<HostClient>> {
@@ -477,10 +542,15 @@ impl HostRouter {
         }
     }
 
-    /// A Window closed: the Host it was on forgets it (its PTYs keep running).
+    /// A Window closed: every Host it was on forgets it (its PTYs keep
+    /// running).
     pub fn window_closed(&self, window: &str) {
-        let host = self.state.lock().unwrap().windows.remove(window);
-        if let Some(host) = host {
+        let hosts: HashSet<String> = {
+            let mut s = self.state.lock().unwrap();
+            s.requests.retain(|(w, _), _| w != window);
+            s.windows.remove(window).into_iter().chain(s.joins.remove(window).unwrap_or_default()).collect()
+        };
+        for host in hosts {
             self.forget_window_on(window, &host);
         }
     }
@@ -613,5 +683,29 @@ mod tests {
         assert_eq!(router.call("w", "pty_write", Value::Null), Some(Err(CallError::NotConnected("box".into()))));
         router.bind("w", None);
         assert!(router.call("w", "pty_write", Value::Null).is_none());
+    }
+
+    /// Phase 10: a local Window joining Profiles on two Hosts is on both,
+    /// stays unrouted for its own calls, and forgets them when it closes.
+    #[test]
+    fn a_window_joins_hosts_besides_its_own() {
+        let router = HostRouter::new(Arc::new(Nowhere));
+        router.bind("remote", Some("box"));
+        router.join("local", "box");
+        router.join("local", "lab");
+        assert!(router.call("local", "pty_write", Value::Null).is_none(), "its own calls stay here");
+        assert!(router.is_on("local", "lab") && router.is_on("remote", "box") && !router.is_on("remote", "lab"));
+        assert_eq!(router.windows_on("box"), ["local", "remote"]);
+        assert_eq!(router.joined_hosts("local"), ["box", "lab"]);
+        assert_eq!(router.call_on("lab", "local", "x", Value::Null), Err(CallError::NotConnected("lab".into())));
+        router.leave("local", "lab");
+        assert!(!router.is_on("local", "lab"));
+        // A reply finds the Host that asked, once.
+        router.state.lock().unwrap().requests.insert(("local".into(), "r1".into()), "box".into());
+        assert_eq!(router.request_host("local", "r1").as_deref(), Some("box"));
+        assert_eq!(router.request_host("local", "r1"), None);
+        router.window_closed("local");
+        assert_eq!(router.windows_on("box"), ["remote"]);
+        assert!(router.joined_hosts("local").is_empty());
     }
 }

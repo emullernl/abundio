@@ -113,13 +113,67 @@ pub(crate) fn remote_error(e: crate::host_router::CallError) -> AbundioError {
     }
 }
 
+/// Settings a Window pushes to its backend that every backend it shows must
+/// have (phase 10): sent to each Host it joined too.
+const TO_EVERY_BACKEND: &[&str] = &[
+    "pty_set_scrollback",
+    "status_byte_threshold_set",
+    "agent_commands_set",
+    "agent_control_set_enabled",
+    "agent_hooks_provision",
+    "agent_hooks_provision_startup",
+    "agent_skill_provision",
+    "agent_skill_provision_startup",
+    "ensure_agent_hooks",
+];
+
 /// Run one host command for the calling Window: on its Host when it is on
-/// one (phase 7c), here otherwise.
+/// one (phase 7c), here otherwise. `host` sends it to another backend the
+/// Window shows (phase 10, a Joined profile's Workspace): a Host's id, or
+/// `local` for this computer.
 #[tauri::command]
-pub async fn host_call(app: AppHandle, window: Window, command: String, args: Value) -> Result<Value, AbundioError> {
+pub async fn host_call(
+    app: AppHandle,
+    window: Window,
+    command: String,
+    args: Value,
+    host: Option<String>,
+) -> Result<Value, AbundioError> {
     let client = ClientId::from(window.label());
     let router = router(&app);
-    if router.host_of(client.as_str()).is_some() {
+    let own = router.host_of(client.as_str());
+    // A reply goes back to the Host that asked.
+    let host = match host {
+        None if command == "agent_control_reply" => args
+            .get("id")
+            .and_then(Value::as_str)
+            .and_then(|id| router.request_host(client.as_str(), id)),
+        other => other,
+    };
+    let fan_out = TO_EVERY_BACKEND.contains(&command.as_str());
+    if fan_out {
+        for joined in router.joined_hosts(client.as_str()).into_iter().filter(|h| Some(h) != own.as_ref()) {
+            let (router, client, command, args) = (router.clone(), client.clone(), command.clone(), args.clone());
+            std::thread::spawn(move || {
+                if let Err(e) = router.call_on(&joined, client.as_str(), &command, args) {
+                    log::debug!("[host] {command} on joined {joined}: {e:?}");
+                }
+            });
+        }
+    }
+    match host.as_deref() {
+        Some("local") if own.is_some() => return local_call(app, client, command, args).await,
+        Some(h) if Some(h) != own.as_deref() && h != "local" => {
+            let h = h.to_string();
+            return tauri::async_runtime::spawn_blocking(move || {
+                router.call_on(&h, client.as_str(), &command, args).map_err(remote_error)
+            })
+            .await
+            .map_err(|e| AbundioError::InvalidOperation(format!("{e}")))?;
+        }
+        _ => {}
+    }
+    if own.is_some() {
         // A request over the connection waits for its answer: never on the
         // async runtime.
         return tauri::async_runtime::spawn_blocking(move || {
@@ -128,6 +182,10 @@ pub async fn host_call(app: AppHandle, window: Window, command: String, args: Va
         .await
         .map_err(|e| AbundioError::InvalidOperation(format!("{e}")))?;
     }
+    local_call(app, client, command, args).await
+}
+
+async fn local_call(app: AppHandle, client: ClientId, command: String, args: Value) -> Result<Value, AbundioError> {
     if crate::host_api::may_block(&command) {
         // Off the async runtime: a `stat` on a hung mount can block for long.
         tauri::async_runtime::spawn_blocking(move || call(&app, &client, &command, args))

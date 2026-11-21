@@ -153,6 +153,8 @@ Done in steps: **9a** last-actor sizing (done: `pty_sizes.rs` keeps each Client'
 - Host Orchestrator from the section menu; New Workspace Location picker with remote folder browsing (the browsing itself came early, with phase 8d: a remote Window's New Workspace dialog picks on its Host, `RemoteFolderPicker` over `fs_list_dir` from `fs_home_dir`).
 - Remote-SSH IDE links; hide Reveal in Finder and default-app open.
 
+Done in steps: **10a** one Window, several backends (done: the router keeps each Window's joined Hosts besides its own, so their events and output reach it, `join` / `leave` / `is_on`; `host_call` takes a `host` for one call, sends a reply to an Agent control request back to the Host that asked, and pushes the settings every backend needs to each joined Host; the Window routes each host command by the Workspace it concerns, `hostRouting.ts`'s `HOST_ROUTES`, by Workspace, Tab, pane, PTY, path or Profile, splitting a list across backends and joining the answers; the Workspace store supplies the lookups; with nothing joined every call goes where it did), **10b** Joined profiles and the Workspace list sections, **10c** the Agents list, Fleet Console, Navigator, cycles, quick-open and the badge, **10d** New Workspace's Location picker and a Host's Orchestrator, **10e** Remote-SSH IDE links and hiding Reveal in Finder and default-app open.
+
 #### 11. macOS Host polish, then open it up
 
 - TCC / Full Disk Access check in the checklist; LaunchDaemon option.
