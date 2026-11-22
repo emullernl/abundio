@@ -37,7 +37,9 @@ if [ -x "$d/current" ]; then
   "$d/current" connect </dev/null >/dev/null 2>&1 & c=$!
   ( sleep 5; kill "$c" 2>/dev/null ) >/dev/null 2>&1 & k=$!
   if wait "$c" 2>/dev/null; then p running yes; fi
-  kill "$k" 2>/dev/null
+  # The timer, stopped on purpose: waited for quietly, or the shell reports
+  # it ("Terminated: 15").
+  { kill "$k"; wait "$k"; } 2>/dev/null
 elif command -v pgrep >/dev/null 2>&1 && pgrep -u "$(id -u)" -f '[a]bundio-server run' >/dev/null 2>&1; then
   p running yes
 fi
@@ -70,7 +72,7 @@ pid=$!
 ( sleep 15; kill "$pid" 2>/dev/null ) >/dev/null 2>&1 &
 killer=$!
 wait "$pid" 2>/dev/null
-kill "$killer" 2>/dev/null
+{ kill "$killer"; wait "$killer"; } 2>/dev/null
 p done yes
 "#;
 
@@ -118,7 +120,7 @@ alive() {
   "$srv" connect </dev/null >/dev/null 2>&1 & c=$!
   ( sleep 5; kill "$c" 2>/dev/null ) >/dev/null 2>&1 & k=$!
   r=0; wait "$c" 2>/dev/null || r=1
-  kill "$k" 2>/dev/null || true
+  { kill "$k"; wait "$k"; } 2>/dev/null || true
   return $r
 }
 if alive; then
@@ -159,8 +161,15 @@ else
   fi
   # The user's own LaunchAgent on a Mac restarts the server whenever it
   # stops (KeepAlive): let it, never a second one beside it.
+  # Its file says nothing of whether it is loaded (Abundio never asks
+  # launchctl): one that is brings the server back within seconds; past
+  # that, start it here.
   if [ "$how" = detached ] && [ "$(uname -s)" = Darwin ] && [ -f "$HOME/Library/LaunchAgents/dev.abundio.server.plist" ]; then
-    how=user-launchd
+    j=0
+    while [ "$j" -lt 5 ]; do
+      if alive; then how=user-launchd; break; fi
+      j=$((j + 1)); sleep 1
+    done
   fi
   if [ "$how" = detached ]; then
     # Not `nohup`: macOS's refuses to run without a console (the tests run
@@ -175,10 +184,6 @@ else
   until alive; do
     i=$((i + 1))
     if [ "$i" -ge 15 ]; then
-      if [ "$how" = user-launchd ]; then
-        echo "your LaunchAgent did not start the server again; on the Mac run: launchctl kickstart -k gui/$(id -u)/dev.abundio.server" >&2
-        exit 6
-      fi
       echo "the server did not start:" >&2
       tail -n 3 "$log" >&2 2>/dev/null || true
       exit 6
@@ -435,7 +440,13 @@ pub fn checklist(p: &Probe, version: &str) -> Vec<CheckItem> {
             item("running", "ok", "Running")
         } else {
             item("running", "error", "Not running")
-                .fix("Start runs it as a service, so it comes back by itself.")
+                .fix(match (p.os.as_str(), p.service.as_deref()) {
+                    ("Darwin", Some("user-launchd")) => {
+                        "Start lets your LaunchAgent bring it back, or runs it itself if that LaunchAgent is not loaded."
+                    }
+                    ("Darwin", _) => "Start runs it until the Mac restarts or you log out.",
+                    _ => "Start runs it as a service, so it comes back by itself.",
+                })
                 .action("start")
         });
     }
@@ -500,7 +511,8 @@ fn reboot_item(p: &Probe, installed: bool) -> CheckItem {
             .fix("Start it again from here after a reboot."),
         // A Mac: kept running by the user's own LaunchAgent (phase 13).
         ("Darwin", Some("user-launchd")) => {
-            item("reboot", "ok", "Comes back when you log in on the Mac (your LaunchAgent)")
+            // Its file only: whether it is loaded only launchctl knows.
+            item("reboot", "ok", "Comes back when you log in on the Mac (your LaunchAgent, once loaded)")
         }
         ("Darwin", _) => {
             let mut i = item("reboot", "warn", "Won't come back after a reboot")
@@ -770,6 +782,19 @@ esac
         let restarted = parse_probe(&sh(start_then_probe(true)).unwrap());
         assert_eq!(restarted.started.as_deref(), Some("detached"));
         assert_ne!(pid(), first);
+        // A Mac whose LaunchAgent file is there but not loaded: after
+        // giving it a few seconds, the server is started here all the same.
+        if cfg!(target_os = "macos") {
+            let agents = home.path().join("Library/LaunchAgents");
+            std::fs::create_dir_all(&agents).unwrap();
+            std::fs::write(agents.join("dev.abundio.server.plist"), "<plist/>").unwrap();
+            let unloaded = sh(start_then_probe(true)).unwrap();
+            assert!(!unloaded.contains("Terminated"), "{unloaded}");
+            let unloaded = parse_probe(&unloaded);
+            assert_eq!(unloaded.started.as_deref(), Some("detached"));
+            assert!(unloaded.running);
+            assert_eq!(unloaded.service.as_deref(), Some("user-launchd"));
+        }
         // Uninstall: stopped, and the folder is gone.
         let last = pid();
         assert!(parse_probe(&sh(uninstall()).unwrap()).removed);
