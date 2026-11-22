@@ -178,9 +178,15 @@ An Agent on this computer, the Orchestrator included, drives the Agents of its P
 - **12d This computer's name and helpers** (done: the name came with 12b, `control_forward::computer_name`; `control_owner_gone` on the Host clears `spawnedBy` for one outside owner of the calling Client's, or with none for all of them, through the layout store so every Window hears it; closing a pane tells each connected joined Host, `releaseOwnerOnHosts`, and Leave tells the Host before leaving). The computer's name, read at start (macOS Computer Name, the hostname elsewhere); a local owner pane closing, or Leave, sends `control_owner_gone` to the Host.
 - **12e The Orchestrator** (done: the graph already drew every Opened Workspace in the Window's store, joined ones included; their clusters now read `☁ host · name`, `graphModel`'s `hostNameOf`; a call a Host ran for one of this Window's Agents names it `outside:<window>:<pane>`, which `controlActivity`'s `localCaller` maps back, so its line starts at the local Agent; helpers nest within their own cluster, so a Host's helpers need nothing more; Peek works on joined panes as on any; `AGENTS.md` and the Abundio skill teach `<name>@<host>`, `host_offline` and `agent start --tab` there). Its graph shows joined Agents under their Host, Peek and call streams work on them; its instructions (`orchestrator.rs`) and the Abundio skill teach the `@host` form.
 
-### Later: macOS Hosts
+#### 13. Mac Hosts, kept running by the user (ADR-0062's phase-13 update)
 
-The Keychain over SSH, Full Disk Access, start at login or boot (LaunchAgent vs LaunchDaemon), checked from the running server's own session rather than the SSH session's.
+- **13a Install and start.** `platform` takes Darwin again (`macos-universal`); `server_binary` finds the development server next to the app on a Mac, CI builds and releases the universal server again (`lipo`). Install starts it detached; "Not running" offers Start; uninstall runs on a Mac (no `REFUSE_MACOS`), never touching `launchctl`, its confirm asking the user to unload their own LaunchAgent first.
+- **13b The user's LaunchAgent.** The probe reports `~/Library/LaunchAgents/dev.abundio.server.plist` (`service user-launchd`, read only). The reboot line on a Mac: green "Comes back when you log in" with it, else a warning with copyable steps (write the plist, `launchctl bootstrap gui/$(id -u) …`). With it, Install and Update stop the old server and wait for the LaunchAgent to start the new one, starting none themselves.
+- **13c Mac limits.** One info line on every Mac Host: Keychain logins may look signed out over SSH; Desktop, Documents and Downloads need System Settings ▸ General ▸ Sharing ▸ Remote Login ⓘ ▸ Allow full disk access for remote users.
+
+### Later: macOS Hosts, beyond phase 13
+
+Checking the Keychain and Full Disk Access from the running server's own session rather than noting them; a service Abundio sets up itself.
 
 ### Later: Windows Hosts
 
