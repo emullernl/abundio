@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pr, settingsWindow } from "../../lib/ipc";
+import { type PrHostFacts, prHostNote } from "../../lib/prHostScope";
 import type { GhStatus } from "../../lib/types";
+import { useProfileStore } from "../../stores/profileStore";
 import {
 	MY_PRS_VIEWS,
 	type MyPrsView,
@@ -19,6 +21,7 @@ import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { useJoinedHostName } from "../HostChip";
 import { ChevronDown, GitPullRequest, RefreshCw } from "../Icons";
 import { PullRequestItem } from "./PullRequestItem";
 
@@ -55,6 +58,18 @@ export function PullRequestsSection() {
 		(s) => s.openedWorkspaceIds.size === 0,
 	);
 	const hasRepo = !!activeRepoSlug;
+	// Workspaces on a Host are not tracked here (prHostScope.ts).
+	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+	const joinedHostName = useJoinedHostName(activeWorkspaceId);
+	const remoteHostName = useProfileStore((s) => s.remote?.hostName ?? null);
+	const profileHasHostWorkspaces = useWorkspaceStore((s) =>
+		s.workspaces.some((w) => !!w.joined),
+	);
+	const hostFacts: PrHostFacts = {
+		activeHostName: joinedHostName ?? remoteHostName,
+		remoteHostName,
+		profileHasHostWorkspaces,
+	};
 	const effReviewView: ReviewView =
 		noWorkspace && reviewView === "review-repo" ? "review-profile" : reviewView;
 	const effMyPrsView: MyPrsView =
@@ -176,6 +191,7 @@ export function PullRequestsSection() {
 				ghStatus={ghStatus}
 				hasRepo={hasRepo}
 				hasProfileRepos={profileRepoSlugs.size > 0}
+				hostFacts={hostFacts}
 				repoSlugsResolved={repoSlugsResolved}
 				pollEnabled={prPollEnabled}
 				onRefresh={handleRefresh}
@@ -196,6 +212,7 @@ export function PullRequestsSection() {
 				ghStatus={ghStatus}
 				hasRepo={hasRepo}
 				hasProfileRepos={profileRepoSlugs.size > 0}
+				hostFacts={hostFacts}
 				repoSlugsResolved={repoSlugsResolved}
 				pollEnabled={prPollEnabled}
 				onRefresh={handleRefresh}
@@ -243,6 +260,8 @@ interface PrSubPanelProps<V extends PrView> {
 	repoSlugsResolved: boolean;
 	/** Whether automatic PR polling is enabled (Settings → GitHub). */
 	pollEnabled: boolean;
+	/** Where the Workspaces are: a Host's are not tracked. */
+	hostFacts: PrHostFacts;
 	onRefresh: () => void;
 	/** Manual refresh in flight — spins the refresh icon. */
 	refreshing?: boolean;
@@ -261,11 +280,13 @@ function PrSubPanel<V extends PrView>({
 	hasProfileRepos,
 	repoSlugsResolved,
 	pollEnabled,
+	hostFacts,
 	onRefresh,
 	refreshing,
 	showRefresh,
 	showPrStatus,
 }: PrSubPanelProps<V>) {
+	const hostNote = prHostNote(scope, hostFacts);
 	const [dropdownOpen, setDropdownOpen] = useState(false);
 	const unread = unreadCount(section.prs);
 	const dropdownRef = useRef<HTMLDivElement>(null);
@@ -501,6 +522,8 @@ function PrSubPanel<V extends PrView>({
 							gh auth login
 						</span>
 					</StatusMessage>
+				) : hostNote.block ? (
+					<StatusMessage>{hostNote.block}</StatusMessage>
 				) : scope === "repo" && !hasRepo ? (
 					<StatusMessage>No GitHub remote found</StatusMessage>
 				) : scope === "profile" && !repoSlugsResolved ? (
@@ -510,7 +533,10 @@ function PrSubPanel<V extends PrView>({
 						<span className="animate-pulse">Loading repositories...</span>
 					</StatusMessage>
 				) : scope === "profile" && !hasProfileRepos ? (
-					<StatusMessage>No GitHub repositories in this profile</StatusMessage>
+					<StatusMessage>
+						No GitHub repositories in this profile
+						{hostNote.note && <HostNoteLine text={hostNote.note} />}
+					</StatusMessage>
 				) : section.loading && section.prs.length === 0 ? (
 					<StatusMessage>
 						<span className="animate-pulse">Loading pull requests...</span>
@@ -518,9 +544,23 @@ function PrSubPanel<V extends PrView>({
 				) : section.error && section.prs.length === 0 ? (
 					<StatusMessage>{section.error}</StatusMessage>
 				) : section.prs.length === 0 ? (
-					<StatusMessage>No pull requests</StatusMessage>
+					<StatusMessage>
+						No pull requests
+						{hostNote.note && <HostNoteLine text={hostNote.note} />}
+					</StatusMessage>
 				) : (
 					<div className="flex flex-col">
+						{hostNote.note && (
+							<div
+								style={{
+									padding: "4px 12px",
+									fontSize: 11,
+									color: "var(--fg-secondary)",
+								}}
+							>
+								{hostNote.note}
+							</div>
+						)}
 						{section.prs.map((pr) => (
 							<PullRequestItem
 								key={`${pr.repository || "local"}-${pr.number}`}
@@ -543,5 +583,11 @@ function StatusMessage({ children }: { children: React.ReactNode }) {
 		>
 			<div>{children}</div>
 		</div>
+	);
+}
+
+function HostNoteLine({ text }: { text: string }) {
+	return (
+		<span style={{ display: "block", marginTop: 4, fontSize: 11 }}>{text}</span>
 	);
 }

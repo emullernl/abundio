@@ -1,9 +1,11 @@
 import { useEffect, useRef } from "react";
 import { git, pr } from "../lib/ipc";
+import { trackedWorkspaces } from "../lib/prHostScope";
 import {
 	hasGitDataCachedFor,
 	useGitChangesStore,
 } from "../stores/gitChangesStore";
+import { useProfileStore } from "../stores/profileStore";
 import { handlePrChanges, usePrStore } from "../stores/prStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import {
@@ -173,14 +175,18 @@ export function useGitDataSync() {
 	const workspacesInitialized = useWorkspaceStore(
 		(s) => s.workspacesInitialized,
 	);
+	// Only this computer's Workspaces: PRs are polled with its own `gh`
+	// account, which a Host's repositories may not be (prHostScope.ts).
+	const remoteWindow = useProfileStore((s) => s.remote !== null);
 	useEffect(() => {
+		const tracked = trackedWorkspaces(workspaces, remoteWindow);
 		usePrStore
 			.getState()
 			.setProfileRepoSlugs(
-				profileRepoSlugs(workspaces, repoSlugsById),
-				repoSlugsResolvedFor(workspaces, repoSlugsById, workspacesInitialized),
+				profileRepoSlugs(tracked, repoSlugsById),
+				repoSlugsResolvedFor(tracked, repoSlugsById, workspacesInitialized),
 			);
-	}, [workspaces, repoSlugsById, workspacesInitialized]);
+	}, [workspaces, repoSlugsById, workspacesInitialized, remoteWindow]);
 
 	const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId);
 	const activeCwd = activeWorkspace?.rootFolder ?? null;
