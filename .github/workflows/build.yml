@@ -80,9 +80,6 @@ jobs:
             test -s "server-dist/abundio-server-$p" || { echo "missing server for $p" >&2; exit 1; }
             gzip -9 -n -c "server-dist/abundio-server-$p" > "src-tauri/resources/server/abundio-server-$p.gz"
           done
-          # The stamp scripts/bundle-servers.mjs (the build hook) checks, so
-          # it keeps these rather than building its own.
-          echo "${GITHUB_REF_NAME#v}" > src-tauri/resources/server/VERSION
           ls -l src-tauri/resources/server
 
       - name: Build Tauri app

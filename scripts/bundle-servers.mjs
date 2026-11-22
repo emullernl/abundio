@@ -1,81 +1,91 @@
 #!/usr/bin/env node
-// Put the servers a Host runs into the app's resources, gzipped
-// (docs/plans/remote-hosts.md phase 15): src-tauri/resources/server/
-// abundio-server-<platform>.gz for linux-x86_64, linux-aarch64 and
-// macos-universal, plus a VERSION stamp.
+// Build one server a Host runs and put it, gzipped, where a release build of
+// the app bundles it from (docs/plans/remote-hosts.md phase 15):
+// src-tauri/resources/server/abundio-server-<platform>.gz.
 //
-//   node scripts/bundle-servers.mjs        (also run by `pnpm tauri build`)
+//   pnpm server:linux-x86_64     (Docker)
+//   pnpm server:linux-aarch64    (Docker; emulated on an x86 machine, slow)
+//   pnpm server:macos-universal  (a Mac: cargo for both chips, then lipo)
 //
-// Skips when all three are there for this app's version (CI puts them there
-// before it builds). Otherwise builds them: the Linux ones in Docker
-// (scripts/build-server-linux.sh), the Mac one with cargo and lipo, which
-// needs a Mac. ABUNDIO_SKIP_SERVER_BUNDLE=1 skips it all, for a quick local
-// build whose Install then has no server to upload.
+// `pnpm tauri build` bundles whatever is in that folder and builds none
+// itself; CI puts all three there before it builds.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const out = join(root, "src-tauri", "resources", "server");
+const tauri = join(root, "src-tauri");
+const out = join(tauri, "resources", "server");
 const platforms = ["linux-x86_64", "linux-aarch64", "macos-universal"];
-const version = JSON.parse(
-	readFileSync(join(root, "package.json"), "utf8"),
-).version;
 
-const gzName = (p) => join(out, `abundio-server-${p}.gz`);
-const stamp = join(out, "VERSION");
-
-if (process.env.ABUNDIO_SKIP_SERVER_BUNDLE === "1") {
-	console.warn(
-		"[servers] ABUNDIO_SKIP_SERVER_BUNDLE=1: this build bundles no servers",
+const platform = process.argv[2];
+if (!platforms.includes(platform)) {
+	console.error(
+		`usage: node scripts/bundle-servers.mjs <${platforms.join("|")}>`,
 	);
-	process.exit(0);
-}
-
-const current =
-	existsSync(stamp) && readFileSync(stamp, "utf8").trim() === version;
-if (current && platforms.every((p) => existsSync(gzName(p)))) {
-	console.log(`[servers] already bundled for ${version}`);
-	process.exit(0);
+	process.exit(2);
 }
 
 const run = (cmd, args, opts = {}) =>
 	execFileSync(cmd, args, { stdio: "inherit", cwd: root, ...opts });
 
-function build(platform) {
-	if (platform.startsWith("linux-")) {
-		const arch = platform.slice("linux-".length);
-		run("sh", ["scripts/build-server-linux.sh", arch]);
-		return join(
-			root,
-			"src-tauri",
-			"target",
-			"server-dist",
-			platform,
-			"abundio-server",
-		);
-	}
+/** A static (musl) Linux server, built in Docker, so any machine with
+ *  Docker builds it: a Mac, Linux, or Windows with Docker Desktop. */
+function buildLinux(arch) {
+	const dockerPlatform = arch === "x86_64" ? "linux/amd64" : "linux/arm64";
+	const dist = join(tauri, "target", "server-dist", `linux-${arch}`);
+	mkdirSync(dist, { recursive: true });
+	// A target folder and cargo cache of its own per arch, kept between runs.
+	run("docker", [
+		"run",
+		"--rm",
+		"--platform",
+		dockerPlatform,
+		"-v",
+		`${tauri}:/src`,
+		"-v",
+		"abundio-cargo-registry:/usr/local/cargo/registry",
+		"-v",
+		`abundio-server-target-${arch}:/target`,
+		"-e",
+		"CARGO_TARGET_DIR=/target",
+		"-w",
+		"/src",
+		"rust:1-alpine",
+		"sh",
+		"-euc",
+		[
+			"apk add --no-cache musl-dev build-base perl >/dev/null",
+			"cargo build --release --locked -p abundio-server",
+			`cp /target/release/abundio-server /src/target/server-dist/linux-${arch}/abundio-server`,
+		].join("\n"),
+	]);
+	return join(dist, "abundio-server");
+}
+
+/** The Mac server for both chips in one file; only a Mac can build it. */
+function buildMac() {
 	if (process.platform !== "darwin") {
-		throw new Error(
-			"the macOS server can only be built on a Mac; build there, or set ABUNDIO_SKIP_SERVER_BUNDLE=1",
-		);
+		console.error("the macOS server can only be built on a Mac");
+		process.exit(1);
 	}
 	const targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
 	run("rustup", ["target", "add", ...targets]);
 	for (const t of targets) {
-		run("cargo", ["build", "--release", "-p", "abundio-server", "--target", t], {
-			cwd: join(root, "src-tauri"),
-		});
+		run(
+			"cargo",
+			["build", "--release", "--locked", "-p", "abundio-server", "--target", t],
+			{ cwd: tauri },
+		);
 	}
 	const universal = join(
-		root,
-		"src-tauri",
+		tauri,
 		"target",
 		"server-dist",
-		platform,
+		"macos-universal",
 		"abundio-server",
 	);
 	mkdirSync(dirname(universal), { recursive: true });
@@ -83,19 +93,15 @@ function build(platform) {
 		"-create",
 		"-output",
 		universal,
-		...targets.map((t) =>
-			join(root, "src-tauri", "target", t, "release", "abundio-server"),
-		),
+		...targets.map((t) => join(tauri, "target", t, "release", "abundio-server")),
 	]);
 	return universal;
 }
 
+const binary = platform.startsWith("linux-")
+	? buildLinux(platform.slice("linux-".length))
+	: buildMac();
 mkdirSync(out, { recursive: true });
-for (const p of platforms) {
-	console.log(`[servers] building ${p}…`);
-	const binary = build(p);
-	writeFileSync(gzName(p), gzipSync(readFileSync(binary), { level: 9 }));
-	console.log(`[servers] bundled ${p}`);
-}
-writeFileSync(stamp, `${version}\n`);
-console.log(`[servers] bundled all three for ${version}`);
+const gz = join(out, `abundio-server-${platform}.gz`);
+writeFileSync(gz, gzipSync(readFileSync(binary), { level: 9 }));
+console.log(`[server] ${platform} → ${gz}`);

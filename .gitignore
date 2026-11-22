@@ -9,4 +9,3 @@ app-icon.png
 .pnpm-store/
 # The servers CI bundles into the app (phase 15)
 src-tauri/resources/server/*.gz
-src-tauri/resources/server/VERSION
