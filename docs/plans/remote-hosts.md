@@ -168,6 +168,16 @@ Found while trying a joined Host: the Agent list was this computer's, so a Host'
 - macOS Hosts dropped (done: see ADR-0062's update; `platform` refuses Darwin, the LaunchAgent start and the `macos-universal` server build are gone, and uninstall refuses a Mac before it runs, `REFUSE_MACOS`).
 - Remove the dev-build gate; the feature ships (done: Settings ▸ Hosts and File ▸ Open Remote Profile… in every build; the console helper in `main.tsx` stays development only).
 
+#### 12. Agent control reaches joined Hosts, one way (ADR-0065)
+
+An Agent on this computer, the Orchestrator included, drives the Agents of its Profile's Joined profiles; a Host's Agents never reach this computer. The desktop carries the call to the Host over its own connection.
+
+- **12a The Host's side.** A `control_call` host command: an Agent control call from a Client on behalf of a caller that is not one of the Host's panes, given as argv plus the caller's label (`Agent One@<computer name>`) and an owner key. Limited to the Profile that Client shows (`client_profile_set`), refused when the Host's Agent control is off, answered as the Host answers its own panes' calls (`control_host` / `control_local` and, for a Window-carried op, the Window that owns the Workspace, which may be the calling app's own). The Control badge and the call streams carry the label; a pane started for it records the owner key (`spawnedBy` as an outside owner), cleared by a `control_owner_gone` call.
+- **12b The desktop's routing.** `control_host` resolves `name@host` and `--workspace app@host` against the caller's Profile's Joined profiles (`joined_profiles`, by the Host's name), forwards the call with `HostRouter::call_on`, and returns the Host's answer as its own; `host_offline` when not connected, never retried for a call that changes something (as `connection_lost`). A joined Workspace that is not Opened is opened in the caller's Window first. Cancel (`X-Abundio-Cancel`) is forwarded too, so a remote wait never outlives its call.
+- **12c Listings.** `agent list` (and `agent wait` on several) joins this computer's Agents with each joined Host's, remote rows as `Agent Two@build-box`, offline ones marked; `pane list --workspace app@host` lists a Host's panes.
+- **12d This computer's name and helpers.** The computer's name, read at start (macOS Computer Name, the hostname elsewhere); a local owner pane closing, or Leave, sends `control_owner_gone` to the Host.
+- **12e The Orchestrator.** Its graph shows joined Agents under their Host, Peek and call streams work on them; its instructions (`orchestrator.rs`) and the Abundio skill teach the `@host` form.
+
 ### Later: macOS Hosts
 
 The Keychain over SSH, Full Disk Access, start at login or boot (LaunchAgent vs LaunchDaemon), checked from the running server's own session rather than the SSH session's.
