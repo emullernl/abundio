@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { hostProbeCommands } from "../../lib/hostProbeAgents";
-import { panesEndedBy, restartMessage } from "../../lib/hostSetup";
+import {
+	panesEndedBy,
+	restartMessage,
+	uninstallMessage,
+} from "../../lib/hostSetup";
 import {
 	type HostCheck,
 	type HostEntry,
@@ -77,6 +81,12 @@ export function HostsSection() {
 	const [confirmUninstall, setConfirmUninstall] = useState<HostEntry | null>(
 		null,
 	);
+
+	/** The Host's OS as its last check found it, if it was checked. */
+	const osOf = (id: string): string | null => {
+		const c = checks[id];
+		return c && typeof c === "object" && "probe" in c ? c.probe.os : null;
+	};
 
 	const askAction = (host: HostEntry, last: HostCheck, action: string) => {
 		const panes = panesEndedBy(action, last);
@@ -214,7 +224,7 @@ export function HostsSection() {
 			{confirmUninstall && (
 				<ConfirmDialog
 					title={`Uninstall the server from ${confirmUninstall.name}?`}
-					message="This stops the server, ending every pane and Agent it runs, and deletes ~/.abundio-server on the Host: the server and its data (the Host's Profiles, Workspaces, layouts and notes). Your project folders there are not touched."
+					message={uninstallMessage(osOf(confirmUninstall.id))}
 					confirmLabel="Uninstall"
 					confirmVariant="danger"
 					onConfirm={() => void uninstall(confirmUninstall)}

@@ -227,18 +227,9 @@ pub fn start_then_probe(restart: bool) -> String {
 
 /// Stop the server and remove it, in one ssh.
 pub fn uninstall() -> String {
-    format!("set -eu\n{REFUSE_MACOS}\n{STOP_SCRIPT}\n{UNINSTALL_SCRIPT}")
+    format!("set -eu\n{STOP_SCRIPT}\n{UNINSTALL_SCRIPT}")
 }
 
-/// macOS Hosts are not supported (phase 11), so nothing is ever stopped or
-/// removed on a Mac. The tests run the scripts on the developer's Mac with
-/// a home folder of their own, and say so.
-const REFUSE_MACOS: &str = r#"
-if [ "$(uname -s)" = Darwin ] && [ "${ABUNDIO_SETUP_ALLOW_MACOS:-}" != 1 ]; then
-  echo "macOS Hosts aren't supported: nothing was stopped or removed" >&2
-  exit 7
-fi
-"#;
 
 /// `text` as one word for a POSIX shell.
 pub fn shell_quote(text: &str) -> String {
@@ -332,9 +323,10 @@ pub fn platform(os: &str, arch: &str) -> Result<&'static str, String> {
     match (os, arch) {
         ("Linux", "x86_64" | "amd64") => Ok("linux-x86_64"),
         ("Linux", "aarch64" | "arm64") => Ok("linux-aarch64"),
-        // macOS fights a server run over SSH (its Keychain, Full Disk
-        // Access, start at login): left out for now (phase 11).
-        ("Darwin", _) => Err("macOS Hosts aren't supported yet: use a Linux machine".into()),
+        // A Mac: one binary for both chips. Abundio installs and starts it
+        // there but never sets up a service; the user keeps it running
+        // (ADR-0062, phase 13).
+        ("Darwin", "x86_64" | "arm64") => Ok("macos-universal"),
         _ => Err(format!("{os} {arch} is not supported yet")),
     }
 }
@@ -583,19 +575,6 @@ mod tests {
         assert_eq!(list.iter().find(|i| i.id == "server").unwrap().action, None);
     }
 
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn uninstall_never_touches_a_mac() {
-        let home = tempfile::tempdir().unwrap();
-        let d = home.path().join(".abundio-server");
-        std::fs::create_dir_all(&d).unwrap();
-        let mut c = std::process::Command::new("/bin/sh");
-        c.args(["-c", &uninstall(), "abundio-setup"]).env("HOME", home.path());
-        let out = run(c, Box::new(std::io::empty()), std::time::Duration::from_secs(20));
-        assert!(out.unwrap_err().contains("macOS Hosts aren't supported"));
-        assert!(d.is_dir(), "nothing was removed");
-    }
-
     #[test]
     fn only_plain_words_reach_the_hosts_shell() {
         assert_eq!(probe_word("claude --dangerously-skip"), Some("claude"));
@@ -609,7 +588,8 @@ mod tests {
     fn knows_which_server_a_host_runs() {
         assert_eq!(platform("Linux", "x86_64"), Ok("linux-x86_64"));
         assert_eq!(platform("Linux", "aarch64"), Ok("linux-aarch64"));
-        assert!(platform("Darwin", "arm64").unwrap_err().contains("macOS Hosts aren't supported"));
+        assert_eq!(platform("Darwin", "arm64"), Ok("macos-universal"));
+        assert_eq!(platform("Darwin", "x86_64"), Ok("macos-universal"));
         assert!(platform("Linux", "riscv64").is_err());
     }
 
@@ -708,8 +688,7 @@ esac
             let mut c = std::process::Command::new("/bin/sh");
             c.args(["-c", &script, "abundio-setup"])
                 .env("HOME", home.path())
-                .env("ABUNDIO_SETUP_SERVICE", "detached")
-                .env("ABUNDIO_SETUP_ALLOW_MACOS", "1");
+                .env("ABUNDIO_SETUP_SERVICE", "detached");
             run(c, Box::new(std::io::empty()), std::time::Duration::from_secs(40))
         };
         let pid = || std::fs::read_to_string(d.join("data/pid")).unwrap();
