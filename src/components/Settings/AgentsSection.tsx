@@ -16,6 +16,8 @@ import type { CodingAgent } from "../../lib/types";
 import { useAgentRegistryStore } from "../../stores/agentRegistryStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { ChevronDown, ChevronRight, ExternalLink, Plus, X } from "../Icons";
+import { secondaryButtonClass } from "../PromptActions/fieldStyles";
+import { CopyAgentsDialog } from "./CopyAgentsDialog";
 import { SectionLabel, Toggle, ToggleRow } from "./primitives";
 
 /* ─── Agent hook footprint (per-row, expandable) ─── */
@@ -430,7 +432,7 @@ function HookFootprint({
 }
 
 /* ─── Agent row ─── */
-function AgentRow({
+export function AgentRow({
 	agent,
 	installed,
 	hooksEnabled,
@@ -582,7 +584,7 @@ function AgentRow({
 }
 
 /* ─── Add agent form ─── */
-function AddAgentForm({
+export function AddAgentForm({
 	onAdd,
 }: {
 	onAdd: (name: string, command: string, taskArgs?: string[]) => void;
@@ -855,6 +857,7 @@ export function AgentsSection() {
 		(s) => s.setResumeAgentSessions,
 	);
 
+	const [copying, setCopying] = useState(false);
 	// Live per-agent hook footprint, keyed by agentId. Re-fetched when the
 	// section mounts, and again after a toggle re-provisions, so the Hooks
 	// registered / not registered badge reflects the new on-disk state.
@@ -914,7 +917,17 @@ export function AgentsSection() {
 				    not to the Add-agent form at the foot of the pane. */}
 				<div className="flex items-baseline justify-between gap-3">
 					<SectionLabel>Coding Agents</SectionLabel>
-					<MatchToInstalledButton onDone={refreshHookStatuses} />
+					<div className="flex items-center gap-2">
+						<button
+							type="button"
+							className={`${secondaryButtonClass} rounded-md`}
+							style={{ fontSize: 12, height: 26, padding: "0 10px" }}
+							onClick={() => setCopying(true)}
+						>
+							Copy from…
+						</button>
+						<MatchToInstalledButton onDone={refreshHookStatuses} />
+					</div>
 				</div>
 				<p
 					style={{
@@ -966,6 +979,17 @@ export function AgentsSection() {
 					}}
 				/>
 			</div>
+			{copying && (
+				<CopyAgentsDialog
+					target={null}
+					have={agents}
+					onCopy={(picked) => {
+						for (const a of picked)
+							addAgent(a.name, a.command, a.args, a.taskArgs);
+					}}
+					onClose={() => setCopying(false)}
+				/>
+			)}
 		</div>
 	);
 }

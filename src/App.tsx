@@ -71,6 +71,7 @@ import {
 } from "./lib/fleetFocus";
 import { installFocusSweep } from "./lib/focusSweep";
 import { hostSettingsFromApp } from "./lib/hostSettings";
+import { startHostSettingsMirror } from "./lib/hostSettingsMirror";
 import {
 	agentRegistry,
 	appMenu,
@@ -952,6 +953,8 @@ export function App() {
 
 	// The Agents a typed command can start, for Rust's shell integration.
 	useEffect(() => startAgentCommandsSync(), []);
+	// This computer's Host settings follow its app settings (ADR-0064).
+	useEffect(() => startHostSettingsMirror(), []);
 
 	// Listen for native menu "Switch Profile" submenu clicks.
 	useEffect(() => {

@@ -137,6 +137,8 @@ export const HOST_API_COMMANDS: ReadonlySet<string> = new Set([
 	// A Host's own Profiles, for its remote Windows (phase 7d)
 	"server_profile_list",
 	"server_profile_create",
+	"server_profile_rename",
+	"server_profile_delete",
 	"client_profile_set",
 	// The Orchestrator
 	"orchestrator_agent_get",

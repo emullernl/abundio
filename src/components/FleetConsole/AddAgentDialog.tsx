@@ -11,8 +11,8 @@ import {
 } from "../../lib/dormantWorkspaces";
 import { openNewTask } from "../../lib/openNewTask";
 import type { CodingAgent } from "../../lib/types";
+import { useAllAgents } from "../../stores/hostAgentsStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
-import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { BackButton, NewAgentDialog } from "./NewAgentDialog";
 import { openInBackground } from "./WorkspacePicker";
@@ -25,7 +25,7 @@ export function useRelaunchRows(): RelaunchRow[] {
 	const workspaces = useWorkWorkspaces();
 	const facts = useWorkspaceGitStore((s) => s.worktreeFacts);
 	const opened = usePtyActivityStore((s) => s.openedWorkspaceIds);
-	const agents = useSettingsStore((s) => s.agents);
+	const agents = useAllAgents();
 	return useMemo(
 		() =>
 			buildRelaunchRows(
@@ -221,7 +221,7 @@ function Chooser({
 	onTask: () => void;
 	onRelaunch: () => void;
 }) {
-	const agents = useSettingsStore((s) => s.agents);
+	const agents = useAllAgents();
 	const hasDormant = dormant.length > 0;
 	const actions = hasDormant ? [onNew, onTask, onRelaunch] : [onNew, onTask];
 	const keys = useListKeys(actions.length, (i) => actions[i]());
@@ -454,7 +454,7 @@ function RelaunchList({
 	/** Relaunch one Workspace; the dialog closes. */
 	onRelaunch: (workspaceId: string) => void;
 }) {
-	const agents = useSettingsStore((s) => s.agents);
+	const agents = useAllAgents();
 	const gitById = useWorkspaceGitStore((s) => s.byWorkspaceId);
 	const targets = relaunchTargets(rows);
 	const indexOf = new Map(targets.map((r, i) => [r, i]));

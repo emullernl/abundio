@@ -224,6 +224,8 @@ export const HOST_ROUTES: Record<string, Route> = {
 	// Profiles and the Orchestrator
 	server_profile_list: own,
 	server_profile_create: own,
+	server_profile_rename: own,
+	server_profile_delete: own,
 	client_profile_set: own,
 	orchestrator_agent_get: profile(),
 	orchestrator_agent_set: profile(),

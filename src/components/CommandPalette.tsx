@@ -19,6 +19,7 @@ import { themeList } from "../lib/themes";
 import { typedLaunch } from "../lib/typedLaunch";
 import { addWorktreeTargetId } from "../lib/worktreeGrouping";
 import { useExplorerStore } from "../stores/explorerStore";
+import { useAgentsForWorkspace } from "../stores/hostAgentsStore";
 import { useProfileStore } from "../stores/profileStore";
 import { requestSwitchProfile } from "../stores/profileSwitchConfirmStore";
 import { usePromptActionStore } from "../stores/promptActionStore";
@@ -67,8 +68,12 @@ export function CommandPalette({
 	const spotlightTileId = useWindowUiStore((s) => s.spotlightTileId);
 	const profilesList = useProfileStore((s) => s.profiles);
 	const activeProfileId = useProfileStore((s) => s.activeProfileId);
-	const { setTheme, debugActivityMeter, toggleDebugActivityMeter, agents } =
+	const { setTheme, debugActivityMeter, toggleDebugActivityMeter } =
 		useSettingsStore();
+	// Launches into the Active workspace: its Host's Agents (ADR-0064).
+	const agents = useAgentsForWorkspace(
+		useWorkspaceStore((s) => s.activeWorkspaceId),
+	);
 	const worktreeFacts = useWorkspaceGitStore((s) => s.worktreeFacts);
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 	const addWorktreeTarget = useMemo(

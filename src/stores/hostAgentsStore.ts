@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { create } from "zustand";
 import { BUILTIN_AGENTS } from "../lib/agents";
 import type { HostSettings } from "../lib/hostSettings";
@@ -116,4 +117,23 @@ export function useAgentsForPane(
 		paneId ? (s.findWorkspaceForPane(paneId)?.id ?? null) : null,
 	);
 	return useAgentsForWorkspace(workspaceId);
+}
+
+/** Every Agent this Window may meet: this computer's and each Host's, one
+ *  per id (names, and "is this a known Agent" checks across Hosts). */
+export function allAgents(): CodingAgent[] {
+	const seen = new Map<string, CodingAgent>();
+	for (const a of useSettingsStore.getState().agents) seen.set(a.id, a);
+	for (const list of Object.values(useHostAgentsStore.getState().byHost)) {
+		for (const a of list) if (!seen.has(a.id)) seen.set(a.id, a);
+	}
+	return [...seen.values()];
+}
+
+/** `allAgents`, as a hook that follows changes. */
+export function useAllAgents(): CodingAgent[] {
+	const own = useSettingsStore((s) => s.agents);
+	const byHost = useHostAgentsStore((s) => s.byHost);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: recomputed when either list changes
+	return useMemo(() => allAgents(), [own, byHost]);
 }

@@ -10,8 +10,8 @@ import { openDialog } from "../lib/desktop";
 import { type FolderCheck, workspaces as workspacesApi } from "../lib/ipc";
 import type { CodingAgent } from "../lib/types";
 import { folderVerdict } from "../lib/workspaceFolder";
+import { useAgentsForWorkspace } from "../stores/hostAgentsStore";
 import { fallbackProfileId, useProfileStore } from "../stores/profileStore";
-import { useSettingsStore } from "../stores/settingsStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import type { LaunchChoice } from "./LaunchPicker";
 import { secondaryButtonClass } from "./PromptActions/fieldStyles";
@@ -43,7 +43,8 @@ export function NewWorkspaceDialog({
 	onClose,
 	onSubmit,
 }: NewWorkspaceDialogProps) {
-	const agents = useSettingsStore((s) => s.agents);
+	// The Window's own Host's Agents: a remote Window's are its Host's.
+	const agents = useAgentsForWorkspace(null);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const nameInputRef = useRef<HTMLInputElement>(null);
 

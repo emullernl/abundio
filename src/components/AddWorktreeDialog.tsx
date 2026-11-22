@@ -8,7 +8,7 @@ import {
 } from "../lib/agentIcons";
 import type { CodingAgent } from "../lib/types";
 import { basename, isValidBranch, resolvePath } from "../lib/worktreePath";
-import { useSettingsStore } from "../stores/settingsStore";
+import { useAgentsForWorkspace } from "../stores/hostAgentsStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
 /** Everything the caller needs to create the worktree and (on error) reopen
@@ -51,7 +51,11 @@ export function AddWorktreeDialog({
 	onSubmit,
 	onClose,
 }: Props) {
-	const agents = useSettingsStore((s) => s.agents);
+	// The Agents of the primary's Host (ADR-0064).
+	const primaryId = useWorkspaceStore(
+		(s) => s.workspaces.find((w) => w.rootFolder === primaryCwd)?.id ?? null,
+	);
+	const agents = useAgentsForWorkspace(primaryId);
 	const setupCommands = useWorkspaceStore(
 		(s) =>
 			s.workspaces.find((w) => w.rootFolder === primaryCwd)

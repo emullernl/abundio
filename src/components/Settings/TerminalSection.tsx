@@ -1,10 +1,15 @@
+import { useSettingsHostStore } from "../../stores/settingsHostStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { ScrollbackControl } from "./NumberSteppers";
+import { HostTerminalSettings, PerHostSection } from "./PerHostSection";
 import { SectionLabel, ToggleRow } from "./primitives";
 import { ShellPicker } from "./ShellPicker";
 
 /** Everything that configures a terminal pane and its PTY. */
 export function TerminalSection() {
+	// Scrollback and the default shell are Host settings (ADR-0064): with a
+	// Host picked they are its own; the rest here is this computer's.
+	const hostId = useSettingsHostStore((s) => s.hostId);
 	const gpuAccelerationEnabled = useSettingsStore(
 		(s) => s.gpuAccelerationEnabled,
 	);
@@ -46,13 +51,17 @@ export function TerminalSection() {
 					description="Stop programs from taking the mouse, so click-drag selection and right-click keep working in every pane. While this is off, tmux, vim and agent TUIs handle clicks themselves, right button included; use Option+drag (macOS) or Shift+drag (Windows/Linux) to select text. Either way, any pane can be flipped on its own from the mouse badge in its title bar."
 				/>
 			</div>
-			<div className="flex-shrink-0">
-				<SectionLabel>Scrollback Lines</SectionLabel>
-				<ScrollbackControl
-					value={terminalScrollback}
-					onChange={setTerminalScrollback}
-				/>
-			</div>
+			{hostId ? (
+				<PerHostSection local={null} host={<HostTerminalSettings />} />
+			) : (
+				<div className="flex-shrink-0">
+					<SectionLabel>Scrollback Lines</SectionLabel>
+					<ScrollbackControl
+						value={terminalScrollback}
+						onChange={setTerminalScrollback}
+					/>
+				</div>
+			)}
 			<div className="flex-shrink-0">
 				<SectionLabel>Smart Image Drop</SectionLabel>
 				<ToggleRow
@@ -71,21 +80,23 @@ export function TerminalSection() {
 					description="A strip of one-click prompts along the bottom of any pane running an agent. Turning it off hides the strip without deleting anything — the command palette still reaches every action."
 				/>
 			</div>
-			<div className="flex flex-col flex-shrink-0" style={{ height: 200 }}>
-				<SectionLabel>Default Shell</SectionLabel>
-				<p
-					style={{
-						fontSize: 12,
-						color: "var(--fg-secondary)",
-						marginBottom: 12,
-						lineHeight: 1.5,
-					}}
-				>
-					Choose the shell for new terminal panes. Existing panes are not
-					affected.
-				</p>
-				<ShellPicker />
-			</div>
+			{!hostId && (
+				<div className="flex flex-col flex-shrink-0" style={{ height: 200 }}>
+					<SectionLabel>Default Shell</SectionLabel>
+					<p
+						style={{
+							fontSize: 12,
+							color: "var(--fg-secondary)",
+							marginBottom: 12,
+							lineHeight: 1.5,
+						}}
+					>
+						Choose the shell for new terminal panes. Existing panes are not
+						affected.
+					</p>
+					<ShellPicker />
+				</div>
+			)}
 			<div className="flex-shrink-0">
 				<SectionLabel>Diagnostics</SectionLabel>
 				<ToggleRow

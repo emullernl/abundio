@@ -179,6 +179,15 @@ impl PtyManager {
         pty_ids.iter().filter(|id| self.entries.contains_key(id.as_str())).cloned().collect()
     }
 
+    /// The PTYs started in these Workspaces (a Host's Profile being deleted).
+    pub fn ptys_of_workspaces(&self, workspace_ids: &std::collections::HashSet<String>) -> Vec<String> {
+        self.spawn_contexts
+            .iter()
+            .filter(|e| workspace_ids.contains(&e.value().workspace_id))
+            .map(|e| e.key().clone())
+            .collect()
+    }
+
     pub fn read_screen(
         &self,
         pty_id: &str,

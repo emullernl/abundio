@@ -10,6 +10,8 @@ import { AgentsSection } from "./Settings/AgentsSection";
 import { EditorSection } from "./Settings/EditorSection";
 import { FontsSection } from "./Settings/FontsSection";
 import { GithubSection } from "./Settings/GithubSection";
+import { HostAgentsSection } from "./Settings/HostAgentsSection";
+import { HostProfilesSection } from "./Settings/HostProfilesSection";
 import { HostsSection } from "./Settings/HostsSection";
 import {
 	AgentIcon,
@@ -26,6 +28,7 @@ import {
 	UpdateIcon,
 } from "./Settings/icons";
 import { KeyboardSection } from "./Settings/KeyboardSection";
+import { PerHostSection, SettingsHostPicker } from "./Settings/PerHostSection";
 import { ProfilesSection } from "./Settings/ProfilesSection";
 import { PromptActionsSection } from "./Settings/PromptActionsSection";
 import { NavGroupLabel, NavItem } from "./Settings/primitives";
@@ -61,11 +64,18 @@ const SECTION_BODY: Record<SettingsSection, React.ReactNode> = {
 	fonts: <FontsSection />,
 	terminal: <TerminalSection />,
 	editor: <EditorSection />,
-	agents: <AgentsSection />,
+	agents: (
+		<PerHostSection local={<AgentsSection />} host={<HostAgentsSection />} />
+	),
 	"prompt-actions": <PromptActionsSection />,
 	tasks: <TasksSection />,
 	keyboard: <KeyboardSection />,
-	profiles: <ProfilesSection />,
+	profiles: (
+		<PerHostSection
+			local={<ProfilesSection />}
+			host={<HostProfilesSection />}
+		/>
+	),
 	hosts: <HostsSection />,
 	github: <GithubSection />,
 	updates: <UpdatesSection />,
@@ -147,6 +157,7 @@ export function SettingsPanel({ onClose }: Props) {
 					Settings
 				</span>
 				<div className="flex items-center gap-3">
+					<SettingsHostPicker />
 					<span
 						className="font-mono"
 						style={{

@@ -83,3 +83,19 @@ pub async fn host_join(
     .await
     .map_err(|e| AbundioError::InvalidOperation(e.to_string()))?
 }
+
+/// Put the calling Window (Settings) on `host_id` without showing one of its
+/// Profiles: it hears the Host's changes (`host-settings-changed`,
+/// `profiles-changed`) and may send it calls. Connects first if need be,
+/// `ask` letting ssh ask in Abundio's dialog ("Connect to edit").
+#[tauri::command]
+pub async fn host_attach(app: AppHandle, window: Window, host_id: String, ask: bool) -> Result<(), AbundioError> {
+    let label = window.label().to_string();
+    let router = app.state::<std::sync::Arc<crate::host_router::HostRouter>>().inner().clone();
+    router.join(&label, &host_id);
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::remote_windows::connect(&app, &host_id, ask.then_some(label.as_str())).map(|_| ())
+    })
+    .await
+    .map_err(|e| AbundioError::InvalidOperation(e.to_string()))?
+}

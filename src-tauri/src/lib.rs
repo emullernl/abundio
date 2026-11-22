@@ -1666,6 +1666,7 @@ pub fn run() {
             joined_commands::joined_profile_remove,
             joined_commands::joined_profile_seen,
             joined_commands::host_join,
+            joined_commands::host_attach,
             host_setup_commands::host_start,
             host_setup_commands::host_uninstall,
             remote_windows::remote_profile_for_window,

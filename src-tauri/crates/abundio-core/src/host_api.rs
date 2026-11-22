@@ -647,6 +647,42 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
             host.events.broadcast("profiles-changed", ());
             json(profile)?
         }
+        "server_profile_rename" => {
+            let a = a!(c, raw, { id: String, name: String });
+            let name = a.name.trim();
+            if name.is_empty() {
+                return Err(AbundioError::InvalidOperation("a Profile needs a name".into()));
+            }
+            host.profiles.update(&a.id, crate::profile_store::ProfileUpdate { name: Some(name.to_string()) })?;
+            host.events.broadcast("profiles-changed", ());
+            Value::Null
+        }
+        // Settings ▸ Profiles for a Host (phase 10d-3): never while a Window
+        // shows it; its panes stop (here they outlive every Window), its
+        // Workspaces go with it, never their folders.
+        "server_profile_delete" => {
+            let id = a!(c, raw, { id: String }).id;
+            if host.clients.profiles().values().any(|p| p == &id) {
+                return Err(AbundioError::InvalidOperation(
+                    "a Window shows this Profile; close it there first".into(),
+                ));
+            }
+            let workspaces: std::collections::HashSet<String> =
+                host.workspaces.list(&id)?.into_iter().map(|w| w.workspace.id).collect();
+            let orchestrator = host.workspaces.orchestrator_folder_of(&id).ok().flatten().filter(|f| {
+                let rows = host.workspaces.all_folders().unwrap_or_default();
+                !crate::workspace_folders::holds_work(&rows, std::path::Path::new(f))
+            });
+            host.profiles.delete(&id)?;
+            for pty in host.ptys.ptys_of_workspaces(&workspaces) {
+                let _ = host.ptys.kill(&pty);
+            }
+            if let Some(folder) = orchestrator {
+                crate::orchestrator::forget_folder_at(&crate::app_paths::shared_root(), std::path::Path::new(&folder));
+            }
+            host.events.broadcast("profiles-changed", ());
+            Value::Null
+        }
         "client_profile_set" => {
             host.clients.set_profile(client, &a!(c, raw, { profile_id: String }).profile_id);
             Value::Null
@@ -973,6 +1009,32 @@ mod tests {
         let listed = call(&w, "w2", "workspace_list", serde_json::json!({ "profileId": PID })).unwrap();
         assert_eq!(listed.as_array().unwrap().len(), 0, "deleted above");
         assert_eq!(call(&w, "w1", "default_shell", Value::Null).unwrap().as_str().map(|s| !s.is_empty()), Some(true));
+    }
+
+    /// Settings ▸ Profiles for a Host (phase 10d-3): rename, and delete
+    /// refused while a Window shows it.
+    #[test]
+    fn a_hosts_profiles_are_renamed_and_deleted_but_never_one_a_window_shows() {
+        let w = world();
+        let other = call(&w, "w1", "server_profile_create", serde_json::json!({ "name": "Other" })).unwrap();
+        let other_id = other["id"].as_str().unwrap().to_string();
+        call(&w, "w1", "server_profile_rename", serde_json::json!({ "id": other_id, "name": " Lab " })).unwrap();
+        let names: Vec<String> = call(&w, "w1", "server_profile_list", Value::Null)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["name"].as_str().unwrap().to_string())
+            .collect();
+        assert!(names.contains(&"Lab".to_string()), "{names:?}");
+        assert!(call(&w, "w1", "server_profile_rename", serde_json::json!({ "id": other_id, "name": "  " })).is_err());
+        // w1 and w2 show PID: refused.
+        let refused = call(&w, "w1", "server_profile_delete", serde_json::json!({ "id": PID })).unwrap_err();
+        assert!(refused.to_string().contains("a Window shows this Profile"), "{refused}");
+        // Nobody shows the other one: gone.
+        call(&w, "w1", "server_profile_delete", serde_json::json!({ "id": other_id })).unwrap();
+        let left = call(&w, "w1", "server_profile_list", Value::Null).unwrap();
+        assert!(!left.to_string().contains(&other_id));
     }
 
     #[test]

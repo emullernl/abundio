@@ -10,8 +10,8 @@ import {
 	buildWorkspaceRows,
 	flattenRowsToIds,
 } from "../../lib/worktreeGrouping";
+import { allAgents, useAllAgents } from "../../stores/hostAgentsStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
-import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -54,7 +54,7 @@ export function WorkspacePicker({
 	const listRef = useRef<HTMLDivElement>(null);
 	const anchor = useAnchorRect(rootRef, open);
 	const allWorkspaces = useWorkWorkspaces();
-	const agents = useSettingsStore((s) => s.agents);
+	const agents = useAllAgents();
 	const openedIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
 	// Every Opened Workspace, so it can always be closed here (the Console
 	// hides both sidebars), even after its last Agent exited. A closed one only
@@ -150,7 +150,7 @@ export function openInBackground(workspaceId: string): void {
 	// No tiles for a Workspace that cannot open (ADR-0053).
 	if (useWorkspaceStore.getState().missingFolderIds.has(workspaceId)) return;
 	activity.markWorkspaceOpened(workspaceId);
-	const known = new Set(useSettingsStore.getState().agents.map((a) => a.id));
+	const known = new Set(allAgents().map((a) => a.id));
 	useWindowUiStore.getState().expectFleetTiles(relaunchablePanes(ws, known));
 }
 

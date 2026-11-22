@@ -290,6 +290,10 @@ export const joinedApi = {
 	 *  (`ask`: ssh may ask in Abundio's dialog). */
 	join: (hostId: string, remoteProfileId: string, ask: boolean) =>
 		invoke<void>("host_join", { hostId, remoteProfileId, ask }),
+	/** Put this Window (Settings) on a Host without showing one of its
+	 *  Profiles, connecting first (`ask`: ssh may ask in Abundio's dialog). */
+	attach: (hostId: string, ask: boolean) =>
+		invoke<void>("host_attach", { hostId, ask }),
 	/** A host command on a joined Host, before its Workspaces are known to
 	 *  the router (`hostRouting.ts`). */
 	callOn: <T>(

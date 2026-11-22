@@ -3,6 +3,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { SshPromptHost } from "./components/SshPromptDialog";
 import { Titlebar } from "./components/Titlebar";
 import { appWindow, currentWindowLabel } from "./lib/appWindow";
+import { startHostSettingsMirror } from "./lib/hostSettingsMirror";
 import { emit, listen, profiles as profilesApi, updates } from "./lib/ipc";
 import { broadcastSliceOf } from "./lib/settingsBroadcast";
 import { useProfileStore } from "./stores/profileStore";
@@ -10,6 +11,11 @@ import {
 	usePromptActionStore,
 	watchPromptActions,
 } from "./stores/promptActionStore";
+import {
+	initialSettingsHost,
+	startSettingsHostSync,
+	useSettingsHostStore,
+} from "./stores/settingsHostStore";
 import { useSettingsStore } from "./stores/settingsStore";
 import { useUpdateStore } from "./stores/updateStore";
 
@@ -25,6 +31,14 @@ import { useUpdateStore } from "./stores/updateStore";
  * browser `storage` event.
  */
 export function SettingsApp() {
+	// The Host the per-Host sections edit (ADR-0064): the opening Window's.
+	useEffect(() => {
+		startSettingsHostSync();
+		useSettingsHostStore
+			.getState()
+			.pick(initialSettingsHost(window.location.search));
+		return startHostSettingsMirror();
+	}, []);
 	// Load the profile list so the Profiles section in SettingsPanel has
 	// data to render. The settings window has NO active profile of its own
 	// — calling profileStore.loadProfiles() would reconcile-and-push an

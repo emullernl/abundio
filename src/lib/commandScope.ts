@@ -79,6 +79,7 @@ const DESKTOP = [
 	"host_check",
 	"host_install",
 	"host_join",
+	"host_attach",
 	"joined_profile_add",
 	"joined_profile_remove",
 	"joined_profile_seen",
@@ -207,6 +208,8 @@ const HOST = [
 	// A Host's own Profiles, for its remote Windows (phase 7d).
 	"server_profile_list",
 	"server_profile_create",
+	"server_profile_rename",
+	"server_profile_delete",
 	"client_profile_set",
 	// The door to the host commands above for a local Profile (phase 7b).
 	"host_call",

@@ -182,9 +182,13 @@ pub fn open_or_focus_settings_window(
     // The JS side rejects unknown ids anyway; this keeps the boundary honest
     // rather than relying on the far side to clean up.
     let initial_section = initial_section.filter(|s| is_section_id(s));
+    // The Host the opening Window is on (Host settings, ADR-0064): Settings
+    // edits that Host's per-Host sections first. `local` for this computer.
+    let host = opener_host(app);
 
     if let Some(existing) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
         let _ = existing.set_focus();
+        let _ = app.emit_to(SETTINGS_WINDOW_LABEL, "settings-set-host", host.clone());
         if let Some(section) = initial_section {
             let _ = app.emit_to(
                 SETTINGS_WINDOW_LABEL,
@@ -197,10 +201,11 @@ pub fn open_or_focus_settings_window(
 
     // Put the initial section in the URL so the settings window can read it
     // during its own startup (before any IPC roundtrip would resolve).
-    let url_path = match initial_section {
+    let mut url_path = match initial_section {
         Some(section) => format!("index.html?settings&section={}", section),
         None => "index.html?settings".to_string(),
     };
+    url_path.push_str(&format!("&host={host}"));
 
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut builder = WebviewWindowBuilder::new(
@@ -627,4 +632,17 @@ mod tests {
         }
         assert!(!is_section_id(&"a".repeat(33)), "accepted an overlong id");
     }
+}
+
+/// The Host of the Profile window that has focus as Settings opens (the
+/// opener: a menu, a shortcut or a button in it), `local` for this computer.
+/// A Host id is only letters, digits and dashes, so it is safe in a URL.
+fn opener_host(app: &AppHandle<Wry>) -> String {
+    let remote = app.try_state::<crate::remote_windows::RemoteWindows>();
+    app.webview_windows()
+        .into_iter()
+        .filter(|(label, w)| is_profile_window_label(label) && w.is_focused().unwrap_or(false))
+        .find_map(|(label, _)| remote.as_ref().and_then(|r| r.get(&label)).map(|b| b.host_id))
+        .filter(|h| h.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+        .unwrap_or_else(|| "local".to_string())
 }
