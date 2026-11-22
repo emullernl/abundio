@@ -27,8 +27,6 @@ export interface RoutingLookups {
 let lookups: RoutingLookups | null = null;
 /** Joined Workspace → its Host's id. */
 const joinedWorkspaces = new Map<string, string>();
-/** Joined Profile → its Host's id. */
-const joinedProfiles = new Map<string, string>();
 /** A search started on a Host → that Host, for its cancel. */
 const searches = new Map<string, string>();
 
@@ -43,11 +41,6 @@ export function setJoinedWorkspace(
 ): void {
 	if (hostId) joinedWorkspaces.set(workspaceId, hostId);
 	else joinedWorkspaces.delete(workspaceId);
-}
-
-export function setJoinedProfile(profileId: string, hostId: string | null) {
-	if (hostId) joinedProfiles.set(profileId, hostId);
-	else joinedProfiles.delete(profileId);
 }
 
 /** The Host a joined Workspace is on, if it is one. */
@@ -250,7 +243,10 @@ function at(args: Record<string, unknown>, dotted: string): unknown {
 
 /** The Host of one thing, or `null` for the Window's own backend. */
 function hostOf(by: By, id: string): string | null {
-	if (by === "profile") return joinedProfiles.get(id) ?? null;
+	// A Profile id names a Profile only within one backend (every database
+	// seeds the same Default id), so it always means the Window's own; calls
+	// about a Joined profile name its Host (`joinedApi.callOn`).
+	if (by === "profile") return null;
 	let ws: string | undefined;
 	if (by === "workspace") ws = id;
 	else if (by === "tab") ws = lookups?.workspaceOfTab(id);
@@ -278,7 +274,7 @@ export function routeCall(
 	if (fixed && "by" in fixed && fixed.by === "local") {
 		return [{ host: "local", args }];
 	}
-	if (joinedWorkspaces.size === 0 && joinedProfiles.size === 0) {
+	if (joinedWorkspaces.size === 0) {
 		return [{ host: null, args }];
 	}
 	if (command === "fs_search_cancel") {
@@ -330,7 +326,6 @@ export function mergeAnswers(answers: unknown[]): unknown {
 /** For tests: forget everything joined. */
 export function resetRouting(): void {
 	joinedWorkspaces.clear();
-	joinedProfiles.clear();
 	searches.clear();
 	lookups = null;
 }

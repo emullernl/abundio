@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { setJoinedProfile } from "../lib/hostRouting";
 import {
 	hostsApi,
 	type JoinedProfileRow,
@@ -258,8 +257,10 @@ export const useJoinedStore = create<JoinedState>((set, get) => {
 			"host-connect-failed",
 			(e) => down(e.payload.host, e.payload.reason, e.payload.signIn),
 		);
-		onJoinedWorkspacesChanged((profileId) => {
-			const entry = get().entries.find((e) => e.remoteProfileId === profileId);
+		onJoinedWorkspacesChanged((hostId, profileId) => {
+			const entry = get().entries.find(
+				(e) => e.hostId === hostId && e.remoteProfileId === profileId,
+			);
 			if (entry) void refresh(entry).catch(() => {});
 		});
 	};
@@ -272,7 +273,6 @@ export const useJoinedStore = create<JoinedState>((set, get) => {
 			// Another Profile's sections go (a Profile switch).
 			for (const e of get().entries) {
 				setJoinedWorkspaces(e.hostId, null);
-				setJoinedProfile(e.remoteProfileId, null);
 			}
 			set({ entries: [], links: {} });
 			restored.clear();
@@ -297,7 +297,6 @@ export const useJoinedStore = create<JoinedState>((set, get) => {
 			set({ entries });
 			listen();
 			for (const [i, entry] of entries.entries()) {
-				setJoinedProfile(entry.remoteProfileId, entry.hostId);
 				// What the Host last listed, until it answers: shown only (its
 				// rows cannot open while offline), so no Agent is queued to
 				// relaunch in a pane that may well still run there.
@@ -339,7 +338,6 @@ export const useJoinedStore = create<JoinedState>((set, get) => {
 			};
 			set((s) => ({ entries: [...s.entries, entry] }));
 			listen();
-			setJoinedProfile(entry.remoteProfileId, hostId);
 			await connect(entry, true);
 		},
 
@@ -348,7 +346,6 @@ export const useJoinedStore = create<JoinedState>((set, get) => {
 			if (!entry) return;
 			await joinedApi.remove(fallbackProfileId(), hostId);
 			setJoinedWorkspaces(hostId, null);
-			setJoinedProfile(entry.remoteProfileId, null);
 			set((s) => {
 				const { [hostId]: _, ...links } = s.links;
 				return { entries: s.entries.filter((e) => e.hostId !== hostId), links };

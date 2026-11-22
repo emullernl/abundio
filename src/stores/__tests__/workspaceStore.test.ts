@@ -156,10 +156,12 @@ describe("workspaceStore", () => {
 					hostId: "box",
 					profileId: "remote-p",
 				});
+			// On its Host, named: a Profile id alone may be this Window's own.
 			expect(workspaces.create).toHaveBeenCalledWith(
 				"app",
 				"/home/dev/app",
 				"remote-p",
+				"box",
 			);
 			expect(ws.joined).toEqual({ hostId: "box" });
 			expect(joinedHostOfWorkspace("made-there")).toBe("box");

@@ -5,7 +5,6 @@ import {
 	mergeAnswers,
 	resetRouting,
 	routeCall,
-	setJoinedProfile,
 	setJoinedWorkspace,
 	setRoutingLookups,
 } from "../hostRouting";
@@ -25,7 +24,6 @@ function joinOne() {
 					: undefined,
 	});
 	setJoinedWorkspace("theirs", "box");
-	setJoinedProfile("their-profile", "box");
 }
 
 const hosts = (command: string, args: Record<string, unknown>) =>
@@ -60,8 +58,11 @@ describe("hostRouting", () => {
 			"box",
 		]);
 		expect(hosts("git_branch_info", { cwd: "/Users/me/app" })).toEqual([null]);
+		// A Profile id means the Window's own backend's Profile, always: every
+		// database seeds the same Default id (calls about a Joined profile
+		// name its Host).
 		expect(hosts("workspace_list", { profileId: "their-profile" })).toEqual([
-			"box",
+			null,
 		]);
 		expect(
 			hosts("telemetry_record_turn", { turn: { workspaceId: "theirs" } }),

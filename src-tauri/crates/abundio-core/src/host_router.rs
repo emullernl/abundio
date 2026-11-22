@@ -261,8 +261,14 @@ struct Listener {
 }
 
 impl HostListener for Listener {
-    fn event(&self, client: Option<&str>, name: &str, payload: Value) {
+    fn event(&self, client: Option<&str>, name: &str, mut payload: Value) {
         let Some(router) = self.router.upgrade() else { return };
+        // Which Host it came from: ids are unique only within one backend
+        // (every database seeds the same Default profile id), so a Window
+        // showing several backends tells their events apart by this.
+        if let Value::Object(map) = &mut payload {
+            map.insert("fromHost".into(), Value::String(self.host.clone()));
+        }
         match client {
             Some(window) => {
                 if router.is_on(window, &self.host) {
@@ -683,6 +689,29 @@ mod tests {
         assert_eq!(router.call("w", "pty_write", Value::Null), Some(Err(CallError::NotConnected("box".into()))));
         router.bind("w", None);
         assert!(router.call("w", "pty_write", Value::Null).is_none());
+    }
+
+    struct Recorder(Mutex<Vec<(String, String, Value)>>);
+    impl WindowSink for Recorder {
+        fn emit_to(&self, w: &str, e: &str, p: Value) {
+            self.0.lock().unwrap().push((w.into(), e.into(), p));
+        }
+        fn pty_frame(&self, _w: &str, _f: &[u8]) {}
+    }
+
+    /// Ids are unique only within one backend: a forwarded event says
+    /// which Host sent it.
+    #[test]
+    fn a_hosts_event_says_which_host_sent_it() {
+        let sink = Arc::new(Recorder(Mutex::new(Vec::new())));
+        let router = HostRouter::new(sink.clone());
+        router.join("local", "box");
+        let listener = Listener { host: "box".into(), router: Arc::downgrade(&router), generation: 0 };
+        listener.event(None, "workspaces-changed", serde_json::json!({ "profileId": "p" }));
+        listener.event(None, "profiles-changed", Value::Null);
+        let got = sink.0.lock().unwrap().clone();
+        assert_eq!(got[0].2, serde_json::json!({ "profileId": "p", "fromHost": "box" }));
+        assert_eq!(got[1].2, Value::Null);
     }
 
     /// Phase 10: a local Window joining Profiles on two Hosts is on both,

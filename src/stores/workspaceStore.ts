@@ -62,7 +62,7 @@ import {
 import { useExplorerStore } from "./explorerStore";
 import { useNotesStore } from "./notesStore";
 import { useOrchestratorStore } from "./orchestratorStore";
-import { fallbackProfileId } from "./profileStore";
+import { fallbackProfileId, useProfileStore } from "./profileStore";
 import { usePtyActivityStore } from "./ptyActivityStore";
 import { useSettingsStore } from "./settingsStore";
 import { useWorkspaceGitStore } from "./workspaceGitStore";
@@ -841,7 +841,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 				// Not a git repo / discovery failed — plain single create.
 			}
 
-		const created = await workspacesApi.create(name, focalFolder, profileId);
+		const created = await workspacesApi.create(
+			name,
+			focalFolder,
+			profileId,
+			joined?.hostId ?? null,
+		);
 		// A joined one is marked, and routed to its Host before anything else
 		// is asked about it.
 		const workspaceWithTabs = joined
@@ -1913,9 +1918,9 @@ onLayoutFromRust((tabId, layoutJson) => {
 });
 
 /** Told when a Joined profile's Workspaces changed on its Host. */
-const joinedListeners = new Set<(profileId: string) => void>();
+const joinedListeners = new Set<(hostId: string, profileId: string) => void>();
 export function onJoinedWorkspacesChanged(
-	fn: (profileId: string) => void,
+	fn: (hostId: string, profileId: string) => void,
 ): () => void {
 	joinedListeners.add(fn);
 	return () => joinedListeners.delete(fn);
@@ -2034,36 +2039,44 @@ setRoutingLookups({
 
 // Another Window of this Profile made, renamed, moved or deleted a
 // Workspace (phase 9: another app on the same Host).
-onSharedFromRust<{ profileId: string }>("workspaces-changed", (change) => {
-	// A Joined profile's list is read again by its own section (phase 10).
-	if (change.profileId !== fallbackProfileId()) {
-		for (const fn of joinedListeners) fn(change.profileId);
-		return;
-	}
-	workspacesApi
-		.list(change.profileId)
-		.then((fresh) => {
-			const all = useWorkspaceStore.getState();
-			const joined = all.workspaces.filter((w) => w.joined);
-			const state = {
-				...all,
-				workspaces: all.workspaces.filter((w) => !w.joined),
-			};
-			const merged = mergeRemoteWorkspaces(state, fresh);
-			const { removedIds } = merged;
-			const next = {
-				workspaces: [...merged.workspaces, ...joined],
-				activeWorkspaceId:
-					all.activeWorkspaceId &&
-					joined.some((w) => w.id === all.activeWorkspaceId)
-						? all.activeWorkspaceId
-						: merged.activeWorkspaceId,
-			};
-			dropWorkspacesLocally(removedIds);
-			useWorkspaceStore.setState(next);
-		})
-		.catch((e) => console.warn("[sync] cannot read the Workspaces again", e));
-});
+onSharedFromRust<{ profileId: string; fromHost?: string }>(
+	"workspaces-changed",
+	(change) => {
+		// Ids are unique only within one backend: where it came from decides.
+		const own = useProfileStore.getState().remote?.hostId ?? null;
+		const from = change.fromHost ?? null;
+		// A Joined profile's list is read again by its own section (phase 10).
+		if (from !== own) {
+			if (from) for (const fn of joinedListeners) fn(from, change.profileId);
+			return;
+		}
+		// Another Profile of this Window's own backend: not shown here.
+		if (change.profileId !== fallbackProfileId()) return;
+		workspacesApi
+			.list(change.profileId)
+			.then((fresh) => {
+				const all = useWorkspaceStore.getState();
+				const joined = all.workspaces.filter((w) => w.joined);
+				const state = {
+					...all,
+					workspaces: all.workspaces.filter((w) => !w.joined),
+				};
+				const merged = mergeRemoteWorkspaces(state, fresh);
+				const { removedIds } = merged;
+				const next = {
+					workspaces: [...merged.workspaces, ...joined],
+					activeWorkspaceId:
+						all.activeWorkspaceId &&
+						joined.some((w) => w.id === all.activeWorkspaceId)
+							? all.activeWorkspaceId
+							: merged.activeWorkspaceId,
+				};
+				dropWorkspacesLocally(removedIds);
+				useWorkspaceStore.setState(next);
+			})
+			.catch((e) => console.warn("[sync] cannot read the Workspaces again", e));
+	},
+);
 
 // Another Window of this Profile created, closed, renamed or moved a Tab.
 onTabsFromRust((change) => {

@@ -596,8 +596,14 @@ export interface FolderCheck {
 }
 
 export const workspaces = {
-	create: (name: string, rootFolder: string, profileId: string) =>
-		invoke<WorkspaceWithTabs>("workspace_create", {
+	/** `hostId`: in a Joined profile, on its Host. */
+	create: (
+		name: string,
+		rootFolder: string,
+		profileId: string,
+		hostId: string | null = null,
+	) =>
+		onHost<WorkspaceWithTabs>(hostId, "workspace_create", {
 			name,
 			rootFolder,
 			profileId,
@@ -610,8 +616,15 @@ export const workspaces = {
 	 *  of its Workspaces there, an Orchestrator folder (both refused), or
 	 *  other Profiles' Workspaces (allowed). Rust enforces the refusals on
 	 *  create and on a folder change too. */
-	folderCheck: (rootFolder: string, profileId: string) =>
-		invoke<FolderCheck>("workspace_folder_check", { rootFolder, profileId }),
+	folderCheck: (
+		rootFolder: string,
+		profileId: string,
+		hostId: string | null = null,
+	) =>
+		onHost<FolderCheck>(hostId, "workspace_folder_check", {
+			rootFolder,
+			profileId,
+		}),
 
 	update: (id: string, updates: WorkspaceUpdate) =>
 		invoke<void>("workspace_update", { id, updates }),
@@ -1010,20 +1023,35 @@ export interface AgentTurnTotals {
 export type TelemetryBucket = "day" | "month" | "year";
 export type TelemetryGroupBy = "none" | "agent" | "workspace";
 
+/** A host command on the Window's own backend, or on `hostId` (a Joined
+ *  profile's Host: a Profile id alone names a Profile only within one
+ *  backend). */
+function onHost<T>(
+	hostId: string | null,
+	command: string,
+	args: Record<string, unknown>,
+): Promise<T> {
+	return hostId
+		? joinedApi.callOn<T>(hostId, command, args)
+		: invoke<T>(command, args);
+}
+
 export const telemetry = {
 	/** Persist a finalized Turn (idempotent by id). */
 	recordTurn: (turn: AgentTurnRecord) =>
 		invoke<void>("telemetry_record_turn", { turn }),
 
-	/** Bucketed rollups for one Profile in the `[fromMs, toMs)` window. */
+	/** Bucketed rollups for one Profile in the `[fromMs, toMs)` window.
+	 *  `hostId`: a Joined profile's, read from its Host. */
 	buckets: (
 		profileId: string,
 		fromMs: number,
 		toMs: number,
 		bucket: TelemetryBucket,
 		groupBy: TelemetryGroupBy,
+		hostId: string | null = null,
 	) =>
-		invoke<AgentTurnBucket[]>("telemetry_buckets", {
+		onHost<AgentTurnBucket[]>(hostId, "telemetry_buckets", {
 			profileId,
 			fromMs,
 			toMs,
@@ -1032,12 +1060,26 @@ export const telemetry = {
 		}),
 
 	/** Overall totals for one Profile in the window. */
-	totals: (profileId: string, fromMs: number, toMs: number) =>
-		invoke<AgentTurnTotals>("telemetry_totals", { profileId, fromMs, toMs }),
+	totals: (
+		profileId: string,
+		fromMs: number,
+		toMs: number,
+		hostId: string | null = null,
+	) =>
+		onHost<AgentTurnTotals>(hostId, "telemetry_totals", {
+			profileId,
+			fromMs,
+			toMs,
+		}),
 
 	/** Raw Turn rows (drill-down table), newest first. */
-	listTurns: (profileId: string, fromMs: number, toMs: number) =>
-		invoke<AgentTurnRecord[]>("telemetry_list_turns", {
+	listTurns: (
+		profileId: string,
+		fromMs: number,
+		toMs: number,
+		hostId: string | null = null,
+	) =>
+		onHost<AgentTurnRecord[]>(hostId, "telemetry_list_turns", {
 			profileId,
 			fromMs,
 			toMs,

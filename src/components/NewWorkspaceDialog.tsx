@@ -78,13 +78,17 @@ export function NewWorkspaceDialog({
 		if (!folderPath) return;
 		let live = true;
 		workspacesApi
-			.folderCheck(folderPath, location?.remoteProfileId ?? fallbackProfileId())
+			.folderCheck(
+				folderPath,
+				location?.remoteProfileId ?? fallbackProfileId(),
+				location?.hostId ?? null,
+			)
 			.then((c) => live && setCheck(c))
 			.catch(() => {});
 		return () => {
 			live = false;
 		};
-	}, [folderPath, location?.remoteProfileId]);
+	}, [folderPath, location?.remoteProfileId, location?.hostId]);
 	const [selectedIndex, setSelectedIndex] = useState(0);
 	const nameDirtyRef = useRef(false);
 

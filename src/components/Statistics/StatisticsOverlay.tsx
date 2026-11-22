@@ -81,8 +81,24 @@ export function StatisticsOverlay({ topOffset }: { topOffset: number }) {
 
 	useEffect(() => {
 		if (!open || !statsProfileId) return;
-		load(statsProfileId, range.fromMs, range.toMs, range.bucket);
-	}, [open, statsProfileId, range.fromMs, range.toMs, range.bucket, load]);
+		// A Joined profile's are on its Host, named by it: its id alone may
+		// be this Window's own Profile's (the seeded Default id).
+		load(
+			statsProfileId,
+			range.fromMs,
+			range.toMs,
+			range.bucket,
+			picked?.hostId ?? null,
+		);
+	}, [
+		open,
+		statsProfileId,
+		picked?.hostId,
+		range.fromMs,
+		range.toMs,
+		range.bucket,
+		load,
+	]);
 
 	const timeSeries = useMemo(
 		() =>
