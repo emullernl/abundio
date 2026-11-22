@@ -81,10 +81,19 @@ fn workspace_list_answer(host: &Host<'_>, caller: &Caller) -> Answer {
     let store = host.workspaces;
     let is_open = |ws: &str| host.ptys.control_tokens().window_for_workspace(ws).is_some();
     match workspace_listing(store, caller, &is_open) {
-        Ok(v) => Answer {
-            status: 200,
-            body: v.to_string(),
-        },
+        Ok(mut v) => {
+            // Then each Joined profile's Host's, by their `@host` names
+            // (ADR-0065); never for a caller that is not this computer's.
+            if caller.label.is_none() {
+                if let (Some(f), Some(list)) = (FORWARD.get(), v.get_mut("workspaces").and_then(Value::as_array_mut)) {
+                    list.extend(f.joined_workspaces(host, caller));
+                }
+            }
+            Answer {
+                status: 200,
+                body: v.to_string(),
+            }
+        }
         Err(e) => error_answer(500, "internal", &e.to_string()),
     }
 }
@@ -518,6 +527,28 @@ pub trait ControlForward: Send + Sync {
     ) -> Option<Answer>;
     /// End a forwarded call that is still waiting; whether one was.
     fn cancel(&self, caller: &Caller, request_id: &str) -> bool;
+    /// The Workspaces of the caller's Profile's Joined profiles, as
+    /// `workspace list` rows named `<name>@<host>`.
+    fn joined_workspaces(&self, _host: &Host<'_>, _caller: &Caller) -> Vec<Value> {
+        Vec::new()
+    }
+}
+
+/// A Host's `workspace list` rows as this computer lists them: named
+/// `<name>@<host>` so they can be named back, never the caller's own.
+pub fn mark_remote_rows(rows: &[Value], host_name: &str) -> Vec<Value> {
+    rows.iter()
+        .filter_map(|r| {
+            let mut r = r.clone();
+            let name = r.get("name")?.as_str()?.to_string();
+            let obj = r.as_object_mut()?;
+            obj.insert("name".into(), Value::String(format!("{name}@{host_name}")));
+            obj.insert("host".into(), Value::String(host_name.to_string()));
+            obj.insert("online".into(), Value::Bool(true));
+            obj.insert("self".into(), Value::Bool(false));
+            Some(r)
+        })
+        .collect()
 }
 
 static FORWARD: std::sync::OnceLock<Box<dyn ControlForward>> = std::sync::OnceLock::new();
@@ -899,5 +930,16 @@ mod tests {
         // this computer's.
         assert_eq!(remote_address(&v(&["agent", "prompt", "Reviewer", "mail me@home"])), None);
         assert_eq!(remote_address(&v(&["agent", "list"])), None);
+    }
+
+    #[test]
+    fn a_hosts_workspaces_are_listed_by_their_at_host_names() {
+        let rows = vec![json!({ "name": "app", "open": true, "self": true, "agents": [{ "handle": "Agent Two" }] })];
+        let out = mark_remote_rows(&rows, "build-box");
+        assert_eq!(out[0]["name"], "app@build-box");
+        assert_eq!(out[0]["host"], "build-box");
+        assert_eq!(out[0]["self"], false);
+        assert_eq!(out[0]["online"], true);
+        assert_eq!(out[0]["agents"][0]["handle"], "Agent Two");
     }
 }

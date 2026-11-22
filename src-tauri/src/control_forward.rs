@@ -143,6 +143,58 @@ impl ControlForward for Forwarder {
         })
     }
 
+    fn joined_workspaces(&self, host: &Host<'_>, caller: &Caller) -> Vec<Value> {
+        let Some(profile) = host.workspaces.profile_of(&caller.workspace_id).ok().flatten() else {
+            return Vec::new();
+        };
+        let joined = {
+            let Ok(conn) = host.workspaces.conn.lock() else { return Vec::new() };
+            abundio_core::joined_profiles::list(&conn, &profile).unwrap_or_default()
+        };
+        let router = self.router();
+        let label = format!("{}@{}", caller_handle(host, caller), computer_name());
+        let mut out = Vec::new();
+        for j in joined {
+            let Some(h) = crate::hosts::find(&j.host_id) else { continue };
+            let listed = router.is_connected(&h.id).then(|| {
+                router
+                    .call_on(
+                        &h.id,
+                        &caller.window_label,
+                        "control_call",
+                        json!({ "argv": ["workspace", "list"], "label": label, "owner": caller.pane_id }),
+                    )
+                    .ok()
+                    .filter(|v| v.get("status").and_then(Value::as_u64) == Some(200))
+                    .and_then(|v| serde_json::from_str::<Value>(v.get("body")?.as_str()?).ok())
+            });
+            match listed.flatten() {
+                Some(v) => {
+                    let rows = v.get("workspaces").and_then(Value::as_array).cloned().unwrap_or_default();
+                    out.extend(abundio_core::control_host::mark_remote_rows(&rows, &h.name));
+                }
+                // Not connected (or it would not say): its Workspaces as last
+                // seen, offline, their Agents unknown.
+                None => {
+                    let cached: Vec<Value> = serde_json::from_str(&j.workspaces_json).unwrap_or_default();
+                    for w in cached {
+                        let Some(name) = w.get("name").and_then(Value::as_str) else { continue };
+                        out.push(json!({
+                            "name": format!("{name}@{}", h.name),
+                            "folder": w.get("rootFolder"),
+                            "host": h.name,
+                            "online": false,
+                            "open": false,
+                            "self": false,
+                            "agents": [],
+                        }));
+                    }
+                }
+            }
+        }
+        out
+    }
+
     fn cancel(&self, caller: &Caller, request_id: &str) -> bool {
         let Some((host_id, window)) = self.inflight.lock().unwrap().get(request_id).cloned() else {
             return false;
