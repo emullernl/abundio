@@ -805,6 +805,66 @@ fn handle_home(rows: &[WorkspaceWithTabs], argv: &[String]) -> Option<String> {
         .map(|w| w.workspace.id.clone())
 }
 
+/// The panes `owner` owns here (an outside caller of `client`'s, ADR-0065),
+/// or with no owner every one an outside caller of `client`'s owns, become
+/// ordinary panes: their owner closed, or that Client stopped showing the
+/// Profile (Leave). How many did.
+pub fn owner_gone(host: &Host<'_>, client: &ClientId, owner: Option<&str>) -> usize {
+    let Some(profile) = host.clients.profiles().get(client.as_str()).cloned() else {
+        return 0;
+    };
+    let exact = owner.map(|o| outside_caller_id(client, o));
+    let prefix = format!("outside:{}:", client.as_str());
+    let owned = |by: &str| match &exact {
+        Some(id) => by == id,
+        None => by.starts_with(&prefix),
+    };
+    let mut released = 0;
+    for w in host.workspaces.list(&profile).unwrap_or_default() {
+        for tab in &w.tabs {
+            let Ok(tree) = serde_json::from_str::<Value>(&tab.layout_json) else { continue };
+            let mut ids = Vec::new();
+            owned_panes(&tree, &owned, &mut ids);
+            if ids.is_empty() {
+                continue;
+            }
+            let ops: Vec<_> = ids
+                .iter()
+                .map(|id| crate::layout_ops::LayoutOp::Patch {
+                    id: id.clone(),
+                    set: Default::default(),
+                    unset: vec!["spawnedBy".into()],
+                })
+                .collect();
+            if apply_from_rust(host, &tab.id, &ops).is_ok() {
+                released += ids.len();
+            }
+        }
+    }
+    released
+}
+
+/// The terminal panes of `tree` whose `spawnedBy` passes `owned`.
+pub fn owned_panes(tree: &Value, owned: &dyn Fn(&str) -> bool, out: &mut Vec<String>) {
+    match tree.get("type").and_then(Value::as_str) {
+        Some("terminal") => {
+            if tree.get("spawnedBy").and_then(Value::as_str).is_some_and(owned) {
+                if let Some(id) = tree.get("id").and_then(Value::as_str) {
+                    out.push(id.to_string());
+                }
+            }
+        }
+        Some("split") => {
+            for k in ["first", "second"] {
+                if let Some(n) = tree.get(k) {
+                    owned_panes(n, owned, out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 /// The Client's Agent was interrupted while its call waited: end that call.
 pub fn cancel_from_client(host: &Host<'_>, client: &ClientId, owner: &str, request_id: &str) -> bool {
     let done = host.pending.cancel_client(request_id, &outside_caller_id(client, owner));
@@ -930,6 +990,21 @@ mod tests {
         // this computer's.
         assert_eq!(remote_address(&v(&["agent", "prompt", "Reviewer", "mail me@home"])), None);
         assert_eq!(remote_address(&v(&["agent", "list"])), None);
+    }
+
+    #[test]
+    fn finds_the_panes_an_outside_caller_owns() {
+        let tree = json!({ "type": "split", "id": "s",
+            "first": { "type": "terminal", "id": "a", "spawnedBy": "outside:window-1:p9" },
+            "second": { "type": "split", "id": "t",
+                "first": { "type": "terminal", "id": "b", "spawnedBy": "outside:window-1:p7" },
+                "second": { "type": "terminal", "id": "c", "spawnedBy": "local-pane" } } });
+        let mut all = Vec::new();
+        owned_panes(&tree, &|by| by.starts_with("outside:window-1:"), &mut all);
+        assert_eq!(all, vec!["a", "b"]);
+        let mut one = Vec::new();
+        owned_panes(&tree, &|by| by == "outside:window-1:p7", &mut one);
+        assert_eq!(one, vec!["b"]);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 import { useAgentSignalsStore } from "../stores/agentSignalsStore";
 import { useExplorerStore } from "../stores/explorerStore";
+import { releaseOwnerOnHosts } from "../stores/joinedStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { agentControl } from "./ipc";
@@ -53,6 +54,9 @@ export async function releaseOwner(ownerPaneId: string): Promise<void> {
 async function releaseSpawned(ownerPaneId: string) {
 	await releaseOwner(ownerPaneId);
 	await agentControl.paneClosed(ownerPaneId).catch(() => {});
+	// It may own panes on a joined Host too (ADR-0065); a pane that owns
+	// none there changes nothing.
+	releaseOwnerOnHosts(ownerPaneId);
 }
 
 /**

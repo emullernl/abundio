@@ -691,6 +691,12 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
                 crate::control_host::call_from_client(host, client, a.argv, &a.label, &a.owner, a.request_id);
             serde_json::json!({ "status": answer.status, "body": answer.body })
         }
+        // An owner on the Client's computer closed (`owner`), or the Client
+        // left the Profile (none): its panes here become ordinary.
+        "control_owner_gone" => {
+            let a = a!(c, raw, { owner: Option<String> });
+            json(crate::control_host::owner_gone(host, client, a.owner.as_deref()))?
+        }
         "control_cancel" => {
             let a = a!(c, raw, { owner: String, request_id: String });
             json(crate::control_host::cancel_from_client(host, client, &a.owner, &a.request_id))?
@@ -1021,6 +1027,39 @@ mod tests {
         // This Host's switch governs its panes whoever calls.
         w.workspaces.set_setting(crate::control_protocol::SETTING_KEY, "0").unwrap();
         assert_eq!(run("w1", &["workspace", "list"]).0, 403);
+    }
+
+    /// ADR-0065: when the owner on the Client's computer closes, or the
+    /// Client leaves, the panes it owns here become ordinary.
+    #[test]
+    fn a_clients_owner_going_releases_its_panes_here() {
+        let w = world();
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().to_string_lossy().to_string();
+        let ws = call(&w, "w1", "workspace_create", serde_json::json!({ "name": "App", "rootFolder": folder, "profileId": PID })).unwrap();
+        let tab = call(&w, "w1", "tab_create", serde_json::json!({ "workspaceId": ws["id"], "name": "T" })).unwrap();
+        let tab_id = tab["id"].as_str().unwrap();
+        let layout = serde_json::json!({ "type": "split", "id": "s", "direction": "horizontal", "ratio": 0.5,
+            "first": { "type": "terminal", "id": "a", "ptyId": "", "spawnedBy": "outside:w1:p9" },
+            "second": { "type": "terminal", "id": "b", "ptyId": "", "spawnedBy": "outside:w1:p7" } });
+        w.workspaces.set_tab_layout(tab_id, &layout.to_string()).unwrap();
+        // Written behind the layout store's back: it reads it again.
+        w.layouts.forget(tab_id);
+        let spawned = |id: &str| {
+            let t = w.workspaces.list_tabs(ws["id"].as_str().unwrap()).unwrap();
+            let t = t.iter().find(|t| t.id == tab_id).unwrap();
+            let tree: Value = serde_json::from_str(&t.layout_json).unwrap();
+            let node = if id == "a" { &tree["first"] } else { &tree["second"] };
+            node.get("spawnedBy").cloned()
+        };
+        assert_eq!(call(&w, "w1", "control_owner_gone", serde_json::json!({ "owner": "p9" })).unwrap(), 1);
+        assert_eq!(spawned("a"), None);
+        assert_eq!(spawned("b"), Some(Value::String("outside:w1:p7".into())));
+        // Another Client's owner leaving changes nothing of w1's.
+        assert_eq!(call(&w, "w2", "control_owner_gone", serde_json::json!({})).unwrap(), 0);
+        // w1 leaving releases the rest.
+        assert_eq!(call(&w, "w1", "control_owner_gone", serde_json::json!({})).unwrap(), 1);
+        assert_eq!(spawned("b"), None);
     }
 
     #[test]

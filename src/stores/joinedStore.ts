@@ -344,6 +344,9 @@ export const useJoinedStore = create<JoinedState>((set, get) => {
 		leave: async (hostId) => {
 			const entry = entryOf(hostId);
 			if (!entry) return;
+			// The panes this computer's Agents own there become ordinary
+			// (ADR-0065), while the Window is still on that Host.
+			await joinedApi.callOn(hostId, "control_owner_gone", {}).catch(() => {});
 			await joinedApi.remove(fallbackProfileId(), hostId);
 			setJoinedWorkspaces(hostId, null);
 			set((s) => {
@@ -358,3 +361,15 @@ export const useJoinedStore = create<JoinedState>((set, get) => {
 		},
 	};
 });
+
+/** A pane of this computer closed: the panes it owns on each connected
+ *  joined Host become ordinary there (ADR-0065). */
+export function releaseOwnerOnHosts(ownerPaneId: string): void {
+	const { entries, links } = useJoinedStore.getState();
+	for (const e of entries) {
+		if (links[e.hostId]?.state !== "online") continue;
+		void joinedApi
+			.callOn(e.hostId, "control_owner_gone", { owner: ownerPaneId })
+			.catch(() => {});
+	}
+}
