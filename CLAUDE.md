@@ -226,7 +226,7 @@ cd src-tauri && cargo test test_name     # Run a single Rust test
 
 GitHub Actions workflows in `.github/workflows/`:
 
-- `build.yml` — Cross-platform build (macOS, Windows, Linux). Triggered by version tags. Builds `abundio-server` for each Host platform (linux-x86_64, linux-aarch64, macos-universal) first, and every app build bundles all three, gzipped, in its resources (`src-tauri/resources/server/`), which the app installs on a Host from; releases carry no servers (ADR-0062, phase 15).
+- `build.yml` — Cross-platform build (macOS, Windows, Linux). Triggered by version tags. Builds `abundio-server` for each Host platform (linux-x86_64, linux-aarch64, macos-universal) first, and every app build bundles all three, gzipped, in its resources (`src-tauri/resources/server/`), which the app installs on a Host from; the release also offers each server as a download of its own, with `SHA256SUMS`, which the app never fetches (ADR-0062, phase 15).
 - `test.yml` — Runs tests on PR and push.
 - `pr-review.yml` — Automated PR review.
 - `semgrep-security.yml` — Security scanning.

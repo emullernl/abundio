@@ -101,7 +101,8 @@ jobs:
 
   # The headless server a Host runs (docs/plans/remote-hosts.md phase 8e):
   # built for each Host platform and handed to the `build` job, which
-  # bundles all three into every installer (phase 15). Releases carry none.
+  # bundles all three into every installer (phase 15), and attached to the
+  # release as downloads of their own (`server-assets`).
   server:
     strategy:
       fail-fast: false
@@ -158,3 +159,27 @@ jobs:
           name: abundio-server-${{ matrix.platform }}
           path: abundio-server-${{ matrix.platform }}
           if-no-files-found: error
+
+  # The servers as downloads of their own, beside the app, for installing one
+  # by hand. The app never fetches them: it bundles its own (phase 15). The
+  # release must exist first, so after `build`, which makes it (as a draft).
+  server-assets:
+    needs: [build, server]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: abundio-server-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum abundio-server-* > SHA256SUMS && cat SHA256SUMS
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/* --clobber --repo "$GITHUB_REPOSITORY"
