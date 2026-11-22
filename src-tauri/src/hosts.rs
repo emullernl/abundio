@@ -53,7 +53,7 @@ fn add(hosts: &mut Vec<HostEntry>, name: &str, target: HostTarget) -> Result<Hos
     if hosts.iter().any(|h| h.name.eq_ignore_ascii_case(name)) {
         return Err(AbundioError::InvalidOperation(format!("there is already a Host named {name:?}")));
     }
-    if let HostTarget::Ssh { destination, .. } = &target {
+    if let HostTarget::Ssh { destination } = &target {
         let d = destination.trim();
         // Never a word ssh would read as an option, nor a command line.
         if d.is_empty() || d.starts_with('-') || d.chars().any(char::is_whitespace) {

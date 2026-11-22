@@ -448,7 +448,7 @@ pub fn launch_dev_environment(
                 .find(|h| h.id == id)
                 .ok_or_else(|| AbundioError::NotFound(format!("host '{id}'")))?;
             match host.target {
-                crate::host_router::HostTarget::Ssh { destination, .. } => Some(destination),
+                crate::host_router::HostTarget::Ssh { destination } => Some(destination),
                 crate::host_router::HostTarget::Direct { .. } => None,
             }
         }

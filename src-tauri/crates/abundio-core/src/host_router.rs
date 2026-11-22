@@ -89,7 +89,7 @@ impl HostTarget {
     pub fn shell(&self, mode: &ConnectMode, words: &[&str]) -> Command {
         debug_assert!(words.iter().all(|w| crate::host_setup::probe_word(w) == Some(*w)));
         let mut c = match self {
-            HostTarget::Ssh { destination, .. } => {
+            HostTarget::Ssh { destination } => {
                 let mut c = ssh(mode);
                 c.arg("--").arg(destination).args(["sh", "-s", "--"]);
                 c
@@ -112,7 +112,7 @@ impl HostTarget {
     /// and every argument are quoted.
     pub fn sh_c(&self, mode: &ConnectMode, script: &str, args: &[&str]) -> Command {
         match self {
-            HostTarget::Ssh { destination, .. } => {
+            HostTarget::Ssh { destination } => {
                 let mut line = format!("sh -c {} abundio-setup", crate::host_setup::shell_quote(script));
                 for a in args {
                     line.push(' ');
@@ -131,8 +131,8 @@ impl HostTarget {
     }
 }
 
-/// The server on a Host whose entry names none: the one Host setup
-/// installs (phase 8c), relative to the home folder ssh starts in.
+/// The server every ssh Host connects to: the one Host setup installs
+/// (phase 8c), relative to the home folder ssh starts in.
 pub const DEFAULT_SERVER: &str = ".abundio-server/current";
 
 /// A failed connect's reason, with what to do about it in front when the
