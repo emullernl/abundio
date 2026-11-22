@@ -10,6 +10,7 @@ const ACTION_LABELS: Partial<
 	update: "Update",
 	start: "Start",
 	service: "Set up as a service",
+	unservice: "Remove service",
 };
 
 /**

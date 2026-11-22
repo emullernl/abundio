@@ -140,16 +140,23 @@ pub async fn host_start(
     host_id: String,
     restart: bool,
     agents: Vec<String>,
+    no_service: Option<bool>,
 ) -> Result<HostCheck, AbundioError> {
     let host = crate::hosts::find(&host_id).ok_or_else(|| AbundioError::NotFound("that Host was removed".into()))?;
     let label = window.label().to_string();
+    // Remove the service Abundio set up, the server running on detached.
+    let script = if no_service == Some(true) {
+        host_setup::remove_service_then_probe()
+    } else {
+        host_setup::start_then_probe(restart)
+    };
     tauri::async_runtime::spawn_blocking(move || {
         let mut words: Vec<&str> = agents.iter().filter_map(|a| host_setup::probe_word(a)).collect();
         words.sort_unstable();
         words.dedup();
         let out = crate::remote_windows::with_ssh_mode(&app, &host.name, Some(&label), |mode| {
             host_setup::run_script(
-                host.target.sh_c(mode, &host_setup::start_then_probe(restart), &words),
+                host.target.sh_c(mode, &script, &words),
                 "",
                 STEP_LIMIT,
             )

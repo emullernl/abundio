@@ -354,6 +354,15 @@ export const hostsApi = {
 	 *  checklist. */
 	start: (hostId: string, restart: boolean, agents: string[]) =>
 		invoke<HostCheck>("host_start", { hostId, restart, agents }),
+	/** Remove the service Abundio set up there (systemd or a Mac's
+	 *  LaunchAgent); the server runs on detached until the Host reboots. */
+	removeService: (hostId: string, agents: string[]) =>
+		invoke<HostCheck>("host_start", {
+			hostId,
+			restart: true,
+			agents,
+			noService: true,
+		}),
 	/** Stop the server on a Host and delete ~/.abundio-server (phase 8d). */
 	uninstall: (hostId: string) => invoke<void>("host_uninstall", { hostId }),
 	/** The user's answer to an SSH prompt (`null`: cancelled). */
@@ -376,7 +385,7 @@ export interface HostCheckItem {
 	label: string;
 	state: "ok" | "warn" | "error";
 	fix: string | null;
-	action: "install" | "update" | "start" | "service" | null;
+	action: "install" | "update" | "start" | "service" | "unservice" | null;
 }
 
 /** What Host setup's probe found, and its checklist. */

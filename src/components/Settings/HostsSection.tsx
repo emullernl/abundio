@@ -30,6 +30,7 @@ const WORKING_LABELS: Record<string, string> = {
 	update: "Updating…",
 	start: "Starting…",
 	service: "Restarting…",
+	unservice: "Removing the service…",
 };
 
 /**
@@ -102,14 +103,16 @@ export function HostsSection() {
 		setWorking((w) => ({ ...w, [id]: label }));
 		try {
 			const result =
-				action === "start" || action === "service"
-					? await hostsApi.start(id, action === "service", agentCommands(id))
-					: await hostsApi.install(
-							id,
-							last.probe.os,
-							last.probe.arch,
-							agentCommands(id),
-						);
+				action === "unservice"
+					? await hostsApi.removeService(id, agentCommands(id))
+					: action === "start" || action === "service"
+						? await hostsApi.start(id, action === "service", agentCommands(id))
+						: await hostsApi.install(
+								id,
+								last.probe.os,
+								last.probe.arch,
+								agentCommands(id),
+							);
 			setChecks((c) => ({ ...c, [id]: result }));
 		} catch (e) {
 			setChecks((c) => ({ ...c, [id]: { error: String(e) } }));

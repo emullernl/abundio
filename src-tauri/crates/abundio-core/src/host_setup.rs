@@ -265,6 +265,24 @@ pub fn start_then_probe(restart: bool) -> String {
     format!("set -eu\n{stop}\n{START_SCRIPT}\nset +eu\n{PROBE_SCRIPT}")
 }
 
+/// Take the service Abundio set up away (systemd `--user` unit or a Mac's
+/// LaunchAgent), then run the server detached, so the Host keeps working
+/// until it reboots; then probe, in one ssh.
+pub fn remove_service_then_probe() -> String {
+    format!("set -eu\n{STOP_SCRIPT}\n{REMOVE_SERVICE_SCRIPT}\nABUNDIO_SETUP_SERVICE=detached\n{START_SCRIPT}\nset +eu\n{PROBE_SCRIPT}")
+}
+
+/// The service files Abundio wrote, gone (after `STOP_SCRIPT`, whose
+/// `$unit` and `$agent` it uses).
+pub const REMOVE_SERVICE_SCRIPT: &str = r#"
+if [ -f "$unit" ]; then
+  systemctl --user disable abundio-server.service >/dev/null 2>&1 || true
+  rm -f "$unit"
+  systemctl --user daemon-reload >/dev/null 2>&1 || true
+fi
+rm -f "$agent"
+"#;
+
 /// Stop the server and remove it, in one ssh.
 pub fn uninstall() -> String {
     format!("set -eu\n{STOP_SCRIPT}\n{UNINSTALL_SCRIPT}")
@@ -388,7 +406,8 @@ pub struct CheckItem {
     /// What fixes it, in words.
     pub fix: Option<String>,
     /// The button that fixes it: `install`, `update`, `start`, `service`
-    /// (restart a server running by itself as a service).
+    /// (restart a server running by itself as a service), `unservice`
+    /// (remove that service, the server running on detached).
     pub action: Option<&'static str>,
 }
 
@@ -491,10 +510,12 @@ fn reboot_item(p: &Probe, installed: bool) -> CheckItem {
     // A server running by itself that a service could take over.
     let movable = installed && p.running;
     match (p.os.as_str(), p.service.as_deref()) {
-        ("Linux", Some("systemd")) if p.linger == Some(true) => item("reboot", "ok", "Comes back after a reboot"),
-        ("Linux", Some("systemd")) => {
-            item("reboot", "warn", "Stops soon after you log out of the Host").fix(linger)
+        ("Linux", Some("systemd")) if p.linger == Some(true) => {
+            item("reboot", "ok", "Comes back after a reboot").action("unservice")
         }
+        ("Linux", Some("systemd")) => item("reboot", "warn", "Stops soon after you log out of the Host")
+            .fix(linger)
+            .action("unservice"),
         // Start runs it as a service only for a lingering user: without
         // linger systemd would stop it with the app's connection.
         ("Linux", _) if p.systemd_user && p.linger == Some(true) => {
@@ -510,7 +531,9 @@ fn reboot_item(p: &Probe, installed: bool) -> CheckItem {
         ("Linux", _) => item("reboot", "warn", "Won't come back after a reboot (no systemd --user)")
             .fix("Start it again from here after a reboot."),
         // A Mac: a LaunchAgent in the user's login session (phase 13).
-        ("Darwin", Some("launchd")) => item("reboot", "ok", "Comes back when you log in on the Mac"),
+        ("Darwin", Some("launchd")) => {
+            item("reboot", "ok", "Comes back when you log in on the Mac").action("unservice")
+        }
         ("Darwin", _) if movable && p.launchd => item("reboot", "warn", "Not set up to come back after a reboot")
             .fix("Restarts it as a LaunchAgent; that needs you logged in on the Mac.")
             .action("service"),
@@ -647,6 +670,21 @@ mod tests {
         let refused = reboot(&format!("{mac}ABUNDIO launchd_refused=yes\n").replace("running=yes", "running=no"));
         assert!(refused.fix.unwrap().contains("Nobody was logged in"));
         assert_eq!(platform("Darwin", "arm64"), Ok("macos-universal"));
+    }
+
+    /// The service Abundio set up can be taken away on every platform; the
+    /// server then runs on detached.
+    #[test]
+    fn a_service_abundio_set_up_can_be_removed() {
+        let linux = parse_probe(&LINUX.replace("linger=no", "linger=yes"));
+        let reboot = |p: &Probe| checklist(p, "3.1.0").into_iter().find(|i| i.id == "reboot").unwrap();
+        assert_eq!(reboot(&linux).action, Some("unservice"));
+        assert_eq!(reboot(&parse_probe(LINUX)).action, Some("unservice"));
+        let mac = parse_probe("ABUNDIO os=Darwin\nABUNDIO arch=arm64\nABUNDIO current=3.1.0\nABUNDIO running=yes\nABUNDIO launchd=yes\nABUNDIO service=launchd\nABUNDIO done=yes\n");
+        assert_eq!(reboot(&mac).action, Some("unservice"));
+        let script = remove_service_then_probe();
+        assert!(script.find("rm -f \"$agent\"").unwrap() < script.find("ABUNDIO_SETUP_SERVICE=detached").unwrap());
+        assert!(script.contains("systemctl --user disable abundio-server.service"));
     }
 
     #[test]

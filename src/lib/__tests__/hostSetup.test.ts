@@ -38,3 +38,15 @@ describe("restartMessage", () => {
 		expect(restartMessage("service", "box", 2)).toContain("2 panes are");
 	});
 });
+
+describe("removing the service (all platforms)", () => {
+	it("asks first when panes would end, like the other restarts", () => {
+		const last = {
+			probe: { running: true, panes: 2 },
+		} as unknown as import("../ipc").HostCheck;
+		expect(panesEndedBy("unservice", last)).toBe(2);
+		expect(restartMessage("unservice", "box", 2)).toContain(
+			"Removing the service restarts the server without it",
+		);
+	});
+});

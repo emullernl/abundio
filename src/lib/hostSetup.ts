@@ -1,7 +1,7 @@
 import type { HostCheck } from "./ipc";
 
 /** The checklist buttons that stop the running server first. */
-const RESTARTS = new Set(["install", "update", "service"]);
+const RESTARTS = new Set(["install", "update", "service", "unservice"]);
 
 /**
  * How many running panes a checklist button would end (docs/plans/
@@ -19,9 +19,11 @@ export function restartMessage(action: string, host: string, panes: number) {
 	const what =
 		action === "service"
 			? "Setting it up as a service restarts the server"
-			: action === "install"
-				? "Installing restarts the server"
-				: "Updating restarts the server";
+			: action === "unservice"
+				? "Removing the service restarts the server without it"
+				: action === "install"
+					? "Installing restarts the server"
+					: "Updating restarts the server";
 	const count = panes === 1 ? "1 pane is" : `${panes} panes are`;
 	return `${count} running on ${host}. ${what}, which ends them and their Agents. Their layouts are kept, and Agents resume their sessions where they can when you open the Profile again.`;
 }
