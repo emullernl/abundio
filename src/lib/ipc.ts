@@ -1137,9 +1137,14 @@ export interface GithubIssue {
 
 export const issues = {
 	/** Open issues of the repository `cwd` belongs to, highest number first,
-	 *  assigned-to-me ones marked. Rejects with a one-line reason (no gh, not signed in, no
-	 *  GitHub remote) that the dialog shows as-is. */
-	list: (cwd: string) => invoke<GithubIssue[]>("gh_list_issues", { cwd }),
+	 *  assigned-to-me ones marked. git names the repository where the folder
+	 *  is (on its Host); this computer's gh lists them, whatever the Host.
+	 *  Rejects with a one-line reason the dialog shows as-is. */
+	list: async (cwd: string) => {
+		const repo = await git.repoSlug(cwd);
+		if (!repo) throw new Error("This folder has no GitHub remote.");
+		return invoke<GithubIssue[]>("gh_list_issues", { repo });
+	},
 };
 
 // The native application menu.

@@ -156,7 +156,6 @@ export const HOST_ROUTES: Record<string, Route> = {
 	},
 	git_scheduler_start: w(),
 	git_scheduler_stop: w(),
-	gh_list_issues: path(),
 	list_repo_worktrees: path(),
 	worktree_add: path("primaryCwd"),
 	worktree_remove: path("primaryCwd"),

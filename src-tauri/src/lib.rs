@@ -1698,6 +1698,7 @@ pub fn run() {
             commands::open_window_with_profile,
             commands::create_untitled_profile_in_new_window,
             commands::open_settings_window,
+            commands::gh_list_issues,
             commands::focus_window,
             commands::fs_reveal_in_folder,
             pr_poller::pr_poller_set_config,

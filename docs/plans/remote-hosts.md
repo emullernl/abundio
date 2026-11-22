@@ -185,6 +185,10 @@ An Agent on this computer, the Orchestrator included, drives the Agents of its P
 - **13b+ Remove service** (done: on every platform the reboot line of a service Abundio set up has "Remove service": `host_start`'s `noService`, `remove_service_then_probe`, stops the server, removes the systemd unit or the LaunchAgent and starts it again detached, so the Host keeps working until it reboots; it asks first when panes are running, like the other restarts).
 - **13c Mac limits** (done: an `info` checklist state, drawn with an ⓘ; the `mac` line, and gh's line on a Mac says it only looks signed out over SSH). One info line on every Mac Host: Keychain logins may look signed out over SSH; Desktop, Documents and Downloads need System Settings ▸ General ▸ Sharing ▸ Remote Login ⓘ ▸ Allow full disk access for remote users.
 
+#### 14. GitHub is this computer's
+
+New task's issues are listed with this computer's own `gh` and GitHub account for every Workspace, also on a Host (done: `issues.list` asks git for the repository's name where the folder is, `git_repo_slug`, routed to the Host for a Host Workspace, then the desktop-only `gh_list_issues` runs `gh issue list -R owner/repo`, `gh_commands::list_issues_in_repo`, saying when this computer's gh is missing, not signed in or cannot see that repository). A server never runs gh (`gh_list_issues` left `host_api`), and Host setup no longer looks for gh. Agents on a Host may still use gh themselves.
+
 ### Later: macOS Hosts, beyond phase 13
 
 Checking the Keychain and Full Disk Access from the running server's own session rather than noting them.

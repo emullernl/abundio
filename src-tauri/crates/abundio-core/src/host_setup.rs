@@ -57,14 +57,11 @@ fi
 [ -f "$HOME/.config/systemd/user/abundio-server.service" ] && p service systemd
 command -v launchctl >/dev/null 2>&1 && p launchd yes
 [ -f "$HOME/Library/LaunchAgents/dev.abundio.server.plist" ] && p service launchd
-# Agents, git and gh as a pane would find them: on the PATH of the user's
+# Agents and git as a pane would find them: on the PATH of the user's
 # own interactive login shell, given 15 s in case its startup files wait.
 inner='p() { printf "ABUNDIO %s=%s\n" "$1" "$2"; }
 for a in "$@"; do command -v "$a" >/dev/null 2>&1 && p agent "$a"; done
 command -v git >/dev/null 2>&1 && p git "$(git --version 2>/dev/null)"
-if command -v gh >/dev/null 2>&1; then
-  if gh auth status >/dev/null 2>&1; then p gh signed_in; else p gh signed_out; fi
-fi
 p shell_done yes'
 "${SHELL:-/bin/sh}" -lic "$inner" probe "$@" </dev/null 2>/dev/null &
 pid=$!
@@ -328,8 +325,6 @@ pub struct Probe {
     pub service: Option<String>,
     pub agents: Vec<String>,
     pub git: Option<String>,
-    /// `signed_in`, `signed_out`, or `None` when gh is missing.
-    pub gh: Option<String>,
     /// The login shell answered in time.
     pub shell_answered: bool,
     /// The whole script ran.
@@ -369,7 +364,6 @@ pub fn parse_probe(text: &str) -> Probe {
             "launchd_refused" => p.launchd_refused = value == "yes",
             "agent" if !p.agents.contains(&value) => p.agents.push(value),
             "git" => p.git = Some(value),
-            "gh" => p.gh = Some(value),
             "shell_done" => p.shell_answered = true,
             "done" => p.complete = true,
             "install_done" => p.installed_now = Some(value),
@@ -485,16 +479,6 @@ pub fn checklist(p: &Probe, version: &str) -> Vec<CheckItem> {
         None => item("git", "warn", "git not found").fix("The git panel and worktrees need it."),
     });
     let mac = p.os == "Darwin";
-    out.push(match p.gh.as_deref() {
-        Some("signed_in") => item("gh", "ok", "gh signed in"),
-        // Checked over SSH, which cannot open a Mac's Keychain, where gh
-        // keeps its login: panes the LaunchAgent starts may well have it.
-        Some(_) if mac => item("gh", "warn", "gh looks signed out over SSH").fix(
-            "A Mac locks its Keychain to SSH sessions, so this check cannot tell; panes the LaunchAgent starts can use gh if you are signed in there. Otherwise run gh auth login in a pane on the Host.",
-        ),
-        Some(_) => item("gh", "warn", "gh not signed in").fix("Run gh auth login in a pane on the Host."),
-        None => item("gh", "warn", "gh not found").fix("GitHub issues in New task need it."),
-    });
     if mac {
         out.push(
             item("mac", "info", "On a Mac, panes have the limits of an SSH login")
@@ -615,7 +599,7 @@ pub fn run(
 mod tests {
     use super::*;
 
-    const LINUX: &str = "Welcome to box!\nABUNDIO os=Linux\nABUNDIO arch=x86_64\nABUNDIO user=dev\nABUNDIO home=/home/dev\nABUNDIO home_writable=yes\nABUNDIO installed=3.0.0\nABUNDIO installed=3.1.0\nABUNDIO current=3.1.0\nABUNDIO running=yes\nABUNDIO systemd_user=yes\nABUNDIO linger=no\nABUNDIO service=systemd\nlast login: never\nABUNDIO agent=claude\nABUNDIO agent=codex\nABUNDIO git=git version 2.43.0\nABUNDIO gh=signed_out\nABUNDIO shell_done=yes\nABUNDIO done=yes\n";
+    const LINUX: &str = "Welcome to box!\nABUNDIO os=Linux\nABUNDIO arch=x86_64\nABUNDIO user=dev\nABUNDIO home=/home/dev\nABUNDIO home_writable=yes\nABUNDIO installed=3.0.0\nABUNDIO installed=3.1.0\nABUNDIO current=3.1.0\nABUNDIO running=yes\nABUNDIO systemd_user=yes\nABUNDIO linger=no\nABUNDIO service=systemd\nlast login: never\nABUNDIO agent=claude\nABUNDIO agent=codex\nABUNDIO git=git version 2.43.0\nABUNDIO shell_done=yes\nABUNDIO done=yes\n";
 
     #[test]
     fn reads_what_the_probe_said_and_nothing_else() {
@@ -626,7 +610,6 @@ mod tests {
         assert!(p.running && p.systemd_user && p.home_writable && p.complete && p.shell_answered);
         assert_eq!(p.linger, Some(false));
         assert_eq!(p.agents, ["claude", "codex"]);
-        assert_eq!(p.gh.as_deref(), Some("signed_out"));
         assert_eq!(parse_probe("ABUNDIO current=\n").current, None);
     }
 
@@ -639,7 +622,8 @@ mod tests {
         assert_eq!(get("running").state, "ok");
         assert_eq!(get("reboot").state, "warn");
         assert!(get("reboot").fix.unwrap().contains("sudo loginctl enable-linger dev"));
-        assert_eq!(get("gh").state, "warn");
+        // GitHub is this computer's (New task's issues): no gh check here.
+        assert!(!list.iter().any(|i| i.id == "gh"));
         // Another app version: Update.
         let list = checklist(&p, "3.2.0");
         let server = list.iter().find(|i| i.id == "server").unwrap();
@@ -689,12 +673,11 @@ mod tests {
     /// server then runs on detached.
     #[test]
     fn a_mac_notes_the_limits_of_an_ssh_login() {
-        let mac = parse_probe("ABUNDIO os=Darwin\nABUNDIO arch=arm64\nABUNDIO gh=signed_out\nABUNDIO done=yes\n");
+        let mac = parse_probe("ABUNDIO os=Darwin\nABUNDIO arch=arm64\nABUNDIO done=yes\n");
         let list = checklist(&mac, "3.1.0");
         let note = list.iter().find(|i| i.id == "mac").unwrap();
         assert_eq!(note.state, "info");
         assert!(note.fix.as_deref().unwrap().contains("Full Disk Access") || note.fix.as_deref().unwrap().contains("full disk access"));
-        assert!(list.iter().find(|i| i.id == "gh").unwrap().label.contains("over SSH"));
         assert!(!checklist(&parse_probe(LINUX), "3.1.0").iter().any(|i| i.id == "mac"));
     }
 
@@ -858,12 +841,9 @@ esac
     #[cfg(unix)]
     #[test]
     fn the_script_runs_on_this_computer() {
-        let gh = tempfile::tempdir().unwrap();
         let out = std::process::Command::new("/bin/sh")
             .args(["-c", PROBE_SCRIPT, "probe", "sh", "no-such-agent-xyz"])
             .env("SHELL", "/bin/sh")
-            // Never the user's own gh login (gh would ask GitHub).
-            .env("GH_CONFIG_DIR", gh.path())
             .output()
             .unwrap();
         let p = parse_probe(&String::from_utf8_lossy(&out.stdout));

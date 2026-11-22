@@ -419,7 +419,6 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
             host.git.stop(client.as_str(), &a!(c, raw, { workspace_id: String }).workspace_id);
             Value::Null
         }
-        "gh_list_issues" => json(crate::gh_commands::gh_list_issues(a!(c, raw, { cwd: String }).cwd)?)?,
 
         // ── Worktrees ──
         "list_repo_worktrees" => json(wt::list_repo_worktrees(a!(c, raw, { cwd: String }).cwd)?)?,

@@ -376,3 +376,12 @@ pub async fn fs_reveal_in_folder(path: String) -> Result<(), AbundioError> {
     }
     Ok(())
 }
+
+/// New task's GitHub issues: this computer's `gh`, for any Workspace's
+/// repository (`owner/name`, read by git where its folder is).
+#[tauri::command]
+pub async fn gh_list_issues(repo: String) -> Result<Vec<abundio_core::gh_commands::GithubIssue>, AbundioError> {
+    tauri::async_runtime::spawn_blocking(move || abundio_core::gh_commands::list_issues_in_repo(&repo))
+        .await
+        .map_err(|e| AbundioError::InvalidOperation(e.to_string()))?
+}

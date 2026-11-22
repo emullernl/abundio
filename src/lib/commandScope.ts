@@ -57,9 +57,11 @@ const DESKTOP = [
 	// then be sent to the Host (phase 7).
 	"prompt_attachment_from_clipboard",
 	"set_clipboard_image_from_path",
-	// The PR checker: the user's own GitHub review requests and PRs, whatever
-	// the Host, polled while a desktop window has focus (phase 7b-4). Issues
-	// for a New task (`gh_list_issues`) are the Workspace's repo: host.
+	// GitHub is this computer's: the PR checker (the user's own review
+	// requests and PRs, polled while a desktop window has focus, phase 7b-4)
+	// and New task's issues, for any Workspace's repository, whatever its
+	// Host (a Host needs no gh).
+	"gh_list_issues",
 	"pr_mark_read",
 	"pr_poller_refresh",
 	"pr_poller_set_config",
@@ -147,7 +149,6 @@ const HOST = [
 	"fs_watch_start",
 	"fs_watch_stop",
 	"fs_write_file",
-	"gh_list_issues",
 	"git_branch_info",
 	"git_changed_files",
 	"git_commit_file_diff",

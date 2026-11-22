@@ -535,59 +535,6 @@ struct GhLabel {
 
 const ISSUE_LIMIT: &str = "100";
 
-/// Open issues of the repository `cwd` belongs to, highest issue number
-/// first; the user's assigned ones are marked. The two lists are unioned,
-/// so an assigned issue is listed even on a repository with more open
-/// issues than one page holds.
-pub fn list_issues(cwd: &str) -> Result<Vec<GithubIssue>, AbundioError> {
-	let (available, authenticated) = gh_available_and_authenticated();
-	if !available {
-		return Err(AbundioError::Git(
-			"The GitHub CLI (gh) is not installed.".into(),
-		));
-	}
-	if !authenticated {
-		return Err(AbundioError::Git(
-			"The GitHub CLI is not signed in — run `gh auth login`.".into(),
-		));
-	}
-	let all = run_gh(
-		cwd,
-		&[
-			"issue", "list", "--state", "open", "--limit", ISSUE_LIMIT, "--json",
-			"number,title,url,updatedAt,labels",
-		],
-	)
-	.map_err(issue_list_error)?;
-	// Full rows, not just numbers: an assigned issue outside the first
-	// ISSUE_LIMIT of the general list must still reach the dialog.
-	let mine = run_gh(
-		cwd,
-		&[
-			"issue", "list", "--state", "open", "--assignee", "@me", "--limit",
-			ISSUE_LIMIT, "--json", "number,title,url,updatedAt,labels",
-		],
-	)
-	.map_err(issue_list_error)?;
-	parse_issues(&all, &mine)
-}
-
-/// Map gh's "no GitHub remote" failure to one short line; keep others.
-fn issue_list_error(e: AbundioError) -> AbundioError {
-	let msg = e.to_string();
-	let lower = msg.to_lowercase();
-	if lower.contains("known github host") || lower.contains("no git remotes") {
-		return AbundioError::Git("This folder has no GitHub remote.".into());
-	}
-	if lower.contains("not a git repository") {
-		return AbundioError::Git("This folder is not a git repository.".into());
-	}
-	if lower.contains("has disabled issues") {
-		return AbundioError::Git("Issues are turned off for this repository.".into());
-	}
-	e
-}
-
 pub fn parse_issues(all_json: &str, mine_json: &str) -> Result<Vec<GithubIssue>, AbundioError> {
 	let rows: Vec<GhIssueRow> = serde_json::from_str(all_json)
 		.map_err(|e| AbundioError::Git(format!("Unexpected gh issue list output: {e}")))?;
@@ -612,8 +559,45 @@ pub fn parse_issues(all_json: &str, mine_json: &str) -> Result<Vec<GithubIssue>,
 	Ok(issues)
 }
 
-pub fn gh_list_issues(cwd: String) -> Result<Vec<GithubIssue>, AbundioError> {
-	list_issues(&cwd)
+/// Open issues of `repo` (`owner/name`), listed with this computer's own
+/// `gh` and GitHub account, whatever machine the Workspace is on: a Host
+/// needs no `gh` (its Agent then works on the issue there). The name comes
+/// from git where the folder is (`git_repo_slug`).
+pub fn list_issues_in_repo(repo: &str) -> Result<Vec<GithubIssue>, AbundioError> {
+	let (available, authenticated) = gh_available_and_authenticated();
+	if !available {
+		return Err(AbundioError::Git(
+			"The GitHub CLI (gh) is not installed on this computer.".into(),
+		));
+	}
+	if !authenticated {
+		return Err(AbundioError::Git(
+			"The GitHub CLI is not signed in on this computer — run `gh auth login` here.".into(),
+		));
+	}
+	let list = |extra: &[&str]| {
+		let mut args = vec!["issue", "list", "-R", repo, "--state", "open", "--limit", ISSUE_LIMIT];
+		args.extend_from_slice(extra);
+		args.extend_from_slice(&["--json", "number,title,url,updatedAt,labels"]);
+		run_gh("", &args).map_err(|e| repo_error(e, repo))
+	};
+	let all = list(&[])?;
+	let mine = list(&["--assignee", "@me"])?;
+	parse_issues(&all, &mine)
+}
+
+/// gh's failures for one named repository, in one line.
+fn repo_error(e: AbundioError, repo: &str) -> AbundioError {
+	let lower = e.to_string().to_lowercase();
+	if lower.contains("could not resolve to a repository") || lower.contains("not found") {
+		return AbundioError::Git(format!(
+			"This computer's GitHub account cannot see {repo}."
+		));
+	}
+	if lower.contains("has disabled issues") {
+		return AbundioError::Git("Issues are turned off for this repository.".into());
+	}
+	e
 }
 
 
@@ -726,6 +710,15 @@ mod tests {
 		assert_eq!(map_rollup_state("PENDING"), "PENDING");
 		assert_eq!(map_rollup_state("EXPECTED"), "PENDING");
 		assert_eq!(map_rollup_state("WHATEVER"), "");
+	}
+
+	#[test]
+	fn names_a_repository_this_computer_cannot_see() {
+		let e = repo_error(
+			AbundioError::Git("GraphQL: Could not resolve to a Repository with the name 'o/r'.".into()),
+			"o/r",
+		);
+		assert_eq!(e.to_string(), "Git error: This computer's GitHub account cannot see o/r.");
 	}
 
 	#[test]
@@ -942,13 +935,5 @@ mod tests {
 	#[test]
 	fn parse_issues_rejects_garbage() {
 		assert!(parse_issues("nope", "[]").is_err());
-	}
-
-	#[test]
-	fn issue_list_error_names_a_missing_remote() {
-		let e = issue_list_error(AbundioError::Git(
-			"gh issue list failed: none of the git remotes configured for this repository point to a known GitHub host".into(),
-		));
-		assert_eq!(e.to_string(), "Git error: This folder has no GitHub remote.");
 	}
 }
