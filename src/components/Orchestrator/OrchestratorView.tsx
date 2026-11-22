@@ -45,9 +45,9 @@ import {
 } from "../../lib/orchestratorTabs";
 import { scrollToShowTab } from "../../lib/tabStripScroll";
 import { useExplorerStore } from "../../stores/explorerStore";
+import { useAgentsForWorkspace } from "../../stores/hostAgentsStore";
 import { useOrchestratorStore } from "../../stores/orchestratorStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
-import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { FileSearchPalette } from "../FileSearchPalette";
@@ -481,9 +481,8 @@ function PeekHeader({ paneId }: { paneId: string }) {
 		const ptyId = s.panePtyMap[paneId];
 		return ptyId ? s.detectedAgentIds[ptyId] : undefined;
 	});
-	const name = useSettingsStore(
-		(s) => s.agents.find((a) => a.id === agentId)?.name,
-	);
+	const ownAgents = useAgentsForWorkspace(null);
+	const name = ownAgents.find((a) => a.id === agentId)?.name;
 	const explorerOpen = useWindowUiStore((s) => s.peekExplorerOpen);
 	const toggleExplorer = useWindowUiStore((s) => s.togglePeekExplorer);
 	return (
@@ -531,7 +530,8 @@ function TabStrip({
 }) {
 	const phase = useOrchestratorStore((s) => s.phase);
 	const agentId = useOrchestratorStore((s) => s.agentId);
-	const agents = useSettingsStore((s) => s.agents);
+	// The Window's own Host's Agents (ADR-0064).
+	const agents = useAgentsForWorkspace(null);
 	const agent = agents.find((a) => a.id === agentId);
 	const fileTabs = useOrchestratorStore((s) => s.fileTabs);
 	const selectedTabId = useOrchestratorStore((s) => s.selectedTabId);
@@ -867,7 +867,8 @@ function MissingFolderCard() {
 }
 
 function AgentPicker() {
-	const agents = useSettingsStore((s) => s.agents);
+	// The Window's own Host's Agents (ADR-0064).
+	const agents = useAgentsForWorkspace(null);
 	const current = useOrchestratorStore((s) => s.agentId);
 	const changingAgent = useOrchestratorStore((s) => s.changingAgent);
 	const exited = useOrchestratorStore((s) => s.exited);

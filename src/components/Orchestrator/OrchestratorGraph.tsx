@@ -57,9 +57,9 @@ import {
 	selectReceiving,
 	useCallStreamsStore,
 } from "../../stores/callStreamsStore";
+import { useAllAgents } from "../../stores/hostAgentsStore";
 import { useOrchestratorStore } from "../../stores/orchestratorStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
-import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { AgentStatusIcon } from "../AgentStatusIcon";
@@ -604,11 +604,10 @@ const AgentNode = memo(function AgentNode({
 	const receiving = useCallStreamsStore(selectReceiving(agent.paneId));
 	const liveHandle = useAgentHandle(agent.paneId);
 	const handle = liveHandle ?? agent.handle;
-	const agentName = useSettingsStore((s) =>
-		agent.agentId
-			? (s.agents.find((a) => a.id === agent.agentId)?.name ?? "Agent")
-			: "Agent",
-	);
+	const known = useAllAgents();
+	const agentName = agent.agentId
+		? (known.find((a) => a.id === agent.agentId)?.name ?? "Agent")
+		: "Agent";
 	const progress = useAgentSignalsStore((s) => s.progress[agent.paneId]);
 	const flag = useAgentSignalsStore((s) => s.flags[agent.paneId]);
 	const Icon = (agent.agentId && getAgentIconComponent(agent.agentId)) || null;

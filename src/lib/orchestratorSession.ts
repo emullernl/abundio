@@ -8,6 +8,7 @@
  * Active before Active again.
  */
 
+import { agentsForWorkspace, hostOfWorkspace } from "../stores/hostAgentsStore";
 import { useOrchestratorStore } from "../stores/orchestratorStore";
 import { fallbackProfileId } from "../stores/profileStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
@@ -82,7 +83,10 @@ async function startAgentIn(
 	mode: StartMode,
 ): Promise<void> {
 	const settings = useSettingsStore.getState();
-	if (!settings.agents.some((a) => a.id === agentId)) {
+	// Its Host's Agents: a remote Window's Orchestrator runs on its Host
+	// (ADR-0064).
+	const agents = agentsForWorkspace(ws.id);
+	if (!agents.some((a) => a.id === agentId)) {
 		throw new Error("That agent is not available any more.");
 	}
 	let target = startPane(ws.tabs);
@@ -121,9 +125,11 @@ async function startAgentIn(
 	const sessionId =
 		(node?.type === "terminal" ? node.agentSessionId : undefined) ??
 		(last?.agentId === agentId ? last.sessionId : undefined);
-	const shell = settings.shellPath || (await shells.default().catch(() => ""));
+	// This computer's shell setting is this computer's; on a Host, its own.
+	const ownShell = hostOfWorkspace(ws.id) === null ? settings.shellPath : null;
+	const shell = ownShell || (await shells.default().catch(() => ""));
 	const start = orchestratorStart({
-		agents: settings.agents,
+		agents,
 		agentId,
 		sessionId,
 		mode: mode === "fresh" || ranOtherAgent ? "fresh" : "resume",

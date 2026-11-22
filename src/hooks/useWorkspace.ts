@@ -43,6 +43,7 @@ export function useWorkspace() {
 export async function enterRequestedView(): Promise<void> {
 	const view = await hostsApi.takeView().catch(() => null);
 	if (view !== "orchestrator") return;
-	const { enterOrchestratorView } = await import("../lib/orchestratorSession");
-	await enterOrchestratorView();
+	// The view follows this flag: its session starts when it turns on.
+	const { useWindowUiStore } = await import("../stores/windowUiStore");
+	useWindowUiStore.getState().setOrchestratorViewOpen(true);
 }
