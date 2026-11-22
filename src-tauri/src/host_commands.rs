@@ -188,8 +188,9 @@ async fn local_call(app: AppHandle, client: ClientId, command: String, args: Val
 }
 
 /// Connect to a Host (once per Host for the whole app). Blocks for the
-/// handshake, so a password prompt waits for the user. Development only
-/// until Settings ▸ Hosts (phase 7d).
+/// handshake, so a password prompt waits for the user. Used by the
+/// development console helper (`main.tsx`); the app connects through
+/// `remote_windows::connect`.
 #[tauri::command]
 pub async fn host_connect(
     app: AppHandle,

@@ -12,8 +12,8 @@ import { SettingsApp, setupCrossWindowSync } from "./SettingsApp";
 import "./lib/windowFocus";
 import "./styles/globals.css";
 
-// Development only, until File ▸ Open Remote Profile (phase 7d): put this
-// Window on an Abundio server from the console, then reload it.
+// A development console helper: put this Window on an Abundio server by
+// hand, then reload it. The app itself uses File ▸ Open Remote Profile.
 //   await __abundioHost.connect("box", { kind: "ssh", destination: "localhost" })
 //   await __abundioHost.bind("box"); location.reload()
 if (import.meta.env.DEV && !isDemoMode()) {

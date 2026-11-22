@@ -51,9 +51,6 @@ pub(crate) fn dev_build(platform: &str) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let profile_dir = exe.parent().ok_or("no build folder")?;
     let (path, how) = match platform {
-        "macos-universal" if cfg!(target_os = "macos") => {
-            (profile_dir.join("abundio-server"), "cargo build -p abundio-server (in src-tauri)".to_string())
-        }
         p if p.starts_with("linux-") => {
             let arch = p.trim_start_matches("linux-");
             (

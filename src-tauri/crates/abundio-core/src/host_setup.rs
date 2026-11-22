@@ -52,9 +52,7 @@ fi
 if command -v loginctl >/dev/null 2>&1; then
   p linger "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)"
 fi
-command -v launchctl >/dev/null 2>&1 && p launchd yes
 [ -f "$HOME/.config/systemd/user/abundio-server.service" ] && p service systemd
-[ -f "$HOME/Library/LaunchAgents/dev.abundio.server.plist" ] && p service launchd
 # Agents, git and gh as a pane would find them: on the PATH of the user's
 # own interactive login shell, given 15 s in case its startup files wait.
 inner='p() { printf "ABUNDIO %s=%s\n" "$1" "$2"; }
@@ -102,8 +100,8 @@ printf 'ABUNDIO install_done=%s\n' "$v"
 
 /// Start the installed server unless it already answers (phase 8c), as a
 /// service that comes back by itself: a `systemd --user` unit on Linux (and
-/// linger, if the Host lets the user turn it on without root), a
-/// LaunchAgent on macOS, else a detached process that a reboot ends. Waits
+/// linger, if the Host lets the user turn it on without root), else a
+/// detached process that a reboot ends. Waits
 /// until its socket answers; says how in `ABUNDIO started=<how>`.
 ///
 /// `ABUNDIO_SETUP_SERVICE=detached` skips the service managers (tests).
@@ -155,29 +153,10 @@ else
       rm -f "$u/abundio-server.service"
       systemctl --user daemon-reload || true
     fi
-  elif [ "${ABUNDIO_SETUP_SERVICE:-}" != detached ] && [ "$(uname -s)" = Darwin ] && command -v launchctl >/dev/null 2>&1; then
-    a="$HOME/Library/LaunchAgents"
-    mkdir -p "$a"
-    pl="$a/dev.abundio.server.plist"
-    x() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
-    {
-      printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
-      printf '<plist version="1.0"><dict>\n<key>Label</key><string>dev.abundio.server</string>\n'
-      printf '<key>ProgramArguments</key><array><string>%s</string><string>%s</string></array>\n' "$(x "$srv")" run
-      printf '<key>EnvironmentVariables</key><dict><key>SHELL</key><string>%s</string></dict>\n' "$(x "$sh_")"
-      printf '<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>\n'
-      printf '<key>StandardOutPath</key><string>%s</string>\n<key>StandardErrorPath</key><string>%s</string>\n' "$(x "$log")" "$(x "$log")"
-      printf '</dict></plist>\n'
-    } > "$pl.new"
-    mv -f "$pl.new" "$pl"
-    uid=$(id -u)
-    launchctl bootout "gui/$uid/dev.abundio.server" >/dev/null 2>&1 || true
-    launchctl bootout "user/$uid/dev.abundio.server" >/dev/null 2>&1 || true
-    launchctl bootstrap "gui/$uid" "$pl" 2>/dev/null || launchctl bootstrap "user/$uid" "$pl"
-    how=launchd
   fi
   if [ "$how" = detached ]; then
-    # Not `nohup`: macOS's refuses to run without a console.
+    # Not `nohup`: macOS's refuses to run without a console (the tests run
+    # this script on the developer's Mac).
     if command -v setsid >/dev/null 2>&1; then
       ( trap '' HUP; exec setsid "$srv" run ) >>"$log" 2>&1 </dev/null &
     else
@@ -205,6 +184,8 @@ fi
 pub const STOP_SCRIPT: &str = r#"
 sd="$HOME/.abundio-server"
 unit="$HOME/.config/systemd/user/abundio-server.service"
+# A LaunchAgent a development build once set up on a Mac Host (macOS Hosts
+# were dropped, phase 11): stopped, so an uninstall can clean it up.
 agent="$HOME/Library/LaunchAgents/dev.abundio.server.plist"
 if [ -f "$unit" ] && command -v systemctl >/dev/null 2>&1; then
   systemctl --user stop abundio-server.service >/dev/null 2>&1 || true
@@ -288,8 +269,7 @@ pub struct Probe {
     pub systemd_user: bool,
     /// `None`: no `loginctl`.
     pub linger: Option<bool>,
-    pub launchd: bool,
-    /// `systemd` or `launchd`: the service the app wrote.
+    /// `systemd`: the service the app wrote.
     pub service: Option<String>,
     pub agents: Vec<String>,
     pub git: Option<String>,
@@ -301,7 +281,7 @@ pub struct Probe {
     pub complete: bool,
     /// The version an install just put in place.
     pub installed_now: Option<String>,
-    /// How a start just ran it: `systemd`, `launchd`, `detached`, or
+    /// How a start just ran it: `systemd`, `detached`, or
     /// `already` (it was running).
     pub started: Option<String>,
     /// The panes (shells, Agents) a running server has.
@@ -329,7 +309,6 @@ pub fn parse_probe(text: &str) -> Probe {
             "running" => p.running = value == "yes",
             "systemd_user" => p.systemd_user = value == "yes",
             "linger" => p.linger = Some(value == "yes"),
-            "launchd" => p.launchd = value == "yes",
             "service" => p.service = Some(value),
             "agent" if !p.agents.contains(&value) => p.agents.push(value),
             "git" => p.git = Some(value),
@@ -351,7 +330,9 @@ pub fn platform(os: &str, arch: &str) -> Result<&'static str, String> {
     match (os, arch) {
         ("Linux", "x86_64" | "amd64") => Ok("linux-x86_64"),
         ("Linux", "aarch64" | "arm64") => Ok("linux-aarch64"),
-        ("Darwin", "x86_64" | "arm64") => Ok("macos-universal"),
+        // macOS fights a server run over SSH (its Keychain, Full Disk
+        // Access, start at login): left out for now (phase 11).
+        ("Darwin", _) => Err("macOS Hosts aren't supported yet: use a Linux machine".into()),
         _ => Err(format!("{os} {arch} is not supported yet")),
     }
 }
@@ -485,12 +466,6 @@ fn reboot_item(p: &Probe, installed: bool) -> CheckItem {
             .fix(format!("{linger}, then Check again to set it up as a systemd user service.")),
         ("Linux", _) => item("reboot", "warn", "Won't come back after a reboot (no systemd --user)")
             .fix("Start it again from here after a reboot."),
-        ("Darwin", Some("launchd")) => item("reboot", "ok", "Starts when you log in on the Mac"),
-        ("Darwin", _) if movable && p.launchd => item("reboot", "warn", "Not set up to start at login")
-            .fix("Restarts it as a LaunchAgent.")
-            .action("service"),
-        ("Darwin", _) => item("reboot", "warn", "Not set up to start at login")
-            .fix("Start sets it up as a LaunchAgent."),
         _ => item("reboot", "warn", "Won't come back after a reboot"),
     }
 }
@@ -619,7 +594,7 @@ mod tests {
     fn knows_which_server_a_host_runs() {
         assert_eq!(platform("Linux", "x86_64"), Ok("linux-x86_64"));
         assert_eq!(platform("Linux", "aarch64"), Ok("linux-aarch64"));
-        assert_eq!(platform("Darwin", "arm64"), Ok("macos-universal"));
+        assert!(platform("Darwin", "arm64").unwrap_err().contains("macOS Hosts aren't supported"));
         assert!(platform("Linux", "riscv64").is_err());
     }
 

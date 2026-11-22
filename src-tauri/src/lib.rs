@@ -363,8 +363,7 @@ pub fn build_menu(
 
     // File menu — "New Window with Profile" is first (additive), "Switch
     // Profile" is second (in-window swap, lossy). See ADR-0007. "Open Remote
-    // Profile…" (a Host's Profile in a Window of its own, phase 7d) shows in
-    // development builds only until the feature ships (phase 11).
+    // Profile…" opens a Host's Profile in a Window of its own (phase 7d).
     let open_remote_item = MenuItem::with_id(handle, "open-remote-profile", "Open Remote Profile…", true, None::<&str>)?;
     let file_separator = PredefinedMenuItem::separator(handle)?;
     let file_separator_2 = PredefinedMenuItem::separator(handle)?;
@@ -372,13 +371,13 @@ pub fn build_menu(
     let mut file_items: Vec<&dyn tauri::menu::IsMenuItem<Wry>> = Vec::new();
     #[cfg(not(target_os = "macos"))]
     file_items.extend([&settings_item as &dyn tauri::menu::IsMenuItem<Wry>, &file_separator_2]);
-    file_items.push(&new_window_with_profile_submenu);
-    file_items.push(&switch_profile_submenu);
-    if cfg!(debug_assertions) {
-        file_items.push(&open_remote_item);
-    }
-    file_items.push(&file_separator);
-    file_items.push(&close_item);
+    file_items.extend([
+        &new_window_with_profile_submenu as &dyn tauri::menu::IsMenuItem<Wry>,
+        &switch_profile_submenu,
+        &open_remote_item,
+        &file_separator,
+        &close_item,
+    ]);
     #[cfg(not(target_os = "macos"))]
     file_items.push(&quit_item);
     #[cfg(target_os = "macos")]

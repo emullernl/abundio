@@ -92,8 +92,7 @@ jobs:
             runner: ubuntu-24.04
           - platform: linux-aarch64
             runner: ubuntu-24.04-arm
-          - platform: macos-universal
-            runner: macos-latest
+          # No macos-universal: macOS Hosts are not supported (phase 11).
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -106,23 +105,6 @@ jobs:
           cp "src-tauri/target/server-dist/$MATRIX_PLATFORM/abundio-server" "abundio-server-$MATRIX_PLATFORM"
         env:
           MATRIX_PLATFORM: ${{ matrix.platform }}
-
-      - name: Setup Rust (macOS)
-        if: matrix.platform == 'macos-universal'
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
-
-      - name: Build (macOS universal)
-        if: matrix.platform == 'macos-universal'
-        working-directory: src-tauri
-        run: |
-          for t in aarch64-apple-darwin x86_64-apple-darwin; do
-            cargo build --release --locked -p abundio-server --target "$t"
-          done
-          lipo -create -output ../abundio-server-macos-universal \
-            target/aarch64-apple-darwin/release/abundio-server \
-            target/x86_64-apple-darwin/release/abundio-server
 
       # The handshake needs the exact version: never ship another one.
       - name: Check its version
