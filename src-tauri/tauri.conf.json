@@ -30,6 +30,9 @@
 		"active": true,
 		"targets": "all",
 		"createUpdaterArtifacts": true,
+		"resources": {
+			"resources/server/": "server/"
+		},
 		"copyright": "Copyright © 2026 Emil Müller and contributors",
 		"icon": [
 			"icons/32x32.png",

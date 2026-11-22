@@ -6,7 +6,10 @@ on:
       - 'v*'
 
 jobs:
+  # The app bundles the servers a Host runs (phase 15), so they are built
+  # first, by the `server` job below.
   build:
+    needs: server
     strategy:
       fail-fast: false
       matrix:
@@ -62,6 +65,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
+      # Every installer carries all three servers, gzipped, in its resources
+      # (`bundle.resources`); a Host unpacks the one it needs.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: abundio-server-*
+          path: server-dist
+          merge-multiple: true
+
+      - name: Bundle the servers
+        shell: bash
+        run: |
+          for p in linux-x86_64 linux-aarch64 macos-universal; do
+            test -s "server-dist/abundio-server-$p" || { echo "missing server for $p" >&2; exit 1; }
+            gzip -9 -n -c "server-dist/abundio-server-$p" > "src-tauri/resources/server/abundio-server-$p.gz"
+          done
+          ls -l src-tauri/resources/server
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@action-v0.6.2
         env:
@@ -79,10 +99,9 @@ jobs:
           releaseDraft: true
           prerelease: false
 
-  # The headless server a Host runs (docs/plans/remote-hosts.md phase 8e).
-  # The app installs `abundio-server-<platform>` from its own version's
-  # release and checks `<asset>.sig` with the updater's public key, so each
-  # one is signed with the same key as the app's update bundles.
+  # The headless server a Host runs (docs/plans/remote-hosts.md phase 8e):
+  # built for each Host platform and handed to the `build` job, which
+  # bundles all three into every installer (phase 15). Releases carry none.
   server:
     strategy:
       fail-fast: false
@@ -139,47 +158,3 @@ jobs:
           name: abundio-server-${{ matrix.platform }}
           path: abundio-server-${{ matrix.platform }}
           if-no-files-found: error
-
-  # Sign every server and attach them to the draft release the app's build
-  # made (it must exist first: `needs: build`).
-  server-release:
-    needs: [build, server]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11
-
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
-
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: abundio-server-*
-          path: dist
-          merge-multiple: true
-
-      - name: Sign
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          for f in dist/abundio-server-*; do
-            pnpm tauri signer sign "$f"
-          done
-          ls -l dist
-
-      - name: Attach to the release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$GITHUB_REF_NAME" dist/* --clobber

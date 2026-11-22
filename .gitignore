@@ -7,3 +7,5 @@ app-icon.png
 .DS_Store
 .claude
 .pnpm-store/
+# The servers CI bundles into the app (phase 15)
+src-tauri/resources/server/*.gz

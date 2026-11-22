@@ -191,7 +191,7 @@ New task's issues are listed with this computer's own `gh` and GitHub account fo
 
 #### 15. The app bundles its servers (ADR-0062's phase-15 update)
 
-- **15a CI.** The `server` job's three servers become artifacts the app builds need: each app build (macOS, Windows, Linux) downloads all three, gzips them into `src-tauri/resources/server/abundio-server-<platform>.gz` and bundles them (`bundle.resources`); `server-release` goes, and releases carry no server assets.
+- **15a CI** (done: `build` now `needs: server`, downloads its artifacts and gzips them into `src-tauri/resources/server/` before `tauri-action`; `tauri.conf.json`'s `bundle.resources` maps that folder to `server/` in the app; a README keeps the folder in the repo, so local and development builds bundle none; the `.gz` files are ignored by git). The `server` job's three servers become artifacts the app builds need: each app build (macOS, Windows, Linux) downloads all three, gzips them into `src-tauri/resources/server/abundio-server-<platform>.gz` and bundles them (`bundle.resources`); `server-release` goes, and releases carry no server assets.
 - **15b The app.** `server_binary::locate` reads the bundled `.gz` from the app's resources (a development build still uses the server built next to it); the download, the signature check and `server-cache` go. Install unpacks it in memory for its SHA-256 and size, uploads the `.gz`, and the install script unpacks it with `gzip` on the Host before checking both; a Host without `gzip` (the probe says) gets it unpacked.
 
 ### Later: macOS Hosts, beyond phase 13
