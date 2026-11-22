@@ -130,7 +130,7 @@ export function HostTerminalSettings() {
 			<div className="flex-shrink-0">
 				<SectionLabel>Scrollback Lines</SectionLabel>
 				<ScrollbackControl
-					value={settings.scrollback ?? 1000}
+					value={settings.scrollback ?? 50000}
 					onChange={(n) => void update((s) => ({ ...s, scrollback: n }))}
 				/>
 			</div>

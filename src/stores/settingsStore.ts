@@ -348,7 +348,7 @@ const PERSISTED_DEFAULTS: {
 		leftSidebarAgentsShare: 0.3,
 		debugActivityMeter: false,
 		activityByteThreshold: 1024,
-		terminalScrollback: 1000,
+		terminalScrollback: 50000,
 		shellPath: null as string | null,
 		agents: BUILTIN_AGENTS as CodingAgent[],
 		lastOpenedDevEnvId: null as string | null,

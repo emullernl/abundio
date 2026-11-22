@@ -23,7 +23,7 @@ use alacritty_terminal::term::{Config, Term};
 use alacritty_terminal::vte::ansi::Processor;
 
 /// The scrollback when nothing else is said: the app's default setting.
-pub const DEFAULT_SCROLLBACK: usize = 1000;
+pub const DEFAULT_SCROLLBACK: usize = 50_000;
 
 struct Size {
     columns: usize,
