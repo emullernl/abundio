@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { listen } from "../lib/ipc";
 import {
+	HOST_SECTIONS,
 	initialSection,
 	normalizeSection,
-	SETTINGS_NAV,
 	type SettingsSection,
+	settingsNavFor,
 } from "../lib/settingsSections";
+import { useSettingsHostStore } from "../stores/settingsHostStore";
 import { AgentsSection } from "./Settings/AgentsSection";
 import { EditorSection } from "./Settings/EditorSection";
 import { FontsSection } from "./Settings/FontsSection";
@@ -84,6 +86,8 @@ const SECTION_BODY: Record<SettingsSection, React.ReactNode> = {
 export function SettingsPanel({ onClose }: Props) {
 	// Resolve the deep-linked section in a lazy initializer, not an effect: an
 	// effect would paint the default page for a frame before snapping.
+	// A Host picked filters Settings to that Host's sections (ADR-0064).
+	const hostPicked = useSettingsHostStore((s) => s.hostId !== null);
 	const [section, setSection] = useState<SettingsSection>(() =>
 		initialSection(window.location.search),
 	);
@@ -130,6 +134,11 @@ export function SettingsPanel({ onClose }: Props) {
 		document.addEventListener("keydown", handleEscape, true);
 		return () => document.removeEventListener("keydown", handleEscape, true);
 	}, [onClose]);
+
+	// Picking a Host while on a section it does not have: go to its first.
+	useEffect(() => {
+		if (hostPicked && !HOST_SECTIONS.has(section)) setSection("agents");
+	}, [hostPicked, section]);
 
 	return (
 		/* Renders as the entire content of the dedicated Settings window
@@ -190,7 +199,7 @@ export function SettingsPanel({ onClose }: Props) {
 							"color-mix(in srgb, var(--bg-primary) 50%, var(--bg-secondary))",
 					}}
 				>
-					{SETTINGS_NAV.map((group) => (
+					{settingsNavFor(hostPicked).map((group) => (
 						<div key={group.caption} className="flex flex-col gap-1">
 							<NavGroupLabel>{group.caption}</NavGroupLabel>
 							{group.items.map((item) => (

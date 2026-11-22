@@ -31,6 +31,14 @@ export function TerminalSection() {
 		(s) => s.toggleDebugActivityMeter,
 	);
 
+	// A Host picked: only its part, scrollback and default shell (ADR-0064).
+	if (hostId) {
+		return (
+			<div className="flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
+				<PerHostSection local={null} host={<HostTerminalSettings />} />
+			</div>
+		);
+	}
 	return (
 		<div className="flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
 			<div className="flex-shrink-0">
@@ -51,17 +59,13 @@ export function TerminalSection() {
 					description="Stop programs from taking the mouse, so click-drag selection and right-click keep working in every pane. While this is off, tmux, vim and agent TUIs handle clicks themselves, right button included; use Option+drag (macOS) or Shift+drag (Windows/Linux) to select text. Either way, any pane can be flipped on its own from the mouse badge in its title bar."
 				/>
 			</div>
-			{hostId ? (
-				<PerHostSection local={null} host={<HostTerminalSettings />} />
-			) : (
-				<div className="flex-shrink-0">
-					<SectionLabel>Scrollback Lines</SectionLabel>
-					<ScrollbackControl
-						value={terminalScrollback}
-						onChange={setTerminalScrollback}
-					/>
-				</div>
-			)}
+			<div className="flex-shrink-0">
+				<SectionLabel>Scrollback Lines</SectionLabel>
+				<ScrollbackControl
+					value={terminalScrollback}
+					onChange={setTerminalScrollback}
+				/>
+			</div>
 			<div className="flex-shrink-0">
 				<SectionLabel>Smart Image Drop</SectionLabel>
 				<ToggleRow
@@ -80,23 +84,21 @@ export function TerminalSection() {
 					description="A strip of one-click prompts along the bottom of any pane running an agent. Turning it off hides the strip without deleting anything — the command palette still reaches every action."
 				/>
 			</div>
-			{!hostId && (
-				<div className="flex flex-col flex-shrink-0" style={{ height: 200 }}>
-					<SectionLabel>Default Shell</SectionLabel>
-					<p
-						style={{
-							fontSize: 12,
-							color: "var(--fg-secondary)",
-							marginBottom: 12,
-							lineHeight: 1.5,
-						}}
-					>
-						Choose the shell for new terminal panes. Existing panes are not
-						affected.
-					</p>
-					<ShellPicker />
-				</div>
-			)}
+			<div className="flex flex-col flex-shrink-0" style={{ height: 200 }}>
+				<SectionLabel>Default Shell</SectionLabel>
+				<p
+					style={{
+						fontSize: 12,
+						color: "var(--fg-secondary)",
+						marginBottom: 12,
+						lineHeight: 1.5,
+					}}
+				>
+					Choose the shell for new terminal panes. Existing panes are not
+					affected.
+				</p>
+				<ShellPicker />
+			</div>
 			<div className="flex-shrink-0">
 				<SectionLabel>Diagnostics</SectionLabel>
 				<ToggleRow
