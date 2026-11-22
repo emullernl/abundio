@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { hostProbeCommands } from "../../lib/hostProbeAgents";
 import { panesEndedBy, restartMessage } from "../../lib/hostSetup";
 import {
 	type HostCheck,
@@ -7,7 +8,7 @@ import {
 	listen,
 	listenToThisWindow,
 } from "../../lib/ipc";
-import { useSettingsStore } from "../../stores/settingsStore";
+import { useHostAgentsStore } from "../../stores/hostAgentsStore";
 import { ConfirmDialog } from "../ConfirmDialog";
 import {
 	paramTextInputStyle,
@@ -58,11 +59,10 @@ export function HostsSection() {
 		};
 	}, []);
 
-	const agentCommands = () =>
-		useSettingsStore
-			.getState()
-			.agents.filter((a) => a.enabled)
-			.map((a) => a.command);
+	// What is looked for on a Host: its own possible Agents, not the ones
+	// switched on here (ADR-0064).
+	const agentCommands = (hostId: string) =>
+		hostProbeCommands(useHostAgentsStore.getState().settings[hostId]);
 
 	/** A restart waiting for the user's yes: it would end running panes. */
 	const [confirmRestart, setConfirmRestart] = useState<{
@@ -99,12 +99,12 @@ export function HostsSection() {
 		try {
 			const result =
 				action === "start" || action === "service"
-					? await hostsApi.start(id, action === "service", agentCommands())
+					? await hostsApi.start(id, action === "service", agentCommands(id))
 					: await hostsApi.install(
 							id,
 							last.probe.os,
 							last.probe.arch,
-							agentCommands(),
+							agentCommands(id),
 						);
 			setChecks((c) => ({ ...c, [id]: result }));
 		} catch (e) {
@@ -116,7 +116,7 @@ export function HostsSection() {
 
 	const check = async (id: string) => {
 		setChecks((c) => ({ ...c, [id]: "checking" }));
-		const agents = agentCommands();
+		const agents = agentCommands(id);
 		try {
 			const result = await hostsApi.check(id, agents);
 			setChecks((c) => ({ ...c, [id]: result }));
