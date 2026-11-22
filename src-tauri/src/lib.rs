@@ -67,6 +67,7 @@ pub mod window_persistence;
 pub mod window_placement;
 pub mod window_frame;
 pub mod window_background;
+pub mod control_forward;
 pub mod desktop;
 pub mod window_raise;
 pub use abundio_core::workspace_store;
@@ -990,6 +991,8 @@ pub fn run() {
                 host_commands::RouterWindows(app.handle().clone()),
             )));
             app.manage(remote_windows::RemoteWindows::default());
+            // Agent control reaches the Joined profiles' Hosts (ADR-0065).
+            abundio_core::control_host::set_forward(Box::new(control_forward::Forwarder::new(app.handle().clone())));
             // SSH prompts answered in Abundio's dialog (phase 7d).
             app.manage(askpass::Askpass::default());
             if let Some(dir) = remote_windows::askpass_script().parent() {

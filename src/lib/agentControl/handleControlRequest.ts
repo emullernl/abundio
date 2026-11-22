@@ -793,6 +793,13 @@ async function splitCaller(
 	extra: Partial<TerminalNode>,
 ): Promise<{ paneId: string; hint: string | null }> {
 	const self = scope.panes.find((p) => p.node.id === scope.caller.paneId);
+	if (!self && scope.caller.label) {
+		// An Agent on another computer (ADR-0065) has no pane here to split.
+		throw new ControlError(
+			"unsupported",
+			"you have no pane on this Host to split beside; start it in a new Tab instead (agent start --tab)",
+		);
+	}
 	if (!self) {
 		throw new ControlError("not_found", "your pane is no longer open");
 	}

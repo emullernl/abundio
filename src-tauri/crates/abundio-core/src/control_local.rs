@@ -90,7 +90,7 @@ impl Pane {
     pub fn id(&self) -> &str {
         self.node["id"].as_str().unwrap_or("")
     }
-    fn str(&self, k: &str) -> Option<&str> {
+    pub(crate) fn str(&self, k: &str) -> Option<&str> {
         self.node.get(k).and_then(Value::as_str).filter(|s| !s.is_empty())
     }
     pub fn pty_id(&self) -> Option<&str> {

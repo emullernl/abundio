@@ -449,10 +449,12 @@ fn serve_cancel(host: &Host<'_>, token: &str, client_id: &str) -> (Answer, Strin
     if let Some((window, id)) = &done {
         let _ = emit_to(host, window.as_str(), "agent-control-cancel", json!({ "id": id }));
     }
+    // Not waiting here: perhaps on a Host it was carried to.
+    let forwarded = done.is_none() && FORWARD.get().is_some_and(|f| f.cancel(&caller, client_id));
     (
         Answer {
             status: 200,
-            body: json!({ "cancelled": done.is_some() }).to_string(),
+            body: json!({ "cancelled": done.is_some() || forwarded }).to_string(),
         },
         format!("caller={} op=cancel", caller.pane_id),
     )
@@ -488,7 +490,80 @@ fn serve_inner(
         Err(e) => return (error_answer(400, "usage", &e), who),
     };
     let (cwd, argv) = split_cwd(argv);
+    // An Agent or Workspace of a Joined profile's Host (ADR-0065): carried
+    // there by the desktop app. A server never forwards: a Host's Agents
+    // never reach another computer.
+    if let (Some(forward), Some((host_name, argv))) = (FORWARD.get(), remote_address(&argv)) {
+        if let Some(answer) = forward.forward(host, &caller, &host_name, argv, client_id.clone()) {
+            let who = format!("caller={} ws={} op=forward host={host_name}", caller.pane_id, caller.workspace_id);
+            return (answer, who);
+        }
+    }
     run_call(host, &caller, cwd, argv, retry, client_id)
+}
+
+/// Carries a call to a Joined profile's Host (the desktop app's, set once
+/// at its start; ADR-0065).
+pub trait ControlForward: Send + Sync {
+    /// `None` when `host_name` is not a Host of the caller's Profile's
+    /// Joined profiles: the call is this computer's after all (a Workspace
+    /// name may hold an `@`).
+    fn forward(
+        &self,
+        host: &Host<'_>,
+        caller: &Caller,
+        host_name: &str,
+        argv: Vec<String>,
+        request_id: Option<String>,
+    ) -> Option<Answer>;
+    /// End a forwarded call that is still waiting; whether one was.
+    fn cancel(&self, caller: &Caller, request_id: &str) -> bool;
+}
+
+static FORWARD: std::sync::OnceLock<Box<dyn ControlForward>> = std::sync::OnceLock::new();
+
+pub fn set_forward(f: Box<dyn ControlForward>) {
+    let _ = FORWARD.set(f);
+}
+
+/// `argv` naming a Host's Agent or Workspace (`Agent Two@build-box`,
+/// `--workspace app@build-box`): that Host's name and the argv as the Host
+/// reads it, the suffix gone. Split at the last `@`; a handle has none of
+/// its own.
+pub fn remote_address(argv: &[String]) -> Option<(String, Vec<String>)> {
+    let split = |s: &str| -> Option<(String, String)> {
+        let (name, host) = s.rsplit_once('@')?;
+        let (name, host) = (name.trim(), host.trim());
+        (!name.is_empty() && !host.is_empty()).then(|| (name.to_string(), host.to_string()))
+    };
+    let (workspace, rest) = split_workspace(argv).ok()?;
+    if let Some((name, host)) = workspace.as_deref().and_then(split) {
+        let mut out = argv.to_vec();
+        if let Some(i) = out.iter().position(|a| a == "--workspace") {
+            out[i + 1] = name;
+        }
+        return Some((host, out));
+    }
+    // The target: the argument that, its suffix gone, parses as the call's
+    // target handle (an `@` in a prompt or a value never does).
+    let target_of = |args: &[String]| -> Option<String> {
+        let Ok(Parsed::Request(request)) = parse_args(args) else { return None };
+        let value = serde_json::to_value(&request).ok()?;
+        handle_of(&value)
+    };
+    for (i, a) in rest.iter().enumerate() {
+        let Some((name, host)) = split(a) else { continue };
+        let mut tried = rest.clone();
+        tried[i] = name.clone();
+        if target_of(&tried).is_some_and(|h| handle_key(&h) == handle_key(&name)) {
+            // The same argument in the full argv (`--workspace` absent here).
+            let mut out = argv.to_vec();
+            let j = out.iter().position(|x| x == a)?;
+            out[j] = name;
+            return Some((host, out));
+        }
+    }
+    None
 }
 
 /// One parsed call of `caller`'s, from either way in: its own pane's token,
@@ -648,8 +723,11 @@ pub fn call_from_client(
                 Err((code, msg)) => return error_answer(409, code, &msg),
             }
         }
-        None => match rows.first() {
-            Some(w) => w.workspace.id.clone(),
+        // No Workspace named: an Agent named by its handle is found in the
+        // whole Profile (handles are unique there, ADR-0055); else the
+        // Profile's first Workspace stands for the caller's own.
+        None => match handle_home(&rows, &argv).or_else(|| rows.first().map(|w| w.workspace.id.clone())) {
+            Some(id) => id,
             None => return error_answer(409, "not_found", "this Profile has no Workspaces"),
         },
     };
@@ -672,6 +750,28 @@ pub fn call_from_client(
     let ts = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z");
     eprintln!("[{ts}] [abundio:control] {log} from={} status={}", client.as_str(), answer.status);
     answer
+}
+
+/// The handle a serialised request targets (`{"kind":"handle","value":…}`).
+fn handle_of(request: &Value) -> Option<String> {
+    let t = request.get("target")?;
+    (t.get("kind")?.as_str()? == "handle").then(|| t.get("value")?.as_str().map(str::to_string))?
+}
+
+/// The Workspace holding the Agent a call targets by handle, if any.
+fn handle_home(rows: &[WorkspaceWithTabs], argv: &[String]) -> Option<String> {
+    let (_, rest) = split_workspace(argv).ok()?;
+    let Ok(Parsed::Request(request)) = parse_args(&rest) else { return None };
+    let value = serde_json::to_value(&request).ok()?;
+    let handle = handle_of(&value)?;
+    let key = handle_key(&handle);
+    rows.iter()
+        .find(|w| {
+            crate::control_local::workspace_panes(&w.tabs)
+                .iter()
+                .any(|p| p.str("agentHandle").is_some_and(|h| handle_key(h) == key))
+        })
+        .map(|w| w.workspace.id.clone())
 }
 
 /// The Client's Agent was interrupted while its call waited: end that call.
@@ -773,5 +873,31 @@ impl crate::control_local::Live for HostLive<'_> {
             );
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn v(args: &[&str]) -> Vec<String> {
+        args.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// ADR-0065: a Host's Agent or Workspace is named after the last `@`.
+    #[test]
+    fn a_host_is_named_after_the_last_at() {
+        assert_eq!(
+            remote_address(&v(&["agent", "prompt", "Agent Two@build-box", "go"])),
+            Some(("build-box".into(), v(&["agent", "prompt", "Agent Two", "go"])))
+        );
+        assert_eq!(
+            remote_address(&v(&["--workspace", "app@build-box", "pane", "list"])),
+            Some(("build-box".into(), v(&["--workspace", "app", "pane", "list"])))
+        );
+        // An @ in a prompt is the prompt's, and a call naming no Host is
+        // this computer's.
+        assert_eq!(remote_address(&v(&["agent", "prompt", "Reviewer", "mail me@home"])), None);
+        assert_eq!(remote_address(&v(&["agent", "list"])), None);
     }
 }
