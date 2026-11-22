@@ -184,15 +184,8 @@ fi
 pub const STOP_SCRIPT: &str = r#"
 sd="$HOME/.abundio-server"
 unit="$HOME/.config/systemd/user/abundio-server.service"
-# A LaunchAgent a development build once set up on a Mac Host (macOS Hosts
-# were dropped, phase 11): stopped, so an uninstall can clean it up.
-agent="$HOME/Library/LaunchAgents/dev.abundio.server.plist"
 if [ -f "$unit" ] && command -v systemctl >/dev/null 2>&1; then
   systemctl --user stop abundio-server.service >/dev/null 2>&1 || true
-fi
-if [ -f "$agent" ] && command -v launchctl >/dev/null 2>&1; then
-  launchctl bootout "gui/$(id -u)/dev.abundio.server" >/dev/null 2>&1 || true
-  launchctl bootout "user/$(id -u)/dev.abundio.server" >/dev/null 2>&1 || true
 fi
 servers() { pgrep -u "$(id -u)" -f "$sd/(current|[^/]+/abundio-server) run\$" 2>/dev/null || true; }
 left=$(servers)
@@ -215,7 +208,6 @@ if [ -f "$unit" ]; then
   rm -f "$unit"
   systemctl --user daemon-reload >/dev/null 2>&1 || true
 fi
-rm -f "$agent"
 rm -rf "$HOME/.abundio-server"
 printf 'ABUNDIO removed=yes\n'
 "#;
@@ -235,8 +227,18 @@ pub fn start_then_probe(restart: bool) -> String {
 
 /// Stop the server and remove it, in one ssh.
 pub fn uninstall() -> String {
-    format!("set -eu\n{STOP_SCRIPT}\n{UNINSTALL_SCRIPT}")
+    format!("set -eu\n{REFUSE_MACOS}\n{STOP_SCRIPT}\n{UNINSTALL_SCRIPT}")
 }
+
+/// macOS Hosts are not supported (phase 11), so nothing is ever stopped or
+/// removed on a Mac. The tests run the scripts on the developer's Mac with
+/// a home folder of their own, and say so.
+const REFUSE_MACOS: &str = r#"
+if [ "$(uname -s)" = Darwin ] && [ "${ABUNDIO_SETUP_ALLOW_MACOS:-}" != 1 ]; then
+  echo "macOS Hosts aren't supported: nothing was stopped or removed" >&2
+  exit 7
+fi
+"#;
 
 /// `text` as one word for a POSIX shell.
 pub fn shell_quote(text: &str) -> String {
@@ -581,6 +583,19 @@ mod tests {
         assert_eq!(list.iter().find(|i| i.id == "server").unwrap().action, None);
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn uninstall_never_touches_a_mac() {
+        let home = tempfile::tempdir().unwrap();
+        let d = home.path().join(".abundio-server");
+        std::fs::create_dir_all(&d).unwrap();
+        let mut c = std::process::Command::new("/bin/sh");
+        c.args(["-c", &uninstall(), "abundio-setup"]).env("HOME", home.path());
+        let out = run(c, Box::new(std::io::empty()), std::time::Duration::from_secs(20));
+        assert!(out.unwrap_err().contains("macOS Hosts aren't supported"));
+        assert!(d.is_dir(), "nothing was removed");
+    }
+
     #[test]
     fn only_plain_words_reach_the_hosts_shell() {
         assert_eq!(probe_word("claude --dangerously-skip"), Some("claude"));
@@ -693,7 +708,8 @@ esac
             let mut c = std::process::Command::new("/bin/sh");
             c.args(["-c", &script, "abundio-setup"])
                 .env("HOME", home.path())
-                .env("ABUNDIO_SETUP_SERVICE", "detached");
+                .env("ABUNDIO_SETUP_SERVICE", "detached")
+                .env("ABUNDIO_SETUP_ALLOW_MACOS", "1");
             run(c, Box::new(std::io::empty()), std::time::Duration::from_secs(40))
         };
         let pid = || std::fs::read_to_string(d.join("data/pid")).unwrap();

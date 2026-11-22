@@ -165,7 +165,7 @@ Found while trying a joined Host: the Agent list was this computer's, so a Host'
 
 #### 11. Open it up, Linux Hosts only
 
-- macOS Hosts dropped (done: see ADR-0062's update; `platform` refuses Darwin, the LaunchAgent start and the `macos-universal` server build are gone, uninstall still cleans up an old LaunchAgent).
+- macOS Hosts dropped (done: see ADR-0062's update; `platform` refuses Darwin, the LaunchAgent start and the `macos-universal` server build are gone, and uninstall refuses a Mac before it runs, `REFUSE_MACOS`).
 - Remove the dev-build gate; the feature ships (done: Settings ▸ Hosts and File ▸ Open Remote Profile… in every build; the console helper in `main.tsx` stays development only).
 
 ### Later: macOS Hosts
