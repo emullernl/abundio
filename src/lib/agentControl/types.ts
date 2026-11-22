@@ -84,6 +84,9 @@ export interface ControlCaller {
 	ptyId: string;
 	paneId: string;
 	workspaceId: string;
+	/** A caller that is not a pane of this backend (an Agent on another
+	 *  computer, ADR-0065), named as it is there: `Agent One@laptop`. */
+	label?: string;
 }
 
 /** The error codes an Agent sees (`docs/plans/agent-control.md`). */

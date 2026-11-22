@@ -26,6 +26,26 @@ pub struct Caller {
     /// The Window that spawned the PTY, which owns its Workspace.
     #[serde(skip)]
     pub window_label: String,
+    /// A caller that is not one of this Host's panes (an Agent on the
+    /// computer of a Client that joined this Profile, ADR-0065), as the
+    /// Control badge names it: `Agent One@<that computer's name>`. Its
+    /// `pane_id` and `pty_id` are an id of its own, never a pane here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+/// The names of outside callers (ADR-0065) by their caller id, as last
+/// seen: a pane one starts here records only the id as its owner, and
+/// listings name it from here. In memory: those panes end with the server.
+static OUTSIDE_NAMES: std::sync::LazyLock<std::sync::Mutex<HashMap<String, String>>> =
+    std::sync::LazyLock::new(Default::default);
+
+pub fn note_outside_name(id: &str, label: &str) {
+    OUTSIDE_NAMES.lock().unwrap().insert(id.to_string(), label.to_string());
+}
+
+pub fn outside_name(id: &str) -> Option<String> {
+    OUTSIDE_NAMES.lock().unwrap().get(id).cloned()
 }
 
 /// Per-PTY Agent control tokens. One is issued at spawn and given to the PTY
@@ -1781,6 +1801,7 @@ mod tests {
             pane_id: format!("pane-{pty}"),
             workspace_id: "ws".into(),
             window_label: "main".into(),
+            label: None,
         }
     }
 

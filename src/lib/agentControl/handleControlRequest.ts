@@ -134,6 +134,8 @@ async function nameOfCaller(
 	caller: ControlCaller,
 	workspaceId: string,
 ): Promise<string> {
+	// From another computer: named as it is there (ADR-0065).
+	if (caller.label) return caller.label;
 	const store = useWorkspaceStore.getState();
 	const home = store.workspaces.find((w) => w.id === caller.workspaceId);
 	const self = home

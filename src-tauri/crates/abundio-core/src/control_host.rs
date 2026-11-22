@@ -488,6 +488,21 @@ fn serve_inner(
         Err(e) => return (error_answer(400, "usage", &e), who),
     };
     let (cwd, argv) = split_cwd(argv);
+    run_call(host, &caller, cwd, argv, retry, client_id)
+}
+
+/// One parsed call of `caller`'s, from either way in: its own pane's token,
+/// or a Client carrying it for an Agent on its computer (ADR-0065).
+fn run_call(
+    host: &Host<'_>,
+    caller: &Caller,
+    cwd: Option<String>,
+    argv: Vec<String>,
+    retry: bool,
+    client_id: Option<String>,
+) -> (Answer, String) {
+    let caller = caller.clone();
+    let who = format!("caller={} ws={}", caller.pane_id, caller.workspace_id);
     let (workspace, argv) = match split_workspace(&argv) {
         Ok(split) => split,
         Err(e) => return (error_answer(400, "usage", &e), format!("{who} op=usage-error")),
@@ -581,6 +596,91 @@ fn serve_inner(
         answer,
         format!("{who} op={op}{target}{}", if retry { " retry" } else { "" }),
     )
+}
+
+// ── Calls a Client carries for an Agent on its computer (ADR-0065) ──
+
+/// The caller id of an outside Agent: unique to the Client that carries it,
+/// and never a pane id of this Host. A pane it starts here records it as
+/// its owner (`spawnedBy`).
+pub fn outside_caller_id(client: &ClientId, owner: &str) -> String {
+    format!("outside:{}:{owner}", client.as_str())
+}
+
+/// An Agent control call from `client` on behalf of an Agent on its own
+/// computer, named `label` there and `owner` (its pane) for ownership. It
+/// reaches only the Profile that Client shows, and only while this Host's
+/// Agent control is on. `argv` is the `abundio` command's, `--workspace`
+/// naming a Workspace of that Profile (by this Host's names); with none, the
+/// Profile's first Workspace stands for the caller's own, which an outside
+/// caller does not have here.
+pub fn call_from_client(
+    host: &Host<'_>,
+    client: &ClientId,
+    argv: Vec<String>,
+    label: &str,
+    owner: &str,
+    request_id: Option<String>,
+) -> Answer {
+    let Some(profile) = host.clients.profiles().get(client.as_str()).cloned() else {
+        return error_answer(409, "no_profile", "this Client shows no Profile here");
+    };
+    let rows = match host.workspaces.list_work(&profile) {
+        Ok(r) => r,
+        Err(e) => return error_answer(500, "internal", &e.to_string()),
+    };
+    let named = match split_workspace(&argv) {
+        Ok((w, _)) => w,
+        Err(e) => return error_answer(400, "usage", &e),
+    };
+    let home = match &named {
+        Some(name) => {
+            let rows: Vec<WorkspaceRow> = rows
+                .iter()
+                .map(|w| WorkspaceRow {
+                    id: w.workspace.id.clone(),
+                    name: w.workspace.name.clone(),
+                    folder: w.workspace.root_folder.clone(),
+                })
+                .collect();
+            match pick_workspace(&rows, name) {
+                Ok(row) => row.id.clone(),
+                Err((code, msg)) => return error_answer(409, code, &msg),
+            }
+        }
+        None => match rows.first() {
+            Some(w) => w.workspace.id.clone(),
+            None => return error_answer(409, "not_found", "this Profile has no Workspaces"),
+        },
+    };
+    let id = outside_caller_id(client, owner);
+    note_outside_name(&id, label);
+    let caller = Caller {
+        pty_id: id.clone(),
+        pane_id: id,
+        workspace_id: home.clone(),
+        // The Window holding that Workspace, else the carrying Client's own,
+        // which opens it as it would for one of its own Agents.
+        window_label: host
+            .ptys
+            .control_tokens()
+            .window_for_workspace(&home)
+            .unwrap_or_else(|| client.as_str().to_string()),
+        label: Some(label.to_string()),
+    };
+    let (answer, log) = run_call(host, &caller, None, argv, false, request_id);
+    let ts = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z");
+    eprintln!("[{ts}] [abundio:control] {log} from={} status={}", client.as_str(), answer.status);
+    answer
+}
+
+/// The Client's Agent was interrupted while its call waited: end that call.
+pub fn cancel_from_client(host: &Host<'_>, client: &ClientId, owner: &str, request_id: &str) -> bool {
+    let done = host.pending.cancel_client(request_id, &outside_caller_id(client, owner));
+    if let Some((window, id)) = &done {
+        let _ = emit_to(host, window.as_str(), "agent-control-cancel", json!({ "id": id }));
+    }
+    done.is_some()
 }
 
 // ── Commands ──

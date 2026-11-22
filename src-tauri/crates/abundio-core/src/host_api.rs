@@ -683,6 +683,18 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
             host.events.broadcast("profiles-changed", ());
             Value::Null
         }
+        // Agent control for an Agent on the calling Client's computer
+        // (ADR-0065): its answer as the `abundio` command would get it.
+        "control_call" => {
+            let a = a!(c, raw, { argv: Vec<String>, label: String, owner: String, request_id: Option<String> });
+            let answer =
+                crate::control_host::call_from_client(host, client, a.argv, &a.label, &a.owner, a.request_id);
+            serde_json::json!({ "status": answer.status, "body": answer.body })
+        }
+        "control_cancel" => {
+            let a = a!(c, raw, { owner: String, request_id: String });
+            json(crate::control_host::cancel_from_client(host, client, &a.owner, &a.request_id))?
+        }
         "client_profile_set" => {
             host.clients.set_profile(client, &a!(c, raw, { profile_id: String }).profile_id);
             Value::Null
@@ -974,6 +986,41 @@ mod tests {
             waits: &w.waits,
         };
         dispatch(&host, &ClientId::from(client), command, a).expect("a host command")
+    }
+
+    /// ADR-0065: a Client carries an Agent control call for an Agent on its
+    /// own computer; it reaches the Profile that Client shows, while this
+    /// Host's Agent control is on.
+    #[test]
+    fn a_client_carries_agent_control_for_an_agent_on_its_computer() {
+        let w = world();
+        let run = |client: &str, argv: &[&str]| {
+            let v = call(
+                &w,
+                client,
+                "control_call",
+                serde_json::json!({ "argv": argv, "label": "Agent One@laptop", "owner": "pane-1" }),
+            )
+            .unwrap();
+            (v["status"].as_u64().unwrap(), v["body"].as_str().unwrap().to_string())
+        };
+        // No Workspaces yet: nothing stands for the caller's own.
+        assert_eq!(run("w1", &["workspace", "list"]).0, 409);
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().to_string_lossy().to_string();
+        call(&w, "w1", "workspace_create", serde_json::json!({ "name": "App", "rootFolder": folder, "profileId": PID })).unwrap();
+        let (status, body) = run("w1", &["workspace", "list"]);
+        assert_eq!(status, 200, "{body}");
+        assert!(body.contains("App"), "{body}");
+        // A Workspace of the Profile is named by this Host's names.
+        assert_eq!(run("w1", &["--workspace", "Nope", "workspace", "list"]).0, 409);
+        // A Client that shows no Profile here reaches nothing.
+        let (status, body) = run("w9", &["workspace", "list"]);
+        assert_eq!(status, 409);
+        assert!(body.contains("no_profile"), "{body}");
+        // This Host's switch governs its panes whoever calls.
+        w.workspaces.set_setting(crate::control_protocol::SETTING_KEY, "0").unwrap();
+        assert_eq!(run("w1", &["workspace", "list"]).0, 403);
     }
 
     #[test]

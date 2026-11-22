@@ -234,7 +234,11 @@ pub fn describe_pane(scope: &Scope, pane: &Pane, f: &LiveFacts) -> PaneDescripti
     let agent_mode = f.mode == Some(Mode::Agent);
     let spawned_by = pane.str("spawnedBy").and_then(|owner| match scope.numbers.get(owner) {
         Some(n) => Some(pane_label(*n)),
-        None => scope.owners_elsewhere.get(owner).cloned(),
+        None => scope
+            .owners_elsewhere
+            .get(owner)
+            .cloned()
+            .or_else(|| crate::control_protocol::outside_name(owner)),
     });
     PaneDescription {
         pane: pane_label(number),
@@ -322,8 +326,10 @@ pub fn load_scope(live: &dyn Live, caller: &Caller, workspace_id: &str) -> Resul
             if n == 0 { "an Agent".to_string() } else { pane_label(n) }
         }
     };
-    let caller_name = match caller_home {
-        Some(h) if !home => format!("{name} · {}", h.workspace.name),
+    let caller_name = match (&caller.label, caller_home) {
+        // A caller from another computer is named as it is there.
+        (Some(label), _) => label.clone(),
+        (None, Some(h)) if !home => format!("{name} · {}", h.workspace.name),
         _ => name,
     };
     Ok(Scope {
@@ -1102,6 +1108,7 @@ mod tests {
             pane_id: "sh".into(),
             workspace_id: id.clone(),
             window_label: "main".into(),
+            label: None,
         };
         (fake, id, caller)
     }

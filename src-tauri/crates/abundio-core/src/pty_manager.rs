@@ -409,6 +409,7 @@ impl PtyManager {
                     pane_id: pane.to_string(),
                     workspace_id: ws.to_string(),
                     window_label: owner_window.to_string(),
+                    label: None,
                 });
                 cmd.env("ABUNDIO_AGENT_TOKEN", &token);
                 Some(token)
