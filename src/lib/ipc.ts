@@ -1467,6 +1467,11 @@ export const clipboardImage = {
 		invoke<void>("set_clipboard_image_from_path", { path }),
 };
 
+/** The background new windows show before their page paints (the theme's). */
+export const windowBackground = {
+	set: (color: string) => invoke<void>("window_background_set", { color }),
+};
+
 export const devEnvironments = {
 	list: () => invoke<DetectedDevEnvironment[]>("list_dev_environments"),
 

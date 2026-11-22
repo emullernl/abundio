@@ -46,6 +46,7 @@ const DESKTOP = [
 	// Desktop apps, fonts, clipboard, updater.
 	"fs_reveal_in_folder",
 	"launch_dev_environment",
+	"window_background_set",
 	"list_dev_environments",
 	"list_system_fonts",
 	"plugin:app|version",

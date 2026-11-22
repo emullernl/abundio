@@ -825,6 +825,7 @@ export function applyTheme(theme: AppTheme) {
 	root.style.setProperty("--error", theme.ui.error);
 	root.style.setProperty("--warning", theme.ui.warning);
 	root.style.setProperty("--success", theme.ui.success);
+	rememberWindowBackground(theme.ui.bgPrimary);
 
 	// Re-define the Monaco editor theme with the new CSS variable values
 	if (_monaco) {
@@ -839,4 +840,24 @@ export function getTheme(name: string): AppTheme {
 
 export function themeList(): AppTheme[] {
 	return Object.values(themes);
+}
+
+/** The background a window paints before its page loads (`index.html`) and
+ *  the one Rust gives each new window (`window_background.rs`): this
+ *  theme's, remembered. */
+let lastReported: string | null = null;
+function rememberWindowBackground(color: string): void {
+	try {
+		localStorage.setItem("abundio-window-bg", color);
+	} catch {
+		// Storage can be unavailable; the default background stays.
+	}
+	document.documentElement.style.background = color;
+	if (color === lastReported) return;
+	lastReported = color;
+	// Imported late: `themes` loads early, while the settings store rehydrates
+	// (CLAUDE.md), and must not pull `ipc` into that phase.
+	void import("./ipc")
+		.then((m) => m.windowBackground.set(color))
+		.catch(() => {});
 }

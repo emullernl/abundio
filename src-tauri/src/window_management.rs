@@ -244,6 +244,7 @@ fn open_settings(
         WebviewUrl::App(url_path.into()),
     )
     .title("Settings")
+    .background_color(crate::window_background::current())
     .inner_size(SETTINGS_DEFAULT_SIZE.0, SETTINGS_DEFAULT_SIZE.1)
     .min_inner_size(600.0, 400.0)
     // Where it opens with no saved position; a saved one wins.
@@ -413,6 +414,7 @@ pub fn build_profile_window(
     let mut builder =
         WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
             .title(title)
+            .background_color(crate::window_background::current())
             .inner_size(1200.0, 800.0)
             .min_inner_size(600.0, 400.0)
             // Hidden until placed, so it never shows at the default spot first.

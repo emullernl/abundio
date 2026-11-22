@@ -535,6 +535,7 @@ fn build_window(
         WebviewUrl::App("index.html?file-window".into()),
     )
     .title(window_title(row, &meta.name))
+    .background_color(crate::window_background::current())
     .inner_size(880.0, 760.0)
     .min_inner_size(420.0, 320.0)
     .resizable(true)

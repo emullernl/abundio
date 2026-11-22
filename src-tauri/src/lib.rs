@@ -66,6 +66,7 @@ pub mod window_management;
 pub mod window_persistence;
 pub mod window_placement;
 pub mod window_frame;
+pub mod window_background;
 pub mod desktop;
 pub mod window_raise;
 pub use abundio_core::workspace_store;
@@ -1121,6 +1122,11 @@ pub fn run() {
                 all_profiles.iter().map(|p| p.id.as_str()).collect();
 
             let main_label = window_management::MAIN_WINDOW_LABEL;
+            // The conf-spawned main window is still hidden: give it the
+            // theme's background before it shows, as every other window gets.
+            if let Some(w) = app.get_webview_window(main_label) {
+                let _ = w.set_background_color(Some(window_background::current()));
+            }
 
             // Decide which profile the always-present main window adopts and
             // which additional windows to spawn. See plan_restoration — closing
@@ -1700,6 +1706,7 @@ pub fn run() {
             commands::list_system_fonts,
             dev_environments::list_dev_environments,
             dev_environments::launch_dev_environment,
+            window_background::window_background_set,
             prompt_attachments::prompt_attachment_from_clipboard,
             file_windows::file_window_open,
             file_windows::file_window_info,
