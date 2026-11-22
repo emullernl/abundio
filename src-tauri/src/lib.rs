@@ -990,7 +990,6 @@ pub fn run() {
                 host_commands::RouterWindows(app.handle().clone()),
             )));
             app.manage(remote_windows::RemoteWindows::default());
-            app.manage(remote_windows::PendingViews::default());
             // SSH prompts answered in Abundio's dialog (phase 7d).
             app.manage(askpass::Askpass::default());
             if let Some(dir) = remote_windows::askpass_script().parent() {
@@ -1679,7 +1678,6 @@ pub fn run() {
             remote_windows::host_connect_saved,
             remote_windows::host_request,
             remote_windows::open_remote_profile_window,
-            remote_windows::remote_window_take_view,
             remote_windows::ssh_prompt_answer,
             commands::pty_output_subscribe,
             commands::profile_list,

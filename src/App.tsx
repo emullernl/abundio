@@ -38,7 +38,7 @@ import { useGitDataSync } from "./hooks/useGitDataSync";
 import { useMissingFolderRefresh } from "./hooks/useMissingFolderRefresh";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useTerminalFileDrop } from "./hooks/useTerminalFileDrop";
-import { enterRequestedView, useWorkspace } from "./hooks/useWorkspace";
+import { useWorkspace } from "./hooks/useWorkspace";
 import { useWorktreeSync } from "./hooks/useWorktreeSync";
 import { startAgentCommandsSync } from "./lib/agentCommandsSync";
 import { startAgentControl } from "./lib/agentControl/handleControlRequest";
@@ -958,16 +958,6 @@ export function App() {
 
 	// The Agents a typed command can start, for Rust's shell integration.
 	useEffect(() => startAgentCommandsSync(), []);
-	// An open remote Window asked to show its Orchestrator (phase 10e).
-	useEffect(() => {
-		const off = listenToThisWindow<string>("remote-window-view", () => {
-			void enterRequestedView();
-		});
-		return () => {
-			void off.then((stop) => stop());
-		};
-	}, []);
-
 	// This computer's Host settings follow its app settings (ADR-0064).
 	useEffect(() => startHostSettingsMirror(), []);
 

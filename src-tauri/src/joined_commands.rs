@@ -23,11 +23,13 @@ pub fn joined_profiles_list(app: AppHandle, profile_id: String) -> Result<Vec<Jo
 #[tauri::command]
 pub fn joined_profile_add(
     app: AppHandle,
+    window: Window,
     profile_id: String,
     host_id: String,
     remote_profile_id: String,
     remote_profile_name: String,
 ) -> Result<(), AbundioError> {
+    refuse_if_shown(&app, window.label(), &host_id, &remote_profile_id, &remote_profile_name)?;
     with_db(&app, |c| joined_profiles::add(c, &profile_id, &host_id, &remote_profile_id, &remote_profile_name))
 }
 
@@ -70,6 +72,8 @@ pub async fn host_join(
     ask: bool,
 ) -> Result<(), AbundioError> {
     let label = window.label().to_string();
+    // Restored at app start next to a Window showing it: that one keeps it.
+    refuse_if_shown(&app, &label, &host_id, &remote_profile_id, "That Profile")?;
     let router = app.state::<std::sync::Arc<crate::host_router::HostRouter>>().inner().clone();
     // Joined first, so a failed connect is tried again for this Window.
     router.join(&label, &host_id);
@@ -98,4 +102,18 @@ pub async fn host_attach(app: AppHandle, window: Window, host_id: String, ask: b
     })
     .await
     .map_err(|e| AbundioError::InvalidOperation(e.to_string()))?
+}
+
+/// A Remote profile is shown once in this app: never joined while a Window
+/// of its own, or another Window, shows it.
+fn refuse_if_shown(app: &AppHandle, window: &str, host_id: &str, profile_id: &str, name: &str) -> Result<(), AbundioError> {
+    if crate::remote_windows::window_showing(app, host_id, profile_id).is_some() {
+        return Err(AbundioError::InvalidOperation(format!(
+            "{name} is open in a Window of its own: close that Window to join it here"
+        )));
+    }
+    if crate::remote_windows::joined_in(app, host_id, profile_id, Some(window))? {
+        return Err(AbundioError::InvalidOperation(format!("{name} is joined in another Window")));
+    }
+    Ok(())
 }

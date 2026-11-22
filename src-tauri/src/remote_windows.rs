@@ -210,44 +210,94 @@ pub async fn open_remote_profile_window(
     host_id: String,
     profile_id: String,
     profile_name: String,
-    view: Option<String>,
 ) -> Result<String, AbundioError> {
     let host = crate::hosts::find(&host_id).ok_or_else(|| AbundioError::NotFound("that Host was removed".into()))?;
+    // Never shown twice in this app: not while a Window has it joined.
+    if joined_in(&app, &host_id, &profile_id, None)? {
+        return Err(AbundioError::InvalidOperation(format!(
+            "{profile_name} is joined in another Window: Leave it there to open it in a Window of its own"
+        )));
+    }
     let app2 = app.clone();
     let id = host_id.clone();
     let label = window.label().to_string();
     tauri::async_runtime::spawn_blocking(move || connect(&app2, &id, Some(&label)))
         .await
         .map_err(|e| AbundioError::InvalidOperation(e.to_string()))??;
-    let label = open(
+    open(
         &app,
         RemoteBinding { host_id, host_name: host.name, profile_id, profile_name },
         None,
-    )?;
-    // A view to enter once it has loaded (a joined section's "Open
-    // Orchestrator", phase 10e): taken by the Window, or told to one that is
-    // already open.
-    if let Some(view) = view.filter(|v| v == "orchestrator") {
-        use tauri::Emitter;
-        app.state::<PendingViews>().0.lock().unwrap().insert(label.clone(), view.clone());
-        let _ = app.emit_to(label.as_str(), "remote-window-view", view);
-    }
-    Ok(label)
+    )
 }
 
-/// Views remote Windows are to enter once loaded, by label.
-#[derive(Default)]
-pub struct PendingViews(Mutex<HashMap<String, String>>);
+/// A Remote profile shown in a Window of its own: its label.
+pub fn window_showing(app: &AppHandle, host_id: &str, profile_id: &str) -> Option<String> {
+    app.state::<RemoteWindows>().owner(host_id, profile_id)
+}
 
-/// The view this Window was opened to enter, once.
-#[tauri::command]
-pub fn remote_window_take_view(app: AppHandle, window: Window) -> Option<String> {
-    app.state::<PendingViews>().0.lock().unwrap().remove(window.label())
+/// Whether an open Profile window other than `except` has this Remote
+/// profile joined (phase 10b): its local Profile lists it.
+pub fn joined_in(
+    app: &AppHandle,
+    host_id: &str,
+    profile_id: &str,
+    except: Option<&str>,
+) -> Result<bool, AbundioError> {
+    let owners = app.state::<crate::profile_store::ActiveProfileState>().snapshot();
+    let store = app.state::<crate::workspace_store::WorkspaceStore>();
+    let conn = store.conn.lock().map_err(|e| AbundioError::InvalidOperation(e.to_string()))?;
+    let mut open = Vec::new();
+    for (label, local) in owners {
+        if app.get_webview_window(&label).is_none() {
+            continue;
+        }
+        open.push((label, crate::joined_profiles::list(&conn, &local)?));
+    }
+    Ok(joined_by_any(&open, host_id, profile_id, except))
+}
+
+/// Whether one of the open Windows (label, its local Profile's Joined
+/// profiles), `except` aside, has this Remote profile joined. Pure.
+pub fn joined_by_any(
+    windows: &[(String, Vec<crate::joined_profiles::JoinedProfile>)],
+    host_id: &str,
+    profile_id: &str,
+    except: Option<&str>,
+) -> bool {
+    windows.iter().any(|(label, joined)| {
+        Some(label.as_str()) != except
+            && joined.iter().any(|j| j.host_id == host_id && j.remote_profile_id == profile_id)
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn joined(host: &str, profile: &str) -> crate::joined_profiles::JoinedProfile {
+        crate::joined_profiles::JoinedProfile {
+            host_id: host.into(),
+            remote_profile_id: profile.into(),
+            remote_profile_name: profile.into(),
+            workspaces_json: "[]".into(),
+            last_seen_ms: None,
+        }
+    }
+
+    #[test]
+    fn a_remote_profile_joined_in_an_open_window_is_taken() {
+        let windows = vec![
+            ("main".to_string(), vec![joined("box", "p1")]),
+            ("window-2".to_string(), vec![joined("lab", "p9")]),
+        ];
+        assert!(joined_by_any(&windows, "box", "p1", None));
+        // Its own Window asking (a restored join connecting) is not a clash.
+        assert!(!joined_by_any(&windows, "box", "p1", Some("main")));
+        // Another Profile of that Host, or that id on another Host, is free.
+        assert!(!joined_by_any(&windows, "box", "p2", None));
+        assert!(!joined_by_any(&windows, "lab", "p1", None));
+    }
 
     #[test]
     fn a_remote_window_says_where_it_is() {
