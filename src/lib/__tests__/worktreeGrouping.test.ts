@@ -276,3 +276,30 @@ describe("addWorktreeTargetId", () => {
 		expect(addWorktreeTargetId(list, facts, null)).toBeNull();
 	});
 });
+
+describe("buildWorkspaceRows with Joined profiles (the sidebar's sections)", () => {
+	const joined = (id: string, position: number, hostId: string) => ({
+		...ws(id, position),
+		joined: { hostId },
+	});
+
+	it("puts this Window's own Workspaces first, then each Joined profile's", () => {
+		const list = [
+			joined("box-a", 0, "box"),
+			ws("own-b", 1),
+			joined("lab-a", 0, "lab"),
+			ws("own-a", 0),
+			joined("box-b", 1, "box"),
+		];
+		const ids = flattenRowsToIds(buildWorkspaceRows(list, {}, ["lab", "box"]));
+		expect(ids).toEqual(["own-a", "own-b", "lab-a", "box-a", "box-b"]);
+		// With no order given, Hosts follow as first met.
+		expect(flattenRowsToIds(buildWorkspaceRows(list, {}))).toEqual([
+			"own-a",
+			"own-b",
+			"box-a",
+			"box-b",
+			"lab-a",
+		]);
+	});
+});

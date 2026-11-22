@@ -50,6 +50,38 @@ export function rowWorkspaces(row: WorkspaceRow): WorkspaceWithTabs[] {
 export function buildWorkspaceRows(
 	workspaces: WorkspaceWithTabs[],
 	facts: Record<string, WorktreeGroupFacts | undefined>,
+	/** The Joined profiles' Hosts in the sidebar's order (`joinedStore`'s
+	 *  entries); a Host not named goes after them, as first met. */
+	hostOrder: readonly string[] = [],
+): WorkspaceRow[] {
+	// The sidebar's sections (phase 10b): this Window's own Workspaces
+	// first, then each Joined profile's, so every list sharing this order
+	// (Agents list, Fleet Console, cycles, Navigator) matches it.
+	const hosts: string[] = [...hostOrder];
+	const own: WorkspaceWithTabs[] = [];
+	const byHost = new Map<string, WorkspaceWithTabs[]>();
+	for (const ws of workspaces) {
+		const host = ws.joined?.hostId;
+		if (!host) {
+			own.push(ws);
+			continue;
+		}
+		if (!hosts.includes(host)) hosts.push(host);
+		const list = byHost.get(host);
+		if (list) list.push(ws);
+		else byHost.set(host, [ws]);
+	}
+	if (byHost.size === 0) return sectionRows(own, facts);
+	return [
+		...sectionRows(own, facts),
+		...hosts.flatMap((h) => sectionRows(byHost.get(h) ?? [], facts)),
+	];
+}
+
+/** One section's rows: worktree sets and standalone Workspaces. */
+function sectionRows(
+	workspaces: WorkspaceWithTabs[],
+	facts: Record<string, WorktreeGroupFacts | undefined>,
 ): WorkspaceRow[] {
 	const keyOf = (id: string): string | null =>
 		facts[id]?.worktreeGroupKey ?? null;
