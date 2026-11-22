@@ -40,6 +40,7 @@ import {
 	setAgentSessionId,
 	setCwd,
 } from "../lib/paneTree";
+import { workspaceForPath } from "../lib/pathOwner";
 import { setPendingAgent, setPendingTask } from "../lib/pendingAgentRegistry";
 import { perfMark } from "../lib/perfMarks";
 import { relaunchCommandForPane, terminalNodes } from "../lib/sessionResume";
@@ -2021,20 +2022,9 @@ setRoutingLookups({
 		}
 		return undefined;
 	},
-	workspaceOfPath: (path) => {
-		let best: { id: string; len: number } | undefined;
-		for (const ws of useWorkspaceStore.getState().workspaces) {
-			const root = ws.rootFolder.replace(/[\\/]+$/, "");
-			const inside =
-				path === root ||
-				path.startsWith(`${root}/`) ||
-				path.startsWith(`${root}\\`);
-			if (inside && (!best || root.length > best.len)) {
-				best = { id: ws.id, len: root.length };
-			}
-		}
-		return best?.id;
-	},
+	// This Window's own Workspaces win over joined ones (pathOwner.ts).
+	workspaceOfPath: (path) =>
+		workspaceForPath(useWorkspaceStore.getState().workspaces, path),
 });
 
 // Another Window of this Profile made, renamed, moved or deleted a

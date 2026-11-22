@@ -378,6 +378,11 @@ pub fn remote_args(
     }
 }
 
+/// A Host's folder and file, as an editor gets them over SSH: absolute paths.
+fn remote_paths_ok(folder: &str, file: Option<&LaunchFile>) -> bool {
+    folder.starts_with('/') && file.is_none_or(|f| f.path.starts_with('/'))
+}
+
 fn absolute(path: &str) -> String {
     if path.starts_with('/') { path.to_string() } else { format!("/{path}") }
 }
@@ -404,6 +409,13 @@ pub fn launch(
         .iter()
         .find(|d| d.id == id)
         .ok_or_else(|| AbundioError::NotFound(format!("dev environment '{}'", id)))?;
+    // A Host's folder is the Host's to name: only an absolute path, so it is
+    // never read as one of the editor's options.
+    if remote.is_some() && !remote_paths_ok(workspace_folder, file) {
+        return Err(AbundioError::InvalidOperation(
+            "a Host's folder must be an absolute path".into(),
+        ));
+    }
 
     for cli in def.cli_names {
         if let Some(bin) = resolve_cli(def, cli) {
@@ -474,6 +486,14 @@ mod tests {
             remote_args("cursor", "build-box", "/home/dev/app", Some(&lf("/home/dev/app/a.rs", Some(3), Some(2)))).unwrap(),
             vec!["--remote", "ssh-remote+build-box", "/home/dev/app", "--goto", "/home/dev/app/a.rs:3:2"]
         );
+    }
+
+    #[test]
+    fn a_hosts_folder_must_be_absolute() {
+        assert!(remote_paths_ok("/home/dev/app", Some(&lf("/home/dev/app/a.rs", None, None))));
+        assert!(!remote_paths_ok("--folder-uri=x", None));
+        assert!(!remote_paths_ok("/home/dev/app", Some(&lf("-g", None, None))));
+        assert!(launch("vscode", "-x", None, Some("box")).is_err());
     }
 
     #[test]
