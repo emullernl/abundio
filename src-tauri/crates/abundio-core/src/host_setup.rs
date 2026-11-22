@@ -56,6 +56,7 @@ if command -v loginctl >/dev/null 2>&1; then
 fi
 [ -f "$HOME/.config/systemd/user/abundio-server.service" ] && p service systemd
 command -v launchctl >/dev/null 2>&1 && p launchd yes
+command -v gzip >/dev/null 2>&1 && p gzip yes
 [ -f "$HOME/Library/LaunchAgents/dev.abundio.server.plist" ] && p service launchd
 # Agents and git as a pane would find them: on the PATH of the user's
 # own interactive login shell, given 15 s in case its startup files wait.
@@ -79,14 +80,20 @@ p done yes
 /// platform and the bytes arrive whole; `current` moves last, atomically.
 pub const INSTALL_SCRIPT: &str = r#"
 set -eu
-os="$1"; arch="$2"; v="$3"; want="$4"; size="$5"; shift 5
+os="$1"; arch="$2"; v="$3"; want="$4"; size="$5"; kind="$6"; psize="$7"; shift 7
 [ "$(uname -s) $(uname -m)" = "$os $arch" ] || { echo "the Host is no longer $os $arch" >&2; exit 2; }
 umask 022
 d="$HOME/.abundio-server"
 mkdir -p "$d/$v"
 chmod 700 "$d"
 f="$d/$v/abundio-server"
-head -c "$size" > "$f.part"
+# The upload: gzipped (unpacked here) or as it is; checked unpacked.
+if [ "$kind" = gz ]; then
+  head -c "$psize" | gzip -dc > "$f.part" || { rm -f "$f.part"; echo "the upload arrived damaged (could not unpack)" >&2; exit 3; }
+else
+  head -c "$psize" > "$f.part"
+fi
+[ "$(wc -c < "$f.part" | tr -d ' ')" = "$size" ] || { rm -f "$f.part"; echo "the upload arrived damaged (wrong size)" >&2; exit 3; }
 if command -v sha256sum >/dev/null 2>&1; then got=$(sha256sum "$f.part" | cut -d ' ' -f 1)
 else got=$(shasum -a 256 "$f.part" | cut -d ' ' -f 1); fi
 if [ "$got" != "$want" ]; then rm -f "$f.part"; echo "the upload arrived damaged (checksum mismatch)" >&2; exit 3; fi
@@ -319,6 +326,8 @@ pub struct Probe {
     pub linger: Option<bool>,
     /// `launchctl` is there (a Mac).
     pub launchd: bool,
+    /// `gzip` is there: Install uploads the server gzipped.
+    pub gzip: bool,
     /// A start found nobody logged in on the Mac, so no LaunchAgent.
     pub launchd_refused: bool,
     /// `systemd` or `launchd`: the service the app wrote.
@@ -361,6 +370,7 @@ pub fn parse_probe(text: &str) -> Probe {
             "linger" => p.linger = Some(value == "yes"),
             "service" => p.service = Some(value),
             "launchd" => p.launchd = value == "yes",
+            "gzip" => p.gzip = value == "yes",
             "launchd_refused" => p.launchd_refused = value == "yes",
             "agent" if !p.agents.contains(&value) => p.agents.push(value),
             "git" => p.git = Some(value),
@@ -748,13 +758,15 @@ mod tests {
             String::from_utf8(std::process::Command::new("uname").arg(flag).output().unwrap().stdout).unwrap().trim().to_string()
         };
         let (os, arch) = (uname("-s"), uname("-m"));
-        let install = |os: &str, sha: &str, bytes: Vec<u8>| {
+        let send = |os: &str, sha: &str, kind: &str, bytes: Vec<u8>| {
             let mut c = std::process::Command::new("/bin/sh");
             let script = install_then_probe();
-            c.args(["-c", &script, "abundio-setup", os, &arch, "9.9.9", sha, &binary.len().to_string()])
+            let psize = bytes.len().to_string();
+            c.args(["-c", &script, "abundio-setup", os, &arch, "9.9.9", sha, &binary.len().to_string(), kind, &psize])
                 .env("HOME", home.path());
             run(c, Box::new(std::io::Cursor::new(bytes)), std::time::Duration::from_secs(10))
         };
+        let install = |os: &str, sha: &str, bytes: Vec<u8>| send(os, sha, "raw", bytes);
         let current = home.path().join(".abundio-server/current");
         // Another platform: nothing happens.
         assert!(install("Plan9", &sha, binary.clone()).unwrap_err().contains("no longer"));
@@ -767,6 +779,22 @@ mod tests {
         // Whole: installed, and `current` runs it.
         let out = install(&os, &sha, binary.clone()).unwrap();
         assert_eq!(parse_probe(&out).installed_now.as_deref(), Some("9.9.9"));
+        // Gzipped, as the app sends it (phase 15): unpacked on the Host.
+        let gz = {
+            use std::io::Write;
+            let mut c = std::process::Command::new("gzip")
+                .arg("-c")
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            c.stdin.take().unwrap().write_all(&binary).unwrap();
+            c.wait_with_output().unwrap().stdout
+        };
+        let out = send(&os, &sha, "gz", gz.clone()).unwrap();
+        assert_eq!(parse_probe(&out).installed_now.as_deref(), Some("9.9.9"));
+        // Not gzip at all: refused, nothing changed.
+        assert!(send(&os, &sha, "gz", binary.clone()).unwrap_err().contains("damaged"));
         let v = std::process::Command::new(&current).arg("version").output().unwrap();
         assert_eq!(String::from_utf8_lossy(&v.stdout).trim(), "abundio-server 9.9.9");
         assert_eq!(std::fs::read_link(&current).unwrap(), std::path::Path::new("9.9.9/abundio-server"));

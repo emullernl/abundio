@@ -352,8 +352,15 @@ export const hostsApi = {
 		invoke<HostCheck>("host_check", { hostId, agents }),
 	/** Install this app's server on a Host (phase 8b), for the platform its
 	 *  last Check found; resolves with the new checklist. */
-	install: (hostId: string, os: string, arch: string, agents: string[]) =>
-		invoke<HostCheck>("host_install", { hostId, os, arch, agents }),
+	/** Install this app's own server there (phase 15: bundled with the
+	 *  app), gzipped unless the Host's last check found no `gzip`. */
+	install: (
+		hostId: string,
+		os: string,
+		arch: string,
+		agents: string[],
+		gzip = true,
+	) => invoke<HostCheck>("host_install", { hostId, os, arch, agents, gzip }),
 	/** Start the installed server on a Host as a service (phase 8c);
 	 *  `restart` stops the running one first. Resolves with the new
 	 *  checklist. */
@@ -405,6 +412,8 @@ export interface HostCheck {
 		/** The panes a running server has. */
 		panes: number | null;
 		agents: string[];
+		/** `gzip` is there, so Install uploads the server gzipped. */
+		gzip?: boolean;
 	};
 	items: HostCheckItem[];
 	appVersion: string;

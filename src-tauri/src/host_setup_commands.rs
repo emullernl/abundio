@@ -87,8 +87,8 @@ pub async fn host_install(
     os: String,
     arch: String,
     agents: Vec<String>,
+    gzip: Option<bool>,
 ) -> Result<HostCheck, AbundioError> {
-    use sha2::Digest;
     use tauri::Emitter;
     let host = crate::hosts::find(&host_id).ok_or_else(|| AbundioError::NotFound("that Host was removed".into()))?;
     let label = window.label().to_string();
@@ -97,17 +97,19 @@ pub async fn host_install(
             let _ = app.emit_to(label.as_str(), PROGRESS_EVENT, serde_json::json!({ "hostId": host_id, "text": text }));
         };
         let platform = host_setup::platform(&os, &arch).map_err(AbundioError::InvalidOperation)?;
-        let binary = crate::server_binary::locate(&app, platform, &say).map_err(AbundioError::InvalidOperation)?;
-        let bytes = std::fs::read(&binary)?;
-        let sha = format!("{:x}", sha2::Sha256::digest(&bytes));
-        let size = bytes.len().to_string();
+        // The app's own server (phase 15), gzipped unless the Host lacks gzip.
+        let server = crate::server_binary::locate(&app, platform, gzip.unwrap_or(true))
+            .map_err(AbundioError::InvalidOperation)?;
+        let (sha, size) = (server.sha.clone(), server.size.to_string());
+        let (kind, psize) = (if server.gzipped { "gz" } else { "raw" }, server.upload.len().to_string());
+        let bytes = server.upload;
         let version = env!("CARGO_PKG_VERSION");
-        let mut args: Vec<&str> = vec![&os, &arch, version, &sha, &size];
+        let mut args: Vec<&str> = vec![&os, &arch, version, &sha, &size, kind, &psize];
         let mut words: Vec<&str> = agents.iter().filter_map(|a| host_setup::probe_word(a)).collect();
         words.sort_unstable();
         words.dedup();
         args.extend(words);
-        say(&format!("Uploading the server ({} MB)…", bytes.len() / 1_000_000));
+        say(&format!("Uploading the server ({} MB)…", bytes.len().div_ceil(1_000_000)));
         let out = crate::remote_windows::with_ssh_mode(&app, &host.name, Some(&label), |mode| {
             host_setup::run(
                 host.target.sh_c(mode, &host_setup::install_then_probe(), &args),

@@ -111,6 +111,8 @@ export function HostsSection() {
 								last.probe.os,
 								last.probe.arch,
 								agentCommands(id),
+								// Gzipped unless the Host has no gzip (phase 15).
+								last.probe.gzip !== false,
 							);
 			setChecks((c) => ({ ...c, [id]: result }));
 		} catch (e) {
