@@ -3,6 +3,7 @@ import {
 	AGENT_W,
 	type GraphAgent,
 	graphModel,
+	HOST_LINE,
 	layoutGraph,
 	nestBySpawner,
 	nodeFrame,
@@ -104,6 +105,27 @@ describe("graphModel", () => {
 			undefined,
 			"build-box",
 		]);
+	});
+
+	it("gives a joined Workspace's cluster a line for its Host", () => {
+		const one = (id: string, host?: string) => ({
+			id,
+			name: id,
+			...(host ? { host } : {}),
+			agents: [agent(`${id}1`)],
+		});
+		const plain = layoutGraph({
+			workspaces: [one("a"), one("b")],
+			helpers: [],
+		});
+		const hosted = layoutGraph({
+			workspaces: [one("a", "build-box"), one("b")],
+			helpers: [],
+		});
+		expect(hosted.containers.a.height - plain.containers.a.height).toBe(
+			HOST_LINE,
+		);
+		expect(hosted.containers.b.y - plain.containers.b.y).toBe(HOST_LINE);
 	});
 
 	it("puts the Orchestrator's own helpers on their own, without itself", () => {

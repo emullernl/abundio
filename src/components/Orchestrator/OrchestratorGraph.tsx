@@ -37,6 +37,7 @@ import {
 	type Container,
 	type GraphAgent,
 	graphModel,
+	HOST_LINE,
 	layoutGraph,
 	nodeFrame,
 	type Point,
@@ -89,6 +90,8 @@ type ContainerData = {
 	/** A Workspace's id, or null for the Orchestrator's own helpers. */
 	workspaceId: string | null;
 	name: string;
+	/** A joined Workspace's Host, on a line of its own under the name. */
+	host?: string;
 	count: number;
 };
 type WireData = { points: Point[] };
@@ -227,7 +230,8 @@ export function OrchestratorGraph() {
 			out.push(
 				box(ws.id, layout.containers[ws.id], {
 					workspaceId: ws.id,
-					name: ws.host ? `☁ ${ws.host} · ${ws.name}` : ws.name,
+					name: ws.name,
+					...(ws.host ? { host: ws.host } : {}),
 					count: ws.agents.length,
 				}),
 			);
@@ -448,7 +452,7 @@ function FitOnChange({ count }: { count: number }) {
 const ContainerNode = memo(function ContainerNode({
 	data,
 }: NodeProps<Node<ContainerData>>) {
-	const { workspaceId, name, count } = data;
+	const { workspaceId, name, host, count } = data;
 	const actions = useContext(ActionsContext);
 	const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
 	return (
@@ -463,7 +467,7 @@ const ContainerNode = memo(function ContainerNode({
 					// Darker than the view behind it, so the Agents' pills stand out.
 					background: "color-mix(in srgb, var(--bg-primary) 82%, #000)",
 				}}
-				title={`${name} · ${count} agent${count === 1 ? "" : "s"}`}
+				title={`${name}${host ? ` on ${host}` : ""} · ${count} agent${count === 1 ? "" : "s"}`}
 				onContextMenu={(e) => {
 					if (!workspaceId) return;
 					e.preventDefault();
@@ -495,6 +499,21 @@ const ContainerNode = memo(function ContainerNode({
 						{count}
 					</span>
 				</div>
+				{host && (
+					<div
+						className="truncate"
+						style={{
+							height: HOST_LINE,
+							marginTop: -4,
+							padding: "0 12px",
+							fontSize: 10.5,
+							lineHeight: `${HOST_LINE}px`,
+							color: "var(--fg-secondary)",
+						}}
+					>
+						☁ {host}
+					</div>
+				)}
 			</div>
 			{menu && actions && workspaceId && (
 				<PaneContextMenu
