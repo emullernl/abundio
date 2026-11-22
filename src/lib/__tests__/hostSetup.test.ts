@@ -38,15 +38,3 @@ describe("restartMessage", () => {
 		expect(restartMessage("service", "box", 2)).toContain("2 panes are");
 	});
 });
-
-import { uninstallMessage } from "../hostSetup";
-
-describe("uninstallMessage (ADR-0062, phase 13)", () => {
-	it("asks a Mac's user to unload their own LaunchAgent first", () => {
-		expect(uninstallMessage("Darwin")).toContain(
-			"launchctl bootout gui/$(id -u)/dev.abundio.server",
-		);
-		expect(uninstallMessage("Linux")).not.toContain("launchctl");
-		expect(uninstallMessage(null)).not.toContain("launchctl");
-	});
-});

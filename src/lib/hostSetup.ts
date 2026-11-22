@@ -26,15 +26,7 @@ export function restartMessage(action: string, host: string, panes: number) {
 	return `${count} running on ${host}. ${what}, which ends them and their Agents. Their layouts are kept, and Agents resume their sessions where they can when you open the Profile again.`;
 }
 
-/** The LaunchAgent label the Mac steps use (ADR-0062, phase 13). */
-export const MAC_LAUNCH_AGENT = "dev.abundio.server";
-
-/** What Uninstall's confirm says; `os` is the Host's, when checked. On a
- *  Mac a LaunchAgent the user set up would start the server again, and
- *  Abundio never touches it, so the user unloads it first. */
-export function uninstallMessage(os: string | null): string {
-	const base =
-		"This stops the server, ending every pane and Agent it runs, and deletes ~/.abundio-server on the Host: the server and its data (the Host's Profiles, Workspaces, layouts and notes). Your project folders there are not touched.";
-	if (os !== "Darwin") return base;
-	return `${base} If you set up a LaunchAgent for it on the Mac, unload it there first, or it starts the server again: launchctl bootout gui/$(id -u)/${MAC_LAUNCH_AGENT}`;
+/** What Uninstall's confirm says. */
+export function uninstallMessage(): string {
+	return "This stops the server, ending every pane and Agent it runs, and deletes ~/.abundio-server on the Host, and its service if Abundio set one up: the server and its data (the Host's Profiles, Workspaces, layouts and notes). Your project folders there are not touched.";
 }

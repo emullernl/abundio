@@ -82,12 +82,6 @@ export function HostsSection() {
 		null,
 	);
 
-	/** The Host's OS as its last check found it, if it was checked. */
-	const osOf = (id: string): string | null => {
-		const c = checks[id];
-		return c && typeof c === "object" && "probe" in c ? c.probe.os : null;
-	};
-
 	const askAction = (host: HostEntry, last: HostCheck, action: string) => {
 		const panes = panesEndedBy(action, last);
 		if (panes > 0) {
@@ -224,7 +218,7 @@ export function HostsSection() {
 			{confirmUninstall && (
 				<ConfirmDialog
 					title={`Uninstall the server from ${confirmUninstall.name}?`}
-					message={uninstallMessage(osOf(confirmUninstall.id))}
+					message={uninstallMessage()}
 					confirmLabel="Uninstall"
 					confirmVariant="danger"
 					onConfirm={() => void uninstall(confirmUninstall)}

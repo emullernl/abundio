@@ -55,9 +55,8 @@ if command -v loginctl >/dev/null 2>&1; then
   p linger "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)"
 fi
 [ -f "$HOME/.config/systemd/user/abundio-server.service" ] && p service systemd
-# A Mac's LaunchAgent the user set up from the checklist's steps (read only:
-# Abundio never runs launchctl).
-[ -f "$HOME/Library/LaunchAgents/dev.abundio.server.plist" ] && p service user-launchd
+command -v launchctl >/dev/null 2>&1 && p launchd yes
+[ -f "$HOME/Library/LaunchAgents/dev.abundio.server.plist" ] && p service launchd
 # Agents, git and gh as a pane would find them: on the PATH of the user's
 # own interactive login shell, given 15 s in case its startup files wait.
 inner='p() { printf "ABUNDIO %s=%s\n" "$1" "$2"; }
@@ -159,17 +158,34 @@ else
       systemctl --user daemon-reload || true
     fi
   fi
-  # The user's own LaunchAgent on a Mac restarts the server whenever it
-  # stops (KeepAlive): let it, never a second one beside it.
-  # Its file says nothing of whether it is loaded (Abundio never asks
-  # launchctl): one that is brings the server back within seconds; past
-  # that, start it here.
-  if [ "$how" = detached ] && [ "$(uname -s)" = Darwin ] && [ -f "$HOME/Library/LaunchAgents/dev.abundio.server.plist" ]; then
-    j=0
-    while [ "$j" -lt 5 ]; do
-      if alive; then how=user-launchd; break; fi
-      j=$((j + 1)); sleep 1
-    done
+  # A Mac: a LaunchAgent in the user's login session, which starts the
+  # server at login and again whenever it stops. Loading one needs that
+  # session (someone logged in on the Mac's screen); without it, detached.
+  if [ "$how" = detached ] && [ "${ABUNDIO_SETUP_SERVICE:-}" != detached ] && [ "$(uname -s)" = Darwin ] && command -v launchctl >/dev/null 2>&1; then
+    a="$HOME/Library/LaunchAgents"
+    mkdir -p "$a"
+    pl="$a/dev.abundio.server.plist"
+    x() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+    {
+      printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+      printf '<plist version="1.0"><dict>\n<key>Label</key><string>dev.abundio.server</string>\n'
+      printf '<key>ProgramArguments</key><array><string>%s</string><string>%s</string></array>\n' "$(x "$srv")" run
+      printf '<key>EnvironmentVariables</key><dict><key>SHELL</key><string>%s</string></dict>\n' "$(x "$sh_")"
+      printf '<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><true/>\n<key>ThrottleInterval</key><integer>2</integer>\n'
+      printf '<key>StandardOutPath</key><string>%s</string>\n<key>StandardErrorPath</key><string>%s</string>\n' "$(x "$log")" "$(x "$log")"
+      printf '</dict></plist>\n'
+    } > "$pl.new"
+    mv -f "$pl.new" "$pl"
+    uid=$(id -u)
+    launchctl bootout "gui/$uid/dev.abundio.server" >/dev/null 2>&1 || true
+    if launchctl bootstrap "gui/$uid" "$pl" >/dev/null 2>&1; then
+      how=launchd
+    else
+      # Nobody logged in on the Mac: no LaunchAgent, rather than one that
+      # never loads.
+      rm -f "$pl"
+      printf 'ABUNDIO launchd_refused=yes\n'
+    fi
   fi
   if [ "$how" = detached ]; then
     # Not `nohup`: macOS's refuses to run without a console (the tests run
@@ -204,6 +220,12 @@ unit="$HOME/.config/systemd/user/abundio-server.service"
 if [ -f "$unit" ] && command -v systemctl >/dev/null 2>&1; then
   systemctl --user stop abundio-server.service >/dev/null 2>&1 || true
 fi
+# A Mac's LaunchAgent restarts the server whenever it stops: unloaded
+# first (Start loads it again).
+agent="$HOME/Library/LaunchAgents/dev.abundio.server.plist"
+if [ -f "$agent" ] && command -v launchctl >/dev/null 2>&1; then
+  launchctl bootout "gui/$(id -u)/dev.abundio.server" >/dev/null 2>&1 || true
+fi
 servers() { pgrep -u "$(id -u)" -f "$sd/(current|[^/]+/abundio-server) run\$" 2>/dev/null || true; }
 left=$(servers)
 if [ -n "$left" ]; then
@@ -225,6 +247,7 @@ if [ -f "$unit" ]; then
   rm -f "$unit"
   systemctl --user daemon-reload >/dev/null 2>&1 || true
 fi
+rm -f "$agent"
 rm -rf "$HOME/.abundio-server"
 printf 'ABUNDIO removed=yes\n'
 "#;
@@ -279,7 +302,11 @@ pub struct Probe {
     pub systemd_user: bool,
     /// `None`: no `loginctl`.
     pub linger: Option<bool>,
-    /// `systemd`: the service the app wrote.
+    /// `launchctl` is there (a Mac).
+    pub launchd: bool,
+    /// A start found nobody logged in on the Mac, so no LaunchAgent.
+    pub launchd_refused: bool,
+    /// `systemd` or `launchd`: the service the app wrote.
     pub service: Option<String>,
     pub agents: Vec<String>,
     pub git: Option<String>,
@@ -320,6 +347,8 @@ pub fn parse_probe(text: &str) -> Probe {
             "systemd_user" => p.systemd_user = value == "yes",
             "linger" => p.linger = Some(value == "yes"),
             "service" => p.service = Some(value),
+            "launchd" => p.launchd = value == "yes",
+            "launchd_refused" => p.launchd_refused = value == "yes",
             "agent" if !p.agents.contains(&value) => p.agents.push(value),
             "git" => p.git = Some(value),
             "gh" => p.gh = Some(value),
@@ -348,29 +377,6 @@ pub fn platform(os: &str, arch: &str) -> Result<&'static str, String> {
     }
 }
 
-/// What a Mac user runs to keep the server running (phase 13): a
-/// LaunchAgent that starts it at login and again whenever it stops, from
-/// `~/.abundio-server/current`, so an Update's new version starts by
-/// itself. Abundio shows it and never runs it. Run in Terminal on the Mac,
-/// in the user's login session (`gui/` needs one).
-pub const MAC_LAUNCH_AGENT_STEPS: &str = r#"mkdir -p ~/Library/LaunchAgents
-cat > ~/Library/LaunchAgents/dev.abundio.server.plist <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>dev.abundio.server</string>
-  <key>ProgramArguments</key><array><string>$HOME/.abundio-server/current</string><string>run</string></array>
-  <key>EnvironmentVariables</key><dict><key>SHELL</key><string>$SHELL</string></dict>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>ThrottleInterval</key><integer>2</integer>
-  <key>StandardOutPath</key><string>$HOME/.abundio-server/server.log</string>
-  <key>StandardErrorPath</key><string>$HOME/.abundio-server/server.log</string>
-</dict></plist>
-EOF
-pkill -f "$HOME/.abundio-server/current run"; sleep 1
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.abundio.server.plist"#;
-
 /// One line of the checklist.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -384,13 +390,10 @@ pub struct CheckItem {
     /// The button that fixes it: `install`, `update`, `start`, `service`
     /// (restart a server running by itself as a service).
     pub action: Option<&'static str>,
-    /// Commands for the user to run on the Host themselves, shown to copy
-    /// (a Mac's LaunchAgent, which Abundio never sets up itself).
-    pub steps: Option<String>,
 }
 
 fn item(id: &'static str, state: &'static str, label: impl Into<String>) -> CheckItem {
-    CheckItem { id, label: label.into(), state, fix: None, action: None, steps: None }
+    CheckItem { id, label: label.into(), state, fix: None, action: None }
 }
 
 impl CheckItem {
@@ -441,10 +444,7 @@ pub fn checklist(p: &Probe, version: &str) -> Vec<CheckItem> {
         } else {
             item("running", "error", "Not running")
                 .fix(match (p.os.as_str(), p.service.as_deref()) {
-                    ("Darwin", Some("user-launchd")) => {
-                        "Start lets your LaunchAgent bring it back, or runs it itself if that LaunchAgent is not loaded."
-                    }
-                    ("Darwin", _) => "Start runs it until the Mac restarts or you log out.",
+                    ("Darwin", _) => "Start runs it as a LaunchAgent, so it comes back by itself (that needs you logged in on the Mac).",
                     _ => "Start runs it as a service, so it comes back by itself.",
                 })
                 .action("start")
@@ -509,17 +509,15 @@ fn reboot_item(p: &Probe, installed: bool) -> CheckItem {
             .fix(format!("{linger}, then Check again to set it up as a systemd user service.")),
         ("Linux", _) => item("reboot", "warn", "Won't come back after a reboot (no systemd --user)")
             .fix("Start it again from here after a reboot."),
-        // A Mac: kept running by the user's own LaunchAgent (phase 13).
-        ("Darwin", Some("user-launchd")) => {
-            // Its file only: whether it is loaded only launchctl knows.
-            item("reboot", "ok", "Comes back when you log in on the Mac (your LaunchAgent, once loaded)")
-        }
-        ("Darwin", _) => {
-            let mut i = item("reboot", "warn", "Won't come back after a reboot")
-                .fix("Abundio does not set up a service on a Mac. To keep the server running, paste these lines into Terminal on the Mac, logged in as this user; they restart the server, ending its running panes.");
-            i.steps = Some(MAC_LAUNCH_AGENT_STEPS.to_string());
-            i
-        }
+        // A Mac: a LaunchAgent in the user's login session (phase 13).
+        ("Darwin", Some("launchd")) => item("reboot", "ok", "Comes back when you log in on the Mac"),
+        ("Darwin", _) if movable && p.launchd => item("reboot", "warn", "Not set up to come back after a reboot")
+            .fix("Restarts it as a LaunchAgent; that needs you logged in on the Mac.")
+            .action("service"),
+        ("Darwin", _) if p.launchd_refused => item("reboot", "warn", "Won't come back after a reboot")
+            .fix("Nobody was logged in on the Mac, so it runs without a LaunchAgent. Log in there, then Start or Check again."),
+        ("Darwin", _) => item("reboot", "warn", "Won't come back after a reboot")
+            .fix("Start sets it up as a LaunchAgent while you are logged in on the Mac."),
         _ => item("reboot", "warn", "Won't come back after a reboot"),
     }
 }
@@ -635,20 +633,19 @@ mod tests {
         assert_eq!(list.iter().find(|i| i.id == "server").unwrap().action, None);
     }
 
-    /// Phase 13: a Mac is kept running by the user's own LaunchAgent, which
-    /// the checklist recognises by its file and otherwise offers as steps.
+    /// Phase 13: a Mac's server runs as a LaunchAgent Abundio sets up, which
+    /// needs someone logged in on the Mac.
     #[test]
-    fn a_macs_reboot_line_offers_the_users_own_launch_agent() {
-        let mac = "ABUNDIO os=Darwin\nABUNDIO arch=arm64\nABUNDIO user=me\nABUNDIO home=/Users/me\nABUNDIO home_writable=yes\nABUNDIO current=3.1.0\nABUNDIO running=yes\nABUNDIO done=yes\n";
+    fn a_macs_reboot_line_follows_its_launch_agent() {
+        let mac = "ABUNDIO os=Darwin\nABUNDIO arch=arm64\nABUNDIO user=me\nABUNDIO home=/Users/me\nABUNDIO home_writable=yes\nABUNDIO current=3.1.0\nABUNDIO running=yes\nABUNDIO launchd=yes\nABUNDIO done=yes\n";
         let reboot = |text: &str| checklist(&parse_probe(text), "3.1.0").into_iter().find(|i| i.id == "reboot").unwrap();
-        let without = reboot(mac);
-        assert_eq!((without.state, without.action), ("warn", None));
-        let steps = without.steps.unwrap();
-        assert!(steps.contains("dev.abundio.server.plist") && steps.contains("launchctl bootstrap gui/"));
-        assert!(steps.contains("<key>KeepAlive</key><true/>"));
-        let with = reboot(&format!("{mac}ABUNDIO service=user-launchd\n"));
-        assert_eq!(with.state, "ok");
-        assert!(with.steps.is_none());
+        // Running by itself: a LaunchAgent can take it over.
+        let loose = reboot(mac);
+        assert_eq!((loose.state, loose.action), ("warn", Some("service")));
+        assert_eq!(reboot(&format!("{mac}ABUNDIO service=launchd\n")).state, "ok");
+        // Nobody was logged in: says so.
+        let refused = reboot(&format!("{mac}ABUNDIO launchd_refused=yes\n").replace("running=yes", "running=no"));
+        assert!(refused.fix.unwrap().contains("Nobody was logged in"));
         assert_eq!(platform("Darwin", "arm64"), Ok("macos-universal"));
     }
 
@@ -782,19 +779,9 @@ esac
         let restarted = parse_probe(&sh(start_then_probe(true)).unwrap());
         assert_eq!(restarted.started.as_deref(), Some("detached"));
         assert_ne!(pid(), first);
-        // A Mac whose LaunchAgent file is there but not loaded: after
-        // giving it a few seconds, the server is started here all the same.
-        if cfg!(target_os = "macos") {
-            let agents = home.path().join("Library/LaunchAgents");
-            std::fs::create_dir_all(&agents).unwrap();
-            std::fs::write(agents.join("dev.abundio.server.plist"), "<plist/>").unwrap();
-            let unloaded = sh(start_then_probe(true)).unwrap();
-            assert!(!unloaded.contains("Terminated"), "{unloaded}");
-            let unloaded = parse_probe(&unloaded);
-            assert_eq!(unloaded.started.as_deref(), Some("detached"));
-            assert!(unloaded.running);
-            assert_eq!(unloaded.service.as_deref(), Some("user-launchd"));
-        }
+        // The tests start it detached (ABUNDIO_SETUP_SERVICE): never a
+        // LaunchAgent in the developer's real login session.
+        assert!(!home.path().join("Library/LaunchAgents/dev.abundio.server.plist").exists());
         // Uninstall: stopped, and the folder is gone.
         let last = pid();
         assert!(parse_probe(&sh(uninstall()).unwrap()).removed);

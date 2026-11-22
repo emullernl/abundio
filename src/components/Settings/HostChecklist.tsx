@@ -1,6 +1,4 @@
 import { AlertTriangle, Check, X } from "lucide-react";
-import { useState } from "react";
-import { writeClipboardText } from "../../lib/clipboard";
 import type { HostCheck, HostCheckItem } from "../../lib/ipc";
 import { secondaryButtonClass } from "../PromptActions/fieldStyles";
 
@@ -72,53 +70,9 @@ export function HostChecklist({
 								{item.fix}
 							</span>
 						)}
-						{item.steps && <CopySteps text={item.steps} />}
 					</div>
 				</li>
 			))}
 		</ul>
-	);
-}
-
-/** Commands for the user to run on the Host, to copy (phase 13: Abundio
- *  never runs them). */
-function CopySteps({ text }: { text: string }) {
-	const [copied, setCopied] = useState(false);
-	return (
-		<div className="flex flex-col" style={{ gap: 4, marginTop: 4 }}>
-			<pre
-				style={{
-					margin: 0,
-					padding: "8px 10px",
-					maxHeight: 160,
-					overflow: "auto",
-					fontSize: 10.5,
-					fontFamily: "var(--font-mono)",
-					borderRadius: 6,
-					border: "1px solid var(--border)",
-					background: "var(--bg-primary)",
-					color: "var(--fg-primary)",
-					userSelect: "text",
-					whiteSpace: "pre",
-				}}
-			>
-				{text}
-			</pre>
-			<div>
-				<button
-					type="button"
-					className={`${secondaryButtonClass} rounded-md`}
-					style={{ fontSize: 11, height: 24, padding: "0 10px" }}
-					onClick={() =>
-						void writeClipboardText(text).then(
-							() => setCopied(true),
-							() => {},
-						)
-					}
-				>
-					{copied ? "Copied" : "Copy"}
-				</button>
-			</div>
-		</div>
 	);
 }
