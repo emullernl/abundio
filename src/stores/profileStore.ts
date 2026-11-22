@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { appWindow } from "../lib/appWindow";
+import { setOwnHost } from "../lib/hostRouting";
 import {
 	hostsApi,
 	profiles as profilesApi,
@@ -311,3 +312,9 @@ async function loadRemote(remote: RemoteBinding): Promise<void> {
 export function fallbackProfileId(): string {
 	return useProfileStore.getState().activeProfileId ?? DEFAULT_PROFILE_ID;
 }
+
+// Which backend this Window's own is, for checking where events come from
+// (ADR-0065).
+useProfileStore.subscribe((s, prev) => {
+	if (s.remote !== prev.remote) setOwnHost(s.remote?.hostId ?? null);
+});

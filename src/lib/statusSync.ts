@@ -1,4 +1,5 @@
 import { isDemoMode } from "./demo";
+import { sentByOwnerOf } from "./hostRouting";
 import type { StatusEvent, StatusMode } from "./statusReducer";
 
 /**
@@ -103,9 +104,16 @@ export function onStatusUpdate(fn: UpdateHandler): void {
 	if (!isRustStatusAuthority()) return;
 	ipc()
 		.then(({ listenToThisWindow }) =>
-			listenToThisWindow<StatusUpdate[]>("status-updates", (event) => {
-				for (const u of event.payload) handler?.(u, true);
-			}),
+			listenToThisWindow<(StatusUpdate & { fromHost?: string })[]>(
+				"status-updates",
+				(event) => {
+					for (const u of event.payload) {
+						// A Host reports only its own PTYs (ADR-0065).
+						if (sentByOwnerOf(u.fromHost, "pty", u.ptyId, { unknownOk: true }))
+							handler?.(u, true);
+					}
+				},
+			),
 		)
 		.catch((e) => console.warn("[status] cannot hear Rust's idle scan", e));
 }

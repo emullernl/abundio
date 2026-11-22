@@ -11,7 +11,12 @@ import { isDemoMode } from "./demo";
 import { mockInvoke } from "./demo/mockInvoke";
 import { mockListen } from "./demo/mockListen";
 import { HOST_API_COMMANDS } from "./hostApiCommands";
-import { mergeAnswers, type RoutedCall, routeCall } from "./hostRouting";
+import {
+	mergeAnswers,
+	type RoutedCall,
+	routeCall,
+	sentByOwnerOf,
+} from "./hostRouting";
 import type { HostSettings } from "./hostSettings";
 import type { LayoutOp } from "./layoutOps";
 import type { LayoutState } from "./layoutSync";
@@ -498,8 +503,14 @@ export const pty = {
 	onHookApplied: (
 		callback: (notice: HookNotice) => void,
 	): Promise<UnlistenFn> =>
-		listenToThisWindow<HookNotice>("agent-hook-applied", (event) =>
-			callback(event.payload),
+		listenToThisWindow<HookNotice & { fromHost?: string }>(
+			"agent-hook-applied",
+			(event) => {
+				// A Host speaks only for its own panes (ADR-0065).
+				const p = event.payload;
+				if (sentByOwnerOf(p.fromHost, "pty", p.ptyId, { unknownOk: true }))
+					callback(p);
+			},
 		),
 
 	onHook: (
@@ -1842,6 +1853,8 @@ export interface AgentControlRequestEvent {
 	 *  with `--workspace`), and whether this Window must open it first. */
 	target?: { workspaceId: string; open: boolean };
 	request: unknown;
+	/** The Host that sent it; none: this Window's own backend. */
+	fromHost?: string;
 }
 
 export type AgentControlReply =
@@ -1932,16 +1945,40 @@ export const agentControl = {
 
 	/** A pane closed in some Window (a broadcast, heard by every Window). */
 	onPaneClosed: (cb: (paneId: string) => void) =>
-		listen<{ paneId: string }>("agent-control-pane-closed", (e) =>
-			cb(e.payload.paneId),
+		listen<{ paneId: string; fromHost?: string }>(
+			"agent-control-pane-closed",
+			(e) => {
+				if (
+					sentByOwnerOf(e.payload.fromHost, "pane", e.payload.paneId, {
+						unknownOk: true,
+					})
+				)
+					cb(e.payload.paneId);
+			},
 		),
 
 	/** Rust stopped waiting for this request (timeout): drop it. */
 	/** What the user sees of a call Rust answers itself: the target's
 	 *  Control badge and the Orchestrator graph's line, begun and ended. */
 	onEffect: (cb: (e: AgentControlEffect) => void) =>
-		listenToThisWindow<AgentControlEffect>("agent-control-effect", (e) =>
-			cb(e.payload),
+		listenToThisWindow<AgentControlEffect & { fromHost?: string }>(
+			"agent-control-effect",
+			(e) => {
+				const p = e.payload;
+				// An end only stops what a begin started; a begin or input
+				// must name a pane of the sender's own (ADR-0065).
+				const pane =
+					p.type === "begin"
+						? p.targetPaneId
+						: p.type === "input"
+							? p.paneId
+							: null;
+				if (
+					pane === null ||
+					sentByOwnerOf(p.fromHost, "pane", pane, { unknownOk: true })
+				)
+					cb(p);
+			},
 		),
 	/** Tell Rust what the Window knows about its panes (`pane_facts.rs`). */
 	reportPaneFacts: (reports: PaneFactsReport[]) =>

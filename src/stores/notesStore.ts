@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { sentByOwnerOf } from "../lib/hostRouting";
 import { notes as notesApi } from "../lib/ipc";
 import { onSharedFromRust } from "../lib/layoutSync";
 import { notesEditorFor } from "../lib/notesEditors";
@@ -141,8 +142,11 @@ export const useNotesStore = create<NotesState>((set, get) => ({
 	},
 }));
 
-onSharedFromRust<{ workspaceId: string; content: string }>(
+onSharedFromRust<{ workspaceId: string; content: string; fromHost?: string }>(
 	"note-changed",
-	({ workspaceId, content }) =>
-		useNotesStore.getState().applyRemoteNote(workspaceId, content),
+	({ workspaceId, content, fromHost }) => {
+		// A Host writes only its own Workspaces' notes (ADR-0065).
+		if (!sentByOwnerOf(fromHost, "workspace", workspaceId)) return;
+		useNotesStore.getState().applyRemoteNote(workspaceId, content);
+	},
 );

@@ -1,4 +1,5 @@
 import { isDemoMode } from "./demo";
+import { sentByOwnerOf } from "./hostRouting";
 import { diffLayout, type LayoutOp, sameLayout } from "./layoutOps";
 import { parseTabLayout } from "./paneTree";
 import type { Tab } from "./types";
@@ -119,8 +120,14 @@ export function onLayoutFromRust(fn: LayoutHandler): void {
 	if (!isRustLayoutAuthority()) return;
 	ipc()
 		.then(({ listenToThisWindow }) =>
-			listenToThisWindow<LayoutState>("layout-changed", (event) =>
-				receiveLayoutChanged(event.payload),
+			listenToThisWindow<LayoutState & { fromHost?: string }>(
+				"layout-changed",
+				(event) => {
+					// A Host edits only its own Tabs (ADR-0065).
+					const p = event.payload;
+					if (sentByOwnerOf(p.fromHost, "tab", p.tabId))
+						receiveLayoutChanged(p);
+				},
 			),
 		)
 		.catch((e) => console.warn("[layout] cannot hear other Windows", e));
@@ -203,8 +210,12 @@ export function onTabsFromRust(fn: (change: TabsChanged) => void): void {
 	if (!isRustLayoutAuthority()) return;
 	ipc()
 		.then(({ listenToThisWindow }) =>
-			listenToThisWindow<TabsChanged>("tabs-changed", (event) =>
-				fn(event.payload),
+			listenToThisWindow<TabsChanged & { fromHost?: string }>(
+				"tabs-changed",
+				(event) => {
+					const p = event.payload;
+					if (sentByOwnerOf(p.fromHost, "workspace", p.workspaceId)) fn(p);
+				},
 			),
 		)
 		.catch((e) => console.warn("[layout] cannot hear other Windows' Tabs", e));

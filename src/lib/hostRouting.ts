@@ -240,6 +240,41 @@ function at(args: Record<string, unknown>, dotted: string): unknown {
 	return v;
 }
 
+/** The Window's own backend: `null` for this computer, a Host's id for a
+ *  remote Window (the profile store sets it). */
+let ownHost: string | null = null;
+export function setOwnHost(hostId: string | null): void {
+	ownHost = hostId;
+}
+
+/**
+ * Whether an event that names `id` came from the backend that owns it
+ * (ADR-0065): a Host speaks only for its own Workspaces, never this
+ * computer's. `fromHost` is what the desktop stamped on a Host's event;
+ * none means this computer's own backend.
+ */
+export function sentByOwnerOf(
+	fromHost: unknown,
+	by: "workspace" | "tab" | "pane" | "pty",
+	id: string | null | undefined,
+	opts: { unknownOk?: boolean } = {},
+): boolean {
+	const from = typeof fromHost === "string" ? fromHost : null;
+	if (!id) return from === ownHost;
+	const ws =
+		by === "workspace"
+			? id
+			: by === "tab"
+				? lookups?.workspaceOfTab(id)
+				: by === "pane"
+					? lookups?.workspaceOfPane(id)
+					: lookups?.workspaceOfPty(id);
+	// Not known here yet (a pane or PTY just started on its backend): no
+	// Workspace to speak for, so nothing of this computer's is reached.
+	if (!ws) return opts.unknownOk === true || from === ownHost;
+	return from === (joinedWorkspaces.get(ws) ?? ownHost);
+}
+
 /** The Host of one thing, or `null` for the Window's own backend. */
 function hostOf(by: By, id: string): string | null {
 	// A Profile id names a Profile only within one backend (every database

@@ -244,6 +244,40 @@ pub fn needs_sign_in(reason: &str) -> bool {
         .any(|m| r.contains(m))
 }
 
+/// The events an Abundio server sends its Clients, and nothing else: what a
+/// Host may tell a Window. Names with an id after them come as a prefix.
+const HOST_EVENTS: &[&str] = &[
+    "agent-control-cancel",
+    "agent-control-effect",
+    "agent-control-pane-closed",
+    "agent-control-request",
+    "agent-hook-applied",
+    "env-vars-unavailable",
+    "fs-change",
+    "git-change",
+    crate::host_settings::CHANGED_EVENT,
+    "layout-changed",
+    "note-changed",
+    "orchestrator-folder-changed",
+    "profiles-changed",
+    crate::prompt_actions::PROMPT_ACTIONS_CHANGED,
+    "status-updates",
+    "tabs-changed",
+    "workspaces-changed",
+    "worktrees-changed",
+];
+const HOST_EVENT_PREFIXES: &[&str] = &["pty-status-", "pty-activity-", "git-state-", "search-progress-"];
+
+/// Whether a Host may send `name` to a Window.
+pub fn host_event_allowed(name: &str) -> bool {
+    HOST_EVENTS.contains(&name)
+        || HOST_EVENT_PREFIXES.iter().any(|p| {
+            name.strip_prefix(p).is_some_and(|id| {
+                !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            })
+        })
+}
+
 /// Told when a connection ends, so its Windows can show it.
 pub const CONNECTION_LOST_EVENT: &str = "host-connection-lost";
 
@@ -260,11 +294,30 @@ struct Listener {
 impl HostListener for Listener {
     fn event(&self, client: Option<&str>, name: &str, mut payload: Value) {
         let Some(router) = self.router.upgrade() else { return };
+        // A Host may be shared or less trusted (ADR-0065): only the events a
+        // server sends reach a Window, never one the app's own Windows trust
+        // from each other (settings, updates, prompts, quit).
+        if !host_event_allowed(name) {
+            log::warn!("[host] {} sent an event it may not send ({name:?}); dropped", self.host);
+            return;
+        }
         // Which Host it came from: ids are unique only within one backend
         // (every database seeds the same Default profile id), so a Window
         // showing several backends tells their events apart by this.
-        if let Value::Object(map) = &mut payload {
+        let tag = |map: &mut serde_json::Map<String, Value>| {
             map.insert("fromHost".into(), Value::String(self.host.clone()));
+        };
+        match &mut payload {
+            Value::Object(map) => tag(map),
+            // A list of records (`status-updates`): each says where it came from.
+            Value::Array(items) => {
+                for item in items.iter_mut() {
+                    if let Value::Object(map) = item {
+                        tag(map);
+                    }
+                }
+            }
+            _ => {}
         }
         match client {
             Some(window) => {
@@ -699,6 +752,24 @@ mod tests {
         fn pty_frame(&self, _w: &str, _f: &[u8]) {}
     }
 
+    /// A Host may send only a server's own events (ADR-0065).
+    #[test]
+    fn a_host_may_send_only_a_servers_events() {
+        for ok in ["workspaces-changed", "status-updates", "agent-control-request", "pty-status-3f2a-9c", "git-state-ws_1", "search-progress-abc"] {
+            assert!(host_event_allowed(ok), "{ok}");
+        }
+        for bad in ["settings-store-changed", "ssh-prompt", "update-available", "whats-new", "save-all-before-quit",
+            "switch-profile-request", "open-settings", "settings-set-host", "pty-status-", "pty-status-a b", "git-state-x/y"] {
+            assert!(!host_event_allowed(bad), "{bad}");
+        }
+        let sink = Arc::new(Recorder(Mutex::new(Vec::new())));
+        let router = HostRouter::new(sink.clone());
+        router.join("local", "box");
+        let listener = Listener { host: "box".into(), router: Arc::downgrade(&router), generation: 0 };
+        listener.event(None, "settings-store-changed", serde_json::json!({ "agents": [] }));
+        assert!(sink.0.lock().unwrap().is_empty());
+    }
+
     /// Ids are unique only within one backend: a forwarded event says
     /// which Host sent it.
     #[test]
@@ -709,9 +780,11 @@ mod tests {
         let listener = Listener { host: "box".into(), router: Arc::downgrade(&router), generation: 0 };
         listener.event(None, "workspaces-changed", serde_json::json!({ "profileId": "p" }));
         listener.event(None, "profiles-changed", Value::Null);
+        listener.event(None, "status-updates", serde_json::json!([{ "ptyId": "y" }]));
         let got = sink.0.lock().unwrap().clone();
         assert_eq!(got[0].2, serde_json::json!({ "profileId": "p", "fromHost": "box" }));
         assert_eq!(got[1].2, Value::Null);
+        assert_eq!(got[2].2, serde_json::json!([{ "ptyId": "y", "fromHost": "box" }]));
     }
 
     /// Phase 10: a local Window joining Profiles on two Hosts is on both,

@@ -22,6 +22,7 @@ import {
 	startControlActivity,
 } from "../controlActivity";
 import { fleetConsoleShowing } from "../fleetFocus";
+import { sentByOwnerOf } from "../hostRouting";
 import {
 	type AgentControlEffect,
 	type AgentControlReply,
@@ -1025,6 +1026,27 @@ export function toReply(
 const running = new Map<string, AbortController>();
 
 async function onRequest(e: AgentControlRequestEvent): Promise<void> {
+	// A Host acts only on its own Workspaces, never this computer's: a
+	// request naming another backend's Workspace is refused (ADR-0065).
+	const named = [e.caller.workspaceId, e.target?.workspaceId].filter(
+		(id): id is string => !!id,
+	);
+	if (!named.every((id) => sentByOwnerOf(e.fromHost, "workspace", id))) {
+		console.warn("[control] refused a request for another backend's Workspace");
+		await agentControl
+			.reply(
+				e.id,
+				toReply({
+					status: "rejected",
+					reason: new ControlError(
+						"out_of_reach",
+						"that Workspace is not on the machine that asked",
+					),
+				}),
+			)
+			.catch(() => {});
+		return;
+	}
 	const abort = new AbortController();
 	running.set(e.id, abort);
 	const [outcome] = await Promise.allSettled([

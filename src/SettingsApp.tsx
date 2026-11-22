@@ -242,6 +242,9 @@ export function setupCrossWindowSync(): void {
 	listen<Record<string, unknown>>("settings-store-changed", (event) => {
 		const partial = event.payload;
 		if (!partial || typeof partial !== "object") return;
+		// Only this computer's Windows change its settings, never a Host
+		// (ADR-0065; the desktop drops such events, this is a second guard).
+		if ("fromHost" in partial) return;
 		const json = canonical(sliceOf(partial));
 		if (json === lastSerialized) return;
 		// Record BEFORE rehydrate so the resulting store update doesn't echo.

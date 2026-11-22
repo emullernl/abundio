@@ -5,7 +5,9 @@ import {
 	mergeAnswers,
 	resetRouting,
 	routeCall,
+	sentByOwnerOf,
 	setJoinedWorkspace,
+	setOwnHost,
 	setRoutingLookups,
 } from "../hostRouting";
 
@@ -107,5 +109,43 @@ describe("hostRouting", () => {
 		).toEqual(["box"]);
 		expect(hosts("fs_search_cancel", { searchId: "s1" })).toEqual(["box"]);
 		expect(hosts("fs_search_cancel", { searchId: "s1" })).toEqual([null]);
+	});
+});
+
+describe("sentByOwnerOf (ADR-0065: a Host speaks only for its own)", () => {
+	beforeEach(() => {
+		resetRouting();
+		setOwnHost(null);
+		joinOne();
+	});
+
+	it("lets this computer speak for its own Workspaces, and a Host for its joined ones", () => {
+		expect(sentByOwnerOf(undefined, "workspace", "mine")).toBe(true);
+		expect(sentByOwnerOf("box", "workspace", "theirs")).toBe(true);
+		expect(sentByOwnerOf("box", "tab", "t-theirs")).toBe(true);
+	});
+
+	it("never lets a Host speak for this computer's Workspaces, Tabs, panes or PTYs", () => {
+		expect(sentByOwnerOf("box", "workspace", "mine")).toBe(false);
+		expect(sentByOwnerOf("box", "tab", "t-mine")).toBe(false);
+		expect(sentByOwnerOf("box", "pane", "p-mine", { unknownOk: true })).toBe(
+			false,
+		);
+		expect(sentByOwnerOf("box", "pty", "y-mine", { unknownOk: true })).toBe(
+			false,
+		);
+		// Nor another Host for this one's.
+		expect(sentByOwnerOf("lab", "workspace", "theirs")).toBe(false);
+	});
+
+	it("lets a pane or PTY not known yet through only where asked", () => {
+		expect(sentByOwnerOf("box", "pty", "new", { unknownOk: true })).toBe(true);
+		expect(sentByOwnerOf("box", "workspace", "unknown")).toBe(false);
+	});
+
+	it("in a remote Window, its own Host is its own backend", () => {
+		setOwnHost("box");
+		expect(sentByOwnerOf("box", "workspace", "unknown")).toBe(true);
+		expect(sentByOwnerOf(undefined, "workspace", "unknown")).toBe(false);
 	});
 });
