@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, X } from "lucide-react";
+import { AlertTriangle, Check, Info, X } from "lucide-react";
 import type { HostCheck, HostCheckItem } from "../../lib/ipc";
 import { secondaryButtonClass } from "../PromptActions/fieldStyles";
 
@@ -34,6 +34,8 @@ export function HostChecklist({
 					<span style={{ flexShrink: 0, marginTop: 1 }}>
 						{item.state === "ok" ? (
 							<Check size={13} style={{ color: "var(--success, #3fb950)" }} />
+						) : item.state === "info" ? (
+							<Info size={13} style={{ color: "var(--fg-secondary)" }} />
 						) : item.state === "warn" ? (
 							<AlertTriangle
 								size={13}

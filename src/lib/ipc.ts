@@ -383,7 +383,7 @@ export interface HostEntry {
 export interface HostCheckItem {
 	id: string;
 	label: string;
-	state: "ok" | "warn" | "error";
+	state: "ok" | "warn" | "error" | "info";
 	fix: string | null;
 	action: "install" | "update" | "start" | "service" | "unservice" | null;
 }

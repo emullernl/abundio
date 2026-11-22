@@ -401,7 +401,8 @@ pub fn platform(os: &str, arch: &str) -> Result<&'static str, String> {
 pub struct CheckItem {
     pub id: &'static str,
     pub label: String,
-    /// `ok`, `warn` (works, with a gap) or `error` (blocks using the Host).
+    /// `ok`, `warn` (works, with a gap), `error` (blocks using the Host) or
+    /// `info` (worth knowing, nothing to fix).
     pub state: &'static str,
     /// What fixes it, in words.
     pub fix: Option<String>,
@@ -483,11 +484,23 @@ pub fn checklist(p: &Probe, version: &str) -> Vec<CheckItem> {
         Some(v) => item("git", "ok", v.clone()),
         None => item("git", "warn", "git not found").fix("The git panel and worktrees need it."),
     });
+    let mac = p.os == "Darwin";
     out.push(match p.gh.as_deref() {
         Some("signed_in") => item("gh", "ok", "gh signed in"),
+        // Checked over SSH, which cannot open a Mac's Keychain, where gh
+        // keeps its login: panes the LaunchAgent starts may well have it.
+        Some(_) if mac => item("gh", "warn", "gh looks signed out over SSH").fix(
+            "A Mac locks its Keychain to SSH sessions, so this check cannot tell; panes the LaunchAgent starts can use gh if you are signed in there. Otherwise run gh auth login in a pane on the Host.",
+        ),
         Some(_) => item("gh", "warn", "gh not signed in").fix("Run gh auth login in a pane on the Host."),
         None => item("gh", "warn", "gh not found").fix("GitHub issues in New task need it."),
     });
+    if mac {
+        out.push(
+            item("mac", "info", "On a Mac, panes have the limits of an SSH login")
+                .fix("Agents that keep their login in the Keychain may look signed out while the server runs without its LaunchAgent. Desktop, Documents and Downloads need System Settings ▸ General ▸ Sharing ▸ Remote Login ⓘ ▸ Allow full disk access for remote users, or a yes to macOS's prompt on the Mac's screen."),
+        );
+    }
     out
 }
 
@@ -674,6 +687,17 @@ mod tests {
 
     /// The service Abundio set up can be taken away on every platform; the
     /// server then runs on detached.
+    #[test]
+    fn a_mac_notes_the_limits_of_an_ssh_login() {
+        let mac = parse_probe("ABUNDIO os=Darwin\nABUNDIO arch=arm64\nABUNDIO gh=signed_out\nABUNDIO done=yes\n");
+        let list = checklist(&mac, "3.1.0");
+        let note = list.iter().find(|i| i.id == "mac").unwrap();
+        assert_eq!(note.state, "info");
+        assert!(note.fix.as_deref().unwrap().contains("Full Disk Access") || note.fix.as_deref().unwrap().contains("full disk access"));
+        assert!(list.iter().find(|i| i.id == "gh").unwrap().label.contains("over SSH"));
+        assert!(!checklist(&parse_probe(LINUX), "3.1.0").iter().any(|i| i.id == "mac"));
+    }
+
     #[test]
     fn a_service_abundio_set_up_can_be_removed() {
         let linux = parse_probe(&LINUX.replace("linger=no", "linger=yes"));
