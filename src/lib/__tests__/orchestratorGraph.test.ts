@@ -90,6 +90,22 @@ describe("graphModel", () => {
 		]);
 	});
 
+	it("marks a joined Workspace's cluster with its Host (ADR-0065)", () => {
+		const a = ws("a", term("a1"));
+		const b = ws("b", term("b1"));
+		const model = graphModel({
+			...input,
+			workspaces: [a, b],
+			order: ["a", "b"],
+			openedWorkspaceIds: new Set(["a", "b"]),
+			hostNameOf: (id) => (id === "b" ? "build-box" : null),
+		});
+		expect(model.workspaces.map((w) => w.host)).toEqual([
+			undefined,
+			"build-box",
+		]);
+	});
+
 	it("puts the Orchestrator's own helpers on their own, without itself", () => {
 		const o = ws("o", split(term("o1"), term("h1")), "orchestrator");
 		const model = graphModel({

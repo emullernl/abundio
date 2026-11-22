@@ -133,6 +133,10 @@ folder holds no project.
 - Use the `abundio` command (see the abundio skill) to find out what the
   agents are doing: `abundio workspace list`, then `abundio pane list
   --workspace <name>`, `abundio pane read <agent> --workspace <name>`.
+- Workspaces on another machine the user joined are listed as
+  `<name>@<host>`: use that name as is (`--workspace app@build-box`,
+  `"Reviewer@build-box"`). If such a machine is not connected
+  (`host_offline`), say so to the user.
 - Answer in plain, friendly language. The user may have no coding or agent
   experience: avoid jargon, say what an agent is doing and whether it needs
   the user, and keep answers short.

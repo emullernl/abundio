@@ -41,6 +41,8 @@ export interface GraphAgent {
 export interface GraphWorkspace {
 	id: string;
 	name: string;
+	/** The Host of a joined Workspace (ADR-0065); none for this computer's. */
+	host?: string;
 	agents: GraphAgent[];
 }
 
@@ -62,6 +64,8 @@ export interface GraphModelInput {
 	isAgentPty: (ptyId: string) => boolean;
 	/** The Orchestrator's own pane, left out of `helpers`. */
 	orchestratorPaneId: string | null;
+	/** A joined Workspace's Host name (its cluster says where it runs). */
+	hostNameOf?: (workspaceId: string) => string | null;
 }
 
 /** Live agent-mode panes of `ws`, in Tab then pane order. */
@@ -145,9 +149,11 @@ export function graphModel(input: GraphModelInput): GraphModel {
 		if (agents.length === 0) continue;
 		// Every Agent circles its Workspace directly, whatever its Tab or who
 		// started it; a helper sits next to the Agent that spawned it.
+		const host = input.hostNameOf?.(ws.id) ?? null;
 		clusters.push({
 			id: ws.id,
 			name: ws.name,
+			...(host ? { host } : {}),
 			agents: nestBySpawner(agents).map((a) => ({
 				...a,
 				depth: 0,

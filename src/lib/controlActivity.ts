@@ -7,6 +7,7 @@
  */
 
 import type { ControlRequest } from "./agentControl/types";
+import { currentWindowLabel } from "./appWindow";
 
 export interface ControlActivity {
 	/** Unique per call. */
@@ -46,8 +47,9 @@ function emit(e: ControlActivityEvent): void {
  * call more than once. A call a pane makes at itself is not drawn.
  */
 export function startControlActivity(
-	a: Omit<ControlActivity, "id" | "startedAt">,
+	given: Omit<ControlActivity, "id" | "startedAt">,
 ): () => void {
+	const a = { ...given, callerPaneId: localCaller(given.callerPaneId) };
 	if (a.callerPaneId === a.targetPaneId) return () => {};
 	const call: ControlActivity = { ...a, id: nextId++, startedAt: Date.now() };
 	running.set(call.id, call);
@@ -60,7 +62,19 @@ export function startControlActivity(
 
 /** A call that touched no other pane: its caller's node pulses once. */
 export function pulseControlActivity(paneId: string): void {
-	emit({ type: "pulse", paneId });
+	emit({ type: "pulse", paneId: localCaller(paneId) });
+}
+
+/** A call a Host ran for one of this Window's own Agents names it
+ *  `outside:<this Window>:<pane>` (ADR-0065): its line starts at that pane. */
+export function localCaller(
+	callerPaneId: string,
+	windowLabel: string = currentWindowLabel(),
+): string {
+	const prefix = `outside:${windowLabel}:`;
+	return callerPaneId.startsWith(prefix)
+		? callerPaneId.slice(prefix.length)
+		: callerPaneId;
 }
 
 /** The calls running now, for a graph that mounts in the middle of them. */

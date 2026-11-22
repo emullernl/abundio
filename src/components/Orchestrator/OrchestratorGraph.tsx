@@ -58,6 +58,7 @@ import {
 	useCallStreamsStore,
 } from "../../stores/callStreamsStore";
 import { useAllAgents } from "../../stores/hostAgentsStore";
+import { useJoinedStore } from "../../stores/joinedStore";
 import { useOrchestratorStore } from "../../stores/orchestratorStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
@@ -163,6 +164,7 @@ export function OrchestratorGraph() {
 				.join(","),
 		[activities],
 	);
+	const joinedEntries = useJoinedStore((s) => s.entries);
 	const model = useMemo(() => {
 		const agentPtys = new Set(agentPtyKey ? agentPtyKey.split(",") : []);
 		return graphModel({
@@ -172,8 +174,23 @@ export function OrchestratorGraph() {
 			panePtyMap,
 			isAgentPty: (p) => agentPtys.has(p),
 			orchestratorPaneId,
+			// Joined Workspaces' clusters say which Host they run on.
+			hostNameOf: (id) => {
+				const host = workspaces.find((w) => w.id === id)?.joined?.hostId;
+				return host
+					? (joinedEntries.find((e) => e.hostId === host)?.hostName ?? host)
+					: null;
+			},
 		});
-	}, [workspaces, facts, opened, panePtyMap, agentPtyKey, orchestratorPaneId]);
+	}, [
+		workspaces,
+		facts,
+		opened,
+		panePtyMap,
+		agentPtyKey,
+		orchestratorPaneId,
+		joinedEntries,
+	]);
 	const layout = useMemo(() => layoutGraph(model), [model]);
 
 	// Agents that appear after the graph first drew grow in (spawned).
@@ -210,7 +227,7 @@ export function OrchestratorGraph() {
 			out.push(
 				box(ws.id, layout.containers[ws.id], {
 					workspaceId: ws.id,
-					name: ws.name,
+					name: ws.host ? `☁ ${ws.host} · ${ws.name}` : ws.name,
 					count: ws.agents.length,
 				}),
 			);
