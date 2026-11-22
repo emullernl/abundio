@@ -234,7 +234,7 @@ export const agentCommandsApi = {
 
 /** How the desktop reaches a remote Host (Rust's `host_router::HostTarget`). */
 export type HostTarget =
-	| { kind: "ssh"; destination: string; server?: string }
+	| { kind: "ssh"; destination: string }
 	| { kind: "direct"; server: string; dataDir?: string };
 
 /** Remote Hosts (docs/plans/remote-hosts.md phase 7c): connect once per

@@ -245,40 +245,6 @@ fn windows_on_a_host_get_its_answers_events_and_output() {
     routes_windows_to(target, dir.path());
 }
 
-/// Phase 7e: the same, end to end over the user's own `ssh`, to this
-/// computer (macOS: System Settings ▸ General ▸ Sharing ▸ Remote Login) or
-/// another that sees this folder. Key login only: ssh runs with
-/// `BatchMode=yes`, as at app start. Not run by default:
-///
-/// `ABUNDIO_SSH_TEST_HOST=localhost cargo test -p abundio-server --test run -- --ignored over_ssh`
-#[test]
-#[ignore = "needs ssh to a host with key login (ABUNDIO_SSH_TEST_HOST)"]
-fn over_ssh_windows_on_a_host_get_its_answers_events_and_output() {
-    let host = std::env::var("ABUNDIO_SSH_TEST_HOST").unwrap_or_else(|_| "localhost".into());
-    let dir = tempfile::tempdir().unwrap();
-    // `connect` takes the test's data folder after its subcommand, and the
-    // router puts the subcommand last: a wrapper puts it there.
-    let wrapper = dir.path().join("abundio-server-test");
-    std::fs::write(
-        &wrapper,
-        format!(
-            "#!/bin/sh\nexec '{}' \"$@\" --data-dir '{}'\n",
-            env!("CARGO_BIN_EXE_abundio-server"),
-            dir.path().display()
-        ),
-    )
-    .unwrap();
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
-    let target = abundio_core::host_router::HostTarget::Ssh {
-        destination: host,
-        server: Some(wrapper.to_string_lossy().into_owned()),
-    };
-    routes_windows_to(target, dir.path());
-}
-
 /// A server on `dir`, reached through `target`: answers, events and output
 /// reach the Windows on it; it stops and comes back, and the router finds
 /// it again by itself.

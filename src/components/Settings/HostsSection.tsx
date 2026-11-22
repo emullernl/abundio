@@ -43,7 +43,6 @@ export function HostsSection() {
 	const [hosts, setHosts] = useState<HostEntry[]>([]);
 	const [name, setName] = useState("");
 	const [destination, setDestination] = useState("");
-	const [server, setServer] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	/** Each Host's last check, or why it failed. */
@@ -169,11 +168,9 @@ export function HostsSection() {
 			await hostsApi.add(name.trim() || destination.trim(), {
 				kind: "ssh",
 				destination: destination.trim(),
-				...(server.trim() ? { server: server.trim() } : {}),
 			});
 			setName("");
 			setDestination("");
-			setServer("");
 			reload();
 		} catch (e) {
 			setError(String(e));
@@ -374,15 +371,6 @@ export function HostsSection() {
 						placeholder="Name (optional; the destination by default)"
 						value={name}
 						onChange={(e) => setName(e.target.value)}
-					/>
-					<input
-						className="rounded-md"
-						style={paramTextInputStyle}
-						placeholder="Server program on the Host (optional; the one Install puts in ~/.abundio-server)"
-						value={server}
-						onChange={(e) => setServer(e.target.value)}
-						spellCheck={false}
-						autoCapitalize="off"
 					/>
 					{error && (
 						<div style={{ fontSize: 12, color: "var(--error)" }}>{error}</div>

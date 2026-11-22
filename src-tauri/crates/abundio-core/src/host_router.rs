@@ -39,13 +39,10 @@ pub trait WindowSink: Send + Sync + 'static {
 #[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum HostTarget {
     /// The user's own `ssh`: a `~/.ssh/config` alias or `user@host`.
-    Ssh {
-        destination: String,
-        /// The server program on the Host (phase 8 installs it in a fixed
-        /// place; until then whatever the user put on the Host's PATH).
-        #[serde(default)]
-        server: Option<String>,
-    },
+    /// Always the server Host setup manages, `~/.abundio-server/current`: a
+    /// path saved by an older build (`server`) is read and ignored, since
+    /// connecting anywhere else would reach a server setup never updates.
+    Ssh { destination: String },
     /// An `abundio-server` on this computer, reached without SSH (tests and
     /// development).
     Direct { server: String, data_dir: Option<String> },
@@ -66,11 +63,11 @@ impl HostTarget {
     /// The program that carries the connection.
     pub fn command(&self, mode: &ConnectMode) -> Command {
         match self {
-            HostTarget::Ssh { destination, server } => {
+            HostTarget::Ssh { destination } => {
                 let mut c = ssh(mode);
                 c.arg("--")
                     .arg(destination)
-                    .arg(server.as_deref().unwrap_or(DEFAULT_SERVER))
+                    .arg(DEFAULT_SERVER)
                     .arg("connect");
                 c
             }
@@ -594,7 +591,7 @@ mod tests {
 
     #[test]
     fn ssh_runs_connect_with_keepalives_and_no_terminal() {
-        let t = HostTarget::Ssh { destination: "build-box".into(), server: None };
+        let t = HostTarget::Ssh { destination: "build-box".into() };
         let ask = ConnectMode::Interactive(vec![("SSH_ASKPASS".into(), "/x/helper".into())]);
         let c = t.command(&ask);
         assert_eq!(c.get_program(), "ssh");
@@ -622,7 +619,7 @@ mod tests {
         assert!(args.windows(2).any(|w| w == ["-o", "BatchMode=yes"]));
         assert!(batch.get_envs().next().is_none());
         // A destination is never read as an option.
-        let evil = HostTarget::Ssh { destination: "-oProxyCommand=x".into(), server: None }.command(&ask);
+        let evil = HostTarget::Ssh { destination: "-oProxyCommand=x".into() }.command(&ask);
         let args: Vec<_> = evil.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
         assert_eq!(args[args.len() - 4], "--");
     }
@@ -640,7 +637,7 @@ mod tests {
 
     #[test]
     fn a_setup_script_runs_in_the_hosts_sh_with_plain_words() {
-        let t = HostTarget::Ssh { destination: "build-box".into(), server: None };
+        let t = HostTarget::Ssh { destination: "build-box".into() };
         let c = t.shell(&ConnectMode::Batch, &["claude", "codex"]);
         let args: Vec<_> = c.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
         assert_eq!(&args[args.len() - 6..], ["build-box", "sh", "-s", "--", "claude", "codex"]);
@@ -649,7 +646,7 @@ mod tests {
 
     #[test]
     fn a_setup_script_and_its_arguments_reach_the_host_quoted() {
-        let t = HostTarget::Ssh { destination: "build-box".into(), server: None };
+        let t = HostTarget::Ssh { destination: "build-box".into() };
         let c = t.sh_c(&ConnectMode::Batch, "echo \"$1\"", &["it's"]);
         let args: Vec<_> = c.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
         assert_eq!(&args[args.len() - 3..], ["--", "build-box", "sh -c 'echo \"$1\"' abundio-setup 'it'\\''s'"]);
@@ -670,7 +667,10 @@ mod tests {
     #[test]
     fn reads_the_targets_the_window_sends() {
         let t: HostTarget = serde_json::from_str(r#"{"kind":"ssh","destination":"me@box"}"#).unwrap();
-        assert_eq!(t, HostTarget::Ssh { destination: "me@box".into(), server: None });
+        assert_eq!(t, HostTarget::Ssh { destination: "me@box".into() });
+        // A server path an older build saved is ignored.
+        let old: HostTarget = serde_json::from_str(r#"{"kind":"ssh","destination":"me@box","server":"/opt/x/abundio-server"}"#).unwrap();
+        assert_eq!(old, HostTarget::Ssh { destination: "me@box".into() });
         let d: HostTarget = serde_json::from_str(r#"{"kind":"direct","server":"/x/abundio-server","dataDir":"/d"}"#).unwrap();
         assert_eq!(d, HostTarget::Direct { server: "/x/abundio-server".into(), data_dir: Some("/d".into()) });
     }

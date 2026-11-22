@@ -97,7 +97,7 @@ mod tests {
     use super::*;
 
     fn ssh(d: &str) -> HostTarget {
-        HostTarget::Ssh { destination: d.into(), server: None }
+        HostTarget::Ssh { destination: d.into() }
     }
 
     #[test]
