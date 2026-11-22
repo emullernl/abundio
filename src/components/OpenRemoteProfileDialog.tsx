@@ -60,6 +60,10 @@ export function OpenRemoteProfileDialog({
 				{},
 			);
 			setProfiles(list);
+			// Only one Profile there: nothing to choose, open (or join) it.
+			// On a failure the list shows, with why.
+			const only = list.length === 1 ? list[0] : undefined;
+			if (only) await open(only);
 			setPhase("profiles");
 		} catch (e) {
 			setError(String(e));
