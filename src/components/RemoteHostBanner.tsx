@@ -1,7 +1,13 @@
 import { CloudOff, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
-import { hostsApi, listenToThisWindow } from "../lib/ipc";
+import {
+	hostsApi,
+	listen,
+	listenToThisWindow,
+	settingsWindow,
+} from "../lib/ipc";
 import { isMac } from "../lib/platform";
+import { serverUpdateTitle, serverVersionMismatch } from "../lib/serverVersion";
 import { unsavedFilePaths } from "../lib/unsavedFiles";
 import { useExplorerStore } from "../stores/explorerStore";
 import { useHostLinkStore } from "../stores/hostLinkStore";
@@ -68,6 +74,12 @@ export function RemoteHostBanner() {
 					});
 				},
 			),
+			// Its server was just updated (Settings ▸ Hosts): connect again.
+			listen<string>("host-server-ready", (e) => {
+				if (!mine(e.payload)) return;
+				if (useHostLinkStore.getState().link.state !== "online")
+					void hostsApi.connectSaved(remote.hostId).catch(() => {});
+			}),
 			listenToThisWindow<{ host: string }>("host-connected", (e) => {
 				if (!mine(e.payload.host)) return;
 				const loaded = !useProfileStore.getState().remoteError;
@@ -107,6 +119,8 @@ export function RemoteHostBanner() {
 		}
 	};
 
+	const mismatch =
+		link.state === "offline" ? serverVersionMismatch(link.reason ?? "") : null;
 	let title: string;
 	let detail: string | null = null;
 	let action: string;
@@ -116,6 +130,12 @@ export function RemoteHostBanner() {
 		detail = "Save your files, then reload to catch up.";
 		action = "Reload";
 		onAction = () => window.location.reload();
+	} else if (mismatch) {
+		// Another server version: only an update in Settings fixes it.
+		title = serverUpdateTitle(remote.hostName, mismatch);
+		detail = "Update it in Settings ▸ Hosts.";
+		action = "Open Settings";
+		onAction = () => void settingsWindow.checkHost(remote.hostId);
 	} else {
 		if (link.signIn) {
 			title = `Not connected to ${remote.hostName}. Sign in needed.`;

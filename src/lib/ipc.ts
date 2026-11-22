@@ -101,6 +101,10 @@ export const settingsWindow = {
 			"open_settings_window",
 			section === undefined ? undefined : { section },
 		),
+	/** Settings ▸ Hosts on This computer, checking that Host, so its
+	 *  checklist offers Update. */
+	checkHost: (hostId: string): Promise<void> =>
+		invoke<void>("open_settings_window", { checkHost: hostId }),
 };
 
 /** Subscribe to an event Rust aims at *this* Window with `emit_to(label, …)`.

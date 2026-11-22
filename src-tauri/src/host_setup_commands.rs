@@ -11,6 +11,10 @@ use tauri::{AppHandle, Window};
 
 use crate::error::AbundioError;
 
+/// Sent to every Window when a Host's server was just installed or started:
+/// one whose Host was not set up connects again.
+const SERVER_READY_EVENT: &str = "host-server-ready";
+
 /// How long a setup step may take, a password prompt included.
 const STEP_LIMIT: Duration = Duration::from_secs(330);
 
@@ -117,6 +121,8 @@ pub async fn host_install(
             return Err(AbundioError::Channel("the install did not finish".into()));
         }
         log::info!("[host] installed server {version} on {}", host.name);
+        // Windows waiting on this Host (another server version) connect again.
+        let _ = app.emit(SERVER_READY_EVENT, &host_id);
         Ok(HostCheck { items: host_setup::checklist(&probe, version), probe, app_version: version })
     })
     .await
@@ -154,6 +160,10 @@ pub async fn host_start(
             return Err(AbundioError::Channel("the server did not start".into()));
         }
         log::info!("[host] started the server on {} ({})", host.name, probe.started.as_deref().unwrap_or(""));
+        {
+            use tauri::Emitter;
+            let _ = app.emit(SERVER_READY_EVENT, &host_id);
+        }
         let app_version = env!("CARGO_PKG_VERSION");
         Ok(HostCheck { items: host_setup::checklist(&probe, app_version), probe, app_version })
     })

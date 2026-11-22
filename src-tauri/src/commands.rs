@@ -243,8 +243,12 @@ pub async fn open_window_with_profile(
 pub async fn open_settings_window(
     app: AppHandle,
     section: Option<String>,
+    check_host: Option<String>,
 ) -> Result<(), AbundioError> {
-    crate::window_management::open_or_focus_settings_window(&app, section.as_deref())
+    match check_host {
+        Some(host) => crate::window_management::open_settings_to_check_host(&app, &host),
+        None => crate::window_management::open_or_focus_settings_window(&app, section.as_deref()),
+    }
 }
 
 /// Focus the window identified by `label`. Used by the frontend's

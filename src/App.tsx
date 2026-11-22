@@ -7,6 +7,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { FileSearchPalette } from "./components/FileSearchPalette";
 import { FileWindowCloseConfirmDialog } from "./components/FileWindow/FileWindowCloseConfirmDialog";
 import { FleetConsole } from "./components/FleetConsole/FleetConsole";
+import { JoinedUpdateBanner } from "./components/JoinedUpdateBanner";
 import { type LaunchChoice, LaunchPicker } from "./components/LaunchPicker";
 import { MissingFolderPanel } from "./components/MissingFolderPanel";
 import { Navigator } from "./components/Navigator/Navigator";
@@ -1379,6 +1380,7 @@ export function App() {
 			{!workspacesInitialized && <AppLoader />}
 			<Titlebar />
 			<RemoteHostBanner />
+			<JoinedUpdateBanner />
 			<div className="flex flex-1 min-h-0">
 				{/* The Fleet Console hides both sidebars. They stay mounted — the
 				    Left sidebar owns the Add worktree dialog the console hands off

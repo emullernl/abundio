@@ -173,6 +173,29 @@ pub fn open_or_focus_settings_window(
     app: &AppHandle<Wry>,
     initial_section: Option<&str>,
 ) -> Result<(), AbundioError> {
+    open_settings(app, initial_section, None)
+}
+
+/// Settings ▸ Hosts on This computer, checking `host_id` there, so its
+/// checklist offers Update (a Window whose Host runs another server
+/// version). An id that is not shaped like one is refused.
+pub fn open_settings_to_check_host(app: &AppHandle<Wry>, host_id: &str) -> Result<(), AbundioError> {
+    if !is_host_id(host_id) {
+        return Err(AbundioError::InvalidOperation("not a Host id".into()));
+    }
+    open_settings(app, Some("hosts"), Some(host_id))
+}
+
+/// Shaped like a Host id: safe in a URL query and an event payload.
+fn is_host_id(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 64 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+fn open_settings(
+    app: &AppHandle<Wry>,
+    initial_section: Option<&str>,
+    check_host: Option<&str>,
+) -> Result<(), AbundioError> {
     use tauri::Emitter;
 
     // `open_settings_window` is invoke-able with an arbitrary `Option<String>`,
@@ -184,7 +207,8 @@ pub fn open_or_focus_settings_window(
     let initial_section = initial_section.filter(|s| is_section_id(s));
     // The Host the opening Window is on (Host settings, ADR-0064): Settings
     // edits that Host's per-Host sections first. `local` for this computer.
-    let host = opener_host(app);
+    // Hosts is a section of This computer: checking one opens there.
+    let host = if check_host.is_some() { "local".to_string() } else { opener_host(app) };
 
     if let Some(existing) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
         let _ = existing.set_focus();
@@ -196,6 +220,9 @@ pub fn open_or_focus_settings_window(
                 section.to_string(),
             );
         }
+        if let Some(id) = check_host {
+            let _ = app.emit_to(SETTINGS_WINDOW_LABEL, "settings-check-host", id.to_string());
+        }
         return Ok(());
     }
 
@@ -206,6 +233,9 @@ pub fn open_or_focus_settings_window(
         None => "index.html?settings".to_string(),
     };
     url_path.push_str(&format!("&host={host}"));
+    if let Some(id) = check_host {
+        url_path.push_str(&format!("&check={id}"));
+    }
 
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut builder = WebviewWindowBuilder::new(
@@ -457,6 +487,14 @@ pub fn next_untitled_name(existing: &[crate::profile_store::Profile]) -> String 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_host_id_shaped_value_reaches_the_settings_url() {
+        assert!(is_host_id("host-3f2a_b"));
+        for bad in ["", "a&section=x", "a#b", "a b", &"x".repeat(65)] {
+            assert!(!is_host_id(bad), "{bad}");
+        }
+    }
     use crate::profile_store::Profile;
 
     fn p(name: &str) -> Profile {

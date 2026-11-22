@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { panesEndedBy, restartMessage } from "../../lib/hostSetup";
 import {
 	type HostCheck,
@@ -130,6 +130,21 @@ export function HostsSection() {
 			.list()
 			.then(setHosts)
 			.catch(() => setHosts([]));
+	}, []);
+
+	// Opened to check one Host (a Window whose Host runs another server
+	// version): check it, so its checklist offers Update.
+	const checkRef = useRef(check);
+	checkRef.current = check;
+	useEffect(() => {
+		const asked = new URLSearchParams(window.location.search).get("check");
+		if (asked) void checkRef.current(asked);
+		const off = listenToThisWindow<string>("settings-check-host", (e) => {
+			void checkRef.current(e.payload);
+		});
+		return () => {
+			void off.then((stop) => stop());
+		};
 	}, []);
 
 	useEffect(() => {
