@@ -137,3 +137,12 @@ export function useAllAgents(): CodingAgent[] {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: recomputed when either list changes
 	return useMemo(() => allAgents(), [own, byHost]);
 }
+
+/** A Host's Agent list as a hook; `null`: this computer's. */
+export function useAgentsForHost(hostId: string | null): CodingAgent[] {
+	const hostList = useHostAgentsStore((s) =>
+		hostId ? (s.byHost[hostId] ?? EMPTY) : EMPTY,
+	);
+	const own = useSettingsStore((s) => s.agents);
+	return hostId ? hostList : own;
+}

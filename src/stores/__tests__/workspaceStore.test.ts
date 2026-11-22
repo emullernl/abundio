@@ -63,6 +63,7 @@ vi.mock("../../lib/terminalManager", () => ({
 	teardownTerminal,
 }));
 
+import { joinedHostOfWorkspace } from "../../lib/hostRouting";
 import { fileWindows, tabs, workspaces } from "../../lib/ipc";
 import { collectAgentPanes } from "../../lib/paneTree";
 import {
@@ -143,6 +144,29 @@ beforeEach(() => {
 });
 
 describe("workspaceStore", () => {
+	describe("createWorkspace in a Joined profile (phase 10e)", () => {
+		it("makes it in that Profile, marked and routed to its Host", async () => {
+			const { workspaces } = await import("../../lib/ipc");
+			vi.mocked(workspaces.create).mockResolvedValueOnce(
+				makeWorkspace({ id: "made-there", profileId: "remote-p", tabs: [] }),
+			);
+			const ws = await useWorkspaceStore
+				.getState()
+				.createWorkspace("app", "/home/dev/app", undefined, {
+					hostId: "box",
+					profileId: "remote-p",
+				});
+			expect(workspaces.create).toHaveBeenCalledWith(
+				"app",
+				"/home/dev/app",
+				"remote-p",
+			);
+			expect(ws.joined).toEqual({ hostId: "box" });
+			expect(joinedHostOfWorkspace("made-there")).toBe("box");
+			expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("made-there");
+		});
+	});
+
 	describe("mergeRemoteWorkspaces (phase 9: another app's Workspace changes)", () => {
 		it("keeps this Window's Tabs, adds new Workspaces without PTYs, drops deleted ones", () => {
 			const liveTab = makeTab({

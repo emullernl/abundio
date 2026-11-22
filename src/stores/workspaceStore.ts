@@ -219,6 +219,8 @@ interface WorkspaceState {
 		name: string,
 		rootFolder: string,
 		agent?: CodingAgent,
+		/** In a Joined profile, on its Host (phase 10e). */
+		joined?: { hostId: string; profileId: string },
 	) => Promise<WorkspaceWithTabs>;
 	/** Create + activate a Workspace for a freshly created worktree, seeding its
 	 *  focal terminal with the primary's setup commands then the chosen agent. */
@@ -813,35 +815,39 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		}
 	},
 
-	createWorkspace: async (name, rootFolder, agent) => {
-		const profileId = fallbackProfileId();
+	createWorkspace: async (name, rootFolder, agent, joined) => {
+		const profileId = joined?.profileId ?? fallbackProfileId();
 
 		// Worktree expansion: if the picked folder is part of a repo with ≥2
 		// worktrees, snap the focal Workspace to its worktree root and add every
 		// other worktree as an unopened sibling. See ADR-0017.
 		let focalFolder = rootFolder;
 		let siblings: WorktreeEntry[] = [];
-		try {
-			// Only real (existing) worktrees participate in expansion.
-			const list = (await worktreesApi.list(rootFolder)).filter(
-				(e) => e.exists,
-			);
-			if (list.length >= 2) {
-				const focal = findFocalWorktree(list, rootFolder);
-				if (focal) {
-					focalFolder = focal.path;
-					siblings = list.filter((e) => e.path !== focal.path);
+		// Worktree expansion stays this computer's for now (phase 10e).
+		if (!joined)
+			try {
+				// Only real (existing) worktrees participate in expansion.
+				const list = (await worktreesApi.list(rootFolder)).filter(
+					(e) => e.exists,
+				);
+				if (list.length >= 2) {
+					const focal = findFocalWorktree(list, rootFolder);
+					if (focal) {
+						focalFolder = focal.path;
+						siblings = list.filter((e) => e.path !== focal.path);
+					}
 				}
+			} catch {
+				// Not a git repo / discovery failed — plain single create.
 			}
-		} catch {
-			// Not a git repo / discovery failed — plain single create.
-		}
 
-		const workspaceWithTabs = await workspacesApi.create(
-			name,
-			focalFolder,
-			profileId,
-		);
+		const created = await workspacesApi.create(name, focalFolder, profileId);
+		// A joined one is marked, and routed to its Host before anything else
+		// is asked about it.
+		const workspaceWithTabs = joined
+			? { ...created, joined: { hostId: joined.hostId } }
+			: created;
+		if (joined) setJoinedWorkspace(workspaceWithTabs.id, joined.hostId);
 		usePtyActivityStore.getState().markWorkspaceOpened(workspaceWithTabs.id);
 		const { firstTabId, firstPaneId } = seedFocalPane(workspaceWithTabs, {
 			agent,

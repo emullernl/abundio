@@ -37,7 +37,7 @@ import { useGitDataSync } from "./hooks/useGitDataSync";
 import { useMissingFolderRefresh } from "./hooks/useMissingFolderRefresh";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useTerminalFileDrop } from "./hooks/useTerminalFileDrop";
-import { useWorkspace } from "./hooks/useWorkspace";
+import { enterRequestedView, useWorkspace } from "./hooks/useWorkspace";
 import { useWorktreeSync } from "./hooks/useWorktreeSync";
 import { startAgentCommandsSync } from "./lib/agentCommandsSync";
 import { startAgentControl } from "./lib/agentControl/handleControlRequest";
@@ -436,14 +436,16 @@ export function App() {
 			name,
 			folderPath,
 			choice,
+			location,
 		}: {
 			name: string;
 			folderPath: string;
 			choice: LaunchChoice;
+			location: { hostId: string; profileId: string } | null;
 		}) => {
 			const agent = choice.kind === "agent" ? choice.agent : undefined;
-			createWorkspace(name, folderPath, agent).catch((err) =>
-				console.error("Failed to create workspace:", err),
+			createWorkspace(name, folderPath, agent, location ?? undefined).catch(
+				(err) => console.error("Failed to create workspace:", err),
 			);
 		},
 		[createWorkspace],
@@ -953,6 +955,16 @@ export function App() {
 
 	// The Agents a typed command can start, for Rust's shell integration.
 	useEffect(() => startAgentCommandsSync(), []);
+	// An open remote Window asked to show its Orchestrator (phase 10e).
+	useEffect(() => {
+		const off = listenToThisWindow<string>("remote-window-view", () => {
+			void enterRequestedView();
+		});
+		return () => {
+			void off.then((stop) => stop());
+		};
+	}, []);
+
 	// This computer's Host settings follow its app settings (ADR-0064).
 	useEffect(() => startHostSettingsMirror(), []);
 

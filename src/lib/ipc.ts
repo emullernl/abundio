@@ -325,12 +325,22 @@ export const hostsApi = {
 		args: Record<string, unknown>,
 	) => invoke<T>("host_request", { hostId, command, args }),
 	/** Open one of a Host's Profiles in a Window of its own. */
-	openRemoteProfile: (hostId: string, profileId: string, profileName: string) =>
+	/** Open a Remote profile in a Window of its own (or focus the one that
+	 *  shows it); `view: "orchestrator"` enters its Orchestrator view. */
+	openRemoteProfile: (
+		hostId: string,
+		profileId: string,
+		profileName: string,
+		view?: "orchestrator",
+	) =>
 		invoke<string>("open_remote_profile_window", {
 			hostId,
 			profileId,
 			profileName,
+			view: view ?? null,
 		}),
+	/** The view this remote Window was opened to enter, once. */
+	takeView: () => invoke<string | null>("remote_window_take_view"),
 	/** What this Window shows when it is on a remote Host. */
 	remoteProfileForWindow: () =>
 		invoke<RemoteBinding | null>("remote_profile_for_window"),

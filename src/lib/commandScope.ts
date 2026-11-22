@@ -80,6 +80,7 @@ const DESKTOP = [
 	"host_install",
 	"host_join",
 	"host_attach",
+	"remote_window_take_view",
 	"joined_profile_add",
 	"joined_profile_remove",
 	"joined_profile_seen",

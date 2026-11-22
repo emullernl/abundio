@@ -1,5 +1,6 @@
 import { Cloud, MoreHorizontal, Plus } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
+import { hostsApi } from "../../lib/ipc";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import { type JoinedEntry, useJoinedStore } from "../../stores/joinedStore";
 import { useProfileStore } from "../../stores/profileStore";
@@ -172,6 +173,32 @@ function JoinedSection({
 					x={menu.x}
 					y={menu.y}
 					items={[
+						{
+							label: "Open Orchestrator",
+							onClick: () =>
+								void hostsApi
+									.openRemoteProfile(
+										entry.hostId,
+										entry.remoteProfileId,
+										entry.remoteProfileName,
+										"orchestrator",
+									)
+									.catch((e) =>
+										console.warn("[joined] cannot open its Orchestrator", e),
+									),
+						},
+						{
+							label: "Open in its own Window",
+							onClick: () =>
+								void hostsApi
+									.openRemoteProfile(
+										entry.hostId,
+										entry.remoteProfileId,
+										entry.remoteProfileName,
+									)
+									.catch((e) => console.warn("[joined] cannot open it", e)),
+						},
+						{ separator: true },
 						{
 							label: `Leave ${entry.remoteProfileName}`,
 							onClick: () => void useJoinedStore.getState().leave(entry.hostId),

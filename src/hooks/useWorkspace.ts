@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { hostsApi } from "../lib/ipc";
 import { copyHostPromptActionsOnce } from "../lib/promptActionsCopy";
 import { useHostAgentsStore } from "../stores/hostAgentsStore";
 import { useJoinedStore } from "../stores/joinedStore";
@@ -22,6 +23,8 @@ export async function loadWindow(): Promise<void> {
 	const remote = useProfileStore.getState().remote;
 	if (remote) {
 		void useHostAgentsStore.getState().load(remote.hostId);
+		// Opened to show its Orchestrator (a joined section's menu, 10e).
+		void enterRequestedView();
 		// Its Prompt actions were the Host's until now: copied here once.
 		void copyHostPromptActionsOnce(remote.hostId).catch(() => {});
 	}
@@ -33,4 +36,13 @@ export function useWorkspace() {
 	useEffect(() => {
 		void loadWindow();
 	}, []);
+}
+
+/** Enter the view this remote Window was opened for, if any (phase 10e:
+ *  "Open Orchestrator" from a joined section). */
+export async function enterRequestedView(): Promise<void> {
+	const view = await hostsApi.takeView().catch(() => null);
+	if (view !== "orchestrator") return;
+	const { enterOrchestratorView } = await import("../lib/orchestratorSession");
+	await enterOrchestratorView();
 }

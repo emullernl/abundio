@@ -210,6 +210,7 @@ pub async fn open_remote_profile_window(
     host_id: String,
     profile_id: String,
     profile_name: String,
+    view: Option<String>,
 ) -> Result<String, AbundioError> {
     let host = crate::hosts::find(&host_id).ok_or_else(|| AbundioError::NotFound("that Host was removed".into()))?;
     let app2 = app.clone();
@@ -218,11 +219,30 @@ pub async fn open_remote_profile_window(
     tauri::async_runtime::spawn_blocking(move || connect(&app2, &id, Some(&label)))
         .await
         .map_err(|e| AbundioError::InvalidOperation(e.to_string()))??;
-    open(
+    let label = open(
         &app,
         RemoteBinding { host_id, host_name: host.name, profile_id, profile_name },
         None,
-    )
+    )?;
+    // A view to enter once it has loaded (a joined section's "Open
+    // Orchestrator", phase 10e): taken by the Window, or told to one that is
+    // already open.
+    if let Some(view) = view.filter(|v| v == "orchestrator") {
+        use tauri::Emitter;
+        app.state::<PendingViews>().0.lock().unwrap().insert(label.clone(), view.clone());
+        let _ = app.emit_to(label.as_str(), "remote-window-view", view);
+    }
+    Ok(label)
+}
+
+/// Views remote Windows are to enter once loaded, by label.
+#[derive(Default)]
+pub struct PendingViews(Mutex<HashMap<String, String>>);
+
+/// The view this Window was opened to enter, once.
+#[tauri::command]
+pub fn remote_window_take_view(app: AppHandle, window: Window) -> Option<String> {
+    app.state::<PendingViews>().0.lock().unwrap().remove(window.label())
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@ import { ArrowUp, Folder } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useEscapeKey } from "../hooks/useEscapeKey";
-import { fs } from "../lib/ipc";
+import { fs, joinedApi } from "../lib/ipc";
 import { lastPart, parentPath, pickableFolders } from "../lib/remoteFolders";
 import type { DirEntry } from "../lib/types";
 import {
@@ -18,10 +18,13 @@ import {
  */
 export function RemoteFolderPicker({
 	hostName,
+	hostId,
 	onPick,
 	onCancel,
 }: {
 	hostName: string;
+	/** Browse this Host (a joined Profile's); the Window's own otherwise. */
+	hostId?: string;
 	onPick: (path: string) => void;
 	onCancel: () => void;
 }) {
@@ -33,24 +36,34 @@ export function RemoteFolderPicker({
 	const listRef = useRef<HTMLDivElement>(null);
 	useEscapeKey(onCancel);
 
-	const open = useCallback(async (to: string) => {
-		try {
-			const list = await fs.listDir(to);
-			setPath(to);
-			setTyped(to);
-			setEntries(list);
-			setError(null);
-			listRef.current?.scrollTo(0, 0);
-		} catch (e) {
-			setError(String(e));
-		}
-	}, []);
+	const open = useCallback(
+		async (to: string) => {
+			try {
+				const list = hostId
+					? await joinedApi.callOn<DirEntry[]>(hostId, "fs_list_dir", {
+							path: to,
+						})
+					: await fs.listDir(to);
+				setPath(to);
+				setTyped(to);
+				setEntries(list);
+				setError(null);
+				listRef.current?.scrollTo(0, 0);
+			} catch (e) {
+				setError(String(e));
+			}
+		},
+		[hostId],
+	);
 
 	useEffect(() => {
-		fs.homeDir()
+		(hostId
+			? joinedApi.callOn<string>(hostId, "fs_home_dir", {})
+			: fs.homeDir()
+		)
 			.then(open)
 			.catch((e) => setError(String(e)));
-	}, [open]);
+	}, [open, hostId]);
 
 	const folders = pickableFolders(entries, showHidden);
 
