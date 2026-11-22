@@ -1,9 +1,11 @@
 import { BarChart3, Info, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useShortcutLabel } from "../../hooks/useShortcutLabel";
+import { useJoinedStore } from "../../stores/joinedStore";
 import { useProfileStore } from "../../stores/profileStore";
 import { useTelemetryStore } from "../../stores/telemetryStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
+import { Select } from "../PromptActions/Select";
 import { StatsActivityChart } from "./StatsActivityChart";
 import { StatsAgentBreakdown } from "./StatsAgentBreakdown";
 import { StatsHeatmap } from "./StatsHeatmap";
@@ -38,6 +40,13 @@ export function StatisticsOverlay({ topOffset }: { topOffset: number }) {
 		(s) => s.profiles.find((p) => p.id === s.activeProfileId)?.name,
 	);
 
+	// Whose statistics: this Window's Profile, or a Joined profile's, read
+	// from its Host, where its turns are recorded ("" is this Window's own).
+	const joinedEntries = useJoinedStore((s) => s.entries);
+	const [pickedHost, setPickedHost] = useState("");
+	const picked = joinedEntries.find((e) => e.hostId === pickedHost) ?? null;
+	const statsProfileId = picked ? picked.remoteProfileId : activeProfileId;
+
 	const [period, setPeriod] = useState<StatsPeriod>("month");
 	const [offset, setOffset] = useState(0);
 	// Freeze "now" while the overlay is open so the range doesn't drift between
@@ -71,9 +80,9 @@ export function StatisticsOverlay({ topOffset }: { topOffset: number }) {
 	const load = useTelemetryStore((s) => s.load);
 
 	useEffect(() => {
-		if (!open || !activeProfileId) return;
-		load(activeProfileId, range.fromMs, range.toMs, range.bucket);
-	}, [open, activeProfileId, range.fromMs, range.toMs, range.bucket, load]);
+		if (!open || !statsProfileId) return;
+		load(statsProfileId, range.fromMs, range.toMs, range.bucket);
+	}, [open, statsProfileId, range.fromMs, range.toMs, range.bucket, load]);
 
 	const timeSeries = useMemo(
 		() =>
@@ -150,18 +159,34 @@ export function StatisticsOverlay({ topOffset }: { topOffset: number }) {
 					>
 						Statistics
 					</span>
-					{profileName && (
-						<span
-							style={{
-								fontSize: 10.5,
-								padding: "2px 8px",
-								borderRadius: 4,
-								backgroundColor: "var(--bg-tertiary)",
-								color: "var(--fg-secondary)",
-							}}
-						>
-							{profileName}
-						</span>
+					{joinedEntries.length > 0 ? (
+						<div style={{ minWidth: 200 }}>
+							<Select
+								value={picked ? picked.hostId : ""}
+								options={[
+									{ value: "", label: profileName ?? "This profile" },
+									...joinedEntries.map((e) => ({
+										value: e.hostId,
+										label: `☁ ${e.hostName} · ${e.remoteProfileName}`,
+									})),
+								]}
+								onChange={setPickedHost}
+							/>
+						</div>
+					) : (
+						profileName && (
+							<span
+								style={{
+									fontSize: 10.5,
+									padding: "2px 8px",
+									borderRadius: 4,
+									backgroundColor: "var(--bg-tertiary)",
+									color: "var(--fg-secondary)",
+								}}
+							>
+								{profileName}
+							</span>
+						)
 					)}
 				</div>
 
