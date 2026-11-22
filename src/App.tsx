@@ -911,6 +911,8 @@ export function App() {
 
 	// The Orchestrator session follows its view, per Profile (ADR-0057).
 	const activeProfileId = useProfileStore((s) => s.activeProfileId);
+	// A remote Window's Workspaces are all on its Host (phase 10f).
+	const remoteHostId = useProfileStore((s) => s.remote?.hostId ?? null);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: re-installed for each Profile
 	useEffect(() => {
 		if (!workspacesInitialized) return;
@@ -1491,6 +1493,7 @@ export function App() {
 										/>
 										{!orchestrator && (
 											<OpenInDevEnvButton
+												hostId={workspace.joined?.hostId ?? remoteHostId}
 												workspaceFolder={workspace.rootFolder}
 												activeFilePath={isActive ? activeFocusedFilePath : null}
 											/>

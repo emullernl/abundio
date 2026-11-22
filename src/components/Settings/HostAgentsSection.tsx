@@ -162,6 +162,7 @@ export function HostAgentsSection() {
 					{agents.map((agent) => (
 						<AgentRow
 							key={agent.id}
+							onHost
 							agent={agent}
 							installed={installed.has(agent.command)}
 							hooksEnabled={settings.agentHooksEnabled}

@@ -1466,11 +1466,18 @@ export const clipboardImage = {
 export const devEnvironments = {
 	list: () => invoke<DetectedDevEnvironment[]>("list_dev_environments"),
 
-	launch: (id: string, workspaceFolder: string, file: LaunchFile | null) =>
+	/** `hostId`: the folder is on that Host, opened over SSH (phase 10f). */
+	launch: (
+		id: string,
+		workspaceFolder: string,
+		file: LaunchFile | null,
+		hostId: string | null = null,
+	) =>
 		invoke<void>("launch_dev_environment", {
 			id,
 			workspaceFolder,
 			file,
+			hostId,
 		}),
 };
 

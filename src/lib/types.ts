@@ -400,6 +400,8 @@ export interface DetectedDevEnvironment {
 	id: string;
 	displayName: string;
 	iconName: string;
+	/** It can open a folder on a Host over SSH (phase 10f). */
+	remote?: boolean;
 }
 
 export interface LaunchFile {

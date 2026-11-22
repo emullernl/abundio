@@ -331,14 +331,18 @@ function FootprintRow({
 function HookFootprint({
 	status,
 	hooksEnabled,
+	onHost,
 }: {
 	status: AgentHookStatus;
 	hooksEnabled: boolean;
+	onHost: boolean;
 }) {
 	// The file is only guaranteed to exist when registered, or when a merge
 	// config errored (it exists but is unparseable). Otherwise don't offer Open.
+	// A Host's file is not on this computer to reveal (phase 10f).
 	const fileExists =
-		status.state === "registered" || status.state === "configError";
+		!onHost &&
+		(status.state === "registered" || status.state === "configError");
 	return (
 		<div
 			style={{
@@ -440,11 +444,14 @@ export function AgentRow({
 	onToggle,
 	onRemove,
 	onTaskArgsChange,
+	onHost = false,
 }: {
 	agent: CodingAgent;
 	installed: boolean;
 	hooksEnabled: boolean;
 	hookStatus?: AgentHookStatus;
+	/** A Host's Agent: its config files are not on this computer. */
+	onHost?: boolean;
 	onToggle: () => void;
 	onRemove?: () => void;
 	/** Only for custom Agents; built-ins have a fixed form. */
@@ -577,7 +584,11 @@ export function AgentRow({
 				<TaskArgsField agent={agent} onChange={onTaskArgsChange} />
 			)}
 			{expanded && hookStatus && (
-				<HookFootprint status={hookStatus} hooksEnabled={hooksEnabled} />
+				<HookFootprint
+					onHost={onHost}
+					status={hookStatus}
+					hooksEnabled={hooksEnabled}
+				/>
 			)}
 		</div>
 	);

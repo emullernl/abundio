@@ -146,3 +146,17 @@ export function useAgentsForHost(hostId: string | null): CodingAgent[] {
 	const own = useSettingsStore((s) => s.agents);
 	return hostId ? hostList : own;
 }
+
+/** `hostOfWorkspace` as a hook: the Host a Workspace is on, `null` for this
+ *  computer. */
+export function useHostOfWorkspace(
+	workspaceId: string | null | undefined,
+): string | null {
+	const joinedHost = useWorkspaceStore((s) =>
+		workspaceId
+			? (s.workspaces.find((w) => w.id === workspaceId)?.joined?.hostId ?? null)
+			: null,
+	);
+	const remoteHost = useProfileStore((s) => s.remote?.hostId ?? null);
+	return joinedHost ?? remoteHost;
+}

@@ -12,6 +12,7 @@ import {
 import { openExternal } from "../../lib/desktop";
 import { gitRowMenuEntries } from "../../lib/gitRowMenu";
 import { fs as fsApi, git } from "../../lib/ipc";
+import { withoutLocalOnly } from "../../lib/localOnlyEntries";
 import {
 	openFileWindow,
 	openFileWindowForPath,
@@ -20,6 +21,7 @@ import { resolveWorkspacePath } from "../../lib/resolveWorkspacePath";
 import type { CommitFile, HistoryCommit } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
+import { useHostOfWorkspace } from "../../stores/hostAgentsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -168,6 +170,8 @@ function Message({ children }: { children: React.ReactNode }) {
 
 function CommitsBody() {
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+	// A Host's files cannot be revealed in this computer's file manager.
+	const onHost = useHostOfWorkspace(activeWorkspaceId) !== null;
 	const cwd = useWorkspaceStore(
 		(s) => s.workspaces.find((w) => w.id === s.activeWorkspaceId)?.rootFolder,
 	);
@@ -350,7 +354,10 @@ function CommitsBody() {
 				);
 			},
 		};
-		return gitRowMenuEntries({ ...file, section: "commit" }).map((entry) =>
+		return withoutLocalOnly(
+			gitRowMenuEntries({ ...file, section: "commit" }),
+			onHost,
+		).map((entry) =>
 			"separator" in entry
 				? { separator: true as const }
 				: {
