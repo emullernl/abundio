@@ -205,7 +205,8 @@ Workspaces support multiple tabs, each with its own `PaneNode` layout.
 
 ```bash
 pnpm tauri dev          # Run dev server (Vite + Tauri)
-pnpm tauri build        # Build production binary
+pnpm tauri build        # Build production binary (bundles the Host servers first: pnpm bundle-servers)
+pnpm bundle-servers     # Build + gzip the three Host servers into src-tauri/resources/server/ (Docker, and a Mac for macOS); skipped when current; ABUNDIO_SKIP_SERVER_BUNDLE=1 skips
 pnpm build              # TypeScript check + Vite build
 pnpm test               # Vitest (all tests)
 pnpm test -- path/to/file  # Run a single test file

@@ -17,7 +17,8 @@
 		"test": "vitest run",
 		"check": "biome check .",
 		"check:fix": "biome check --write .",
-		"release": "bash scripts/release.sh"
+		"release": "bash scripts/release.sh",
+		"bundle-servers": "node scripts/bundle-servers.mjs"
 	},
 	"dependencies": {
 		"@monaco-editor/react": "^4.7.0",
