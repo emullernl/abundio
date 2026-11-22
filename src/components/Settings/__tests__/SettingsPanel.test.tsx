@@ -9,7 +9,10 @@ vi.mock("../../../lib/ipc", () => ({
 	shells: { listAvailable: () => Promise.resolve([]) },
 	// The Host picker (ADR-0064): no Hosts added, so it stays hidden.
 	hostsApi: { list: () => Promise.resolve([]) },
-	joinedApi: { attach: () => Promise.resolve(), callOn: () => Promise.resolve(null) },
+	joinedApi: {
+		attach: () => Promise.resolve(),
+		callOn: () => Promise.resolve(null),
+	},
 	listenToThisWindow: () => Promise.resolve(() => {}),
 	agentSkill: {
 		provision: vi.fn(() => Promise.resolve()),
