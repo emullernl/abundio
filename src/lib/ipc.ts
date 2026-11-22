@@ -377,6 +377,8 @@ export interface HostCheckItem {
 	state: "ok" | "warn" | "error";
 	fix: string | null;
 	action: "install" | "update" | "start" | "service" | null;
+	/** Commands the user runs on the Host themselves (a Mac's LaunchAgent). */
+	steps?: string | null;
 }
 
 /** What Host setup's probe found, and its checklist. */

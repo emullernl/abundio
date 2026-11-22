@@ -53,6 +53,9 @@ if command -v loginctl >/dev/null 2>&1; then
   p linger "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)"
 fi
 [ -f "$HOME/.config/systemd/user/abundio-server.service" ] && p service systemd
+# A Mac's LaunchAgent the user set up from the checklist's steps (read only:
+# Abundio never runs launchctl).
+[ -f "$HOME/Library/LaunchAgents/dev.abundio.server.plist" ] && p service user-launchd
 # Agents, git and gh as a pane would find them: on the PATH of the user's
 # own interactive login shell, given 15 s in case its startup files wait.
 inner='p() { printf "ABUNDIO %s=%s\n" "$1" "$2"; }
@@ -154,6 +157,11 @@ else
       systemctl --user daemon-reload || true
     fi
   fi
+  # The user's own LaunchAgent on a Mac restarts the server whenever it
+  # stops (KeepAlive): let it, never a second one beside it.
+  if [ "$how" = detached ] && [ "$(uname -s)" = Darwin ] && [ -f "$HOME/Library/LaunchAgents/dev.abundio.server.plist" ]; then
+    how=user-launchd
+  fi
   if [ "$how" = detached ]; then
     # Not `nohup`: macOS's refuses to run without a console (the tests run
     # this script on the developer's Mac).
@@ -167,6 +175,10 @@ else
   until alive; do
     i=$((i + 1))
     if [ "$i" -ge 15 ]; then
+      if [ "$how" = user-launchd ]; then
+        echo "your LaunchAgent did not start the server again; on the Mac run: launchctl kickstart -k gui/$(id -u)/dev.abundio.server" >&2
+        exit 6
+      fi
       echo "the server did not start:" >&2
       tail -n 3 "$log" >&2 2>/dev/null || true
       exit 6
@@ -331,6 +343,29 @@ pub fn platform(os: &str, arch: &str) -> Result<&'static str, String> {
     }
 }
 
+/// What a Mac user runs to keep the server running (phase 13): a
+/// LaunchAgent that starts it at login and again whenever it stops, from
+/// `~/.abundio-server/current`, so an Update's new version starts by
+/// itself. Abundio shows it and never runs it. Run in Terminal on the Mac,
+/// in the user's login session (`gui/` needs one).
+pub const MAC_LAUNCH_AGENT_STEPS: &str = r#"mkdir -p ~/Library/LaunchAgents
+cat > ~/Library/LaunchAgents/dev.abundio.server.plist <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>dev.abundio.server</string>
+  <key>ProgramArguments</key><array><string>$HOME/.abundio-server/current</string><string>run</string></array>
+  <key>EnvironmentVariables</key><dict><key>SHELL</key><string>$SHELL</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>2</integer>
+  <key>StandardOutPath</key><string>$HOME/.abundio-server/server.log</string>
+  <key>StandardErrorPath</key><string>$HOME/.abundio-server/server.log</string>
+</dict></plist>
+EOF
+pkill -f "$HOME/.abundio-server/current run"; sleep 1
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.abundio.server.plist"#;
+
 /// One line of the checklist.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -344,10 +379,13 @@ pub struct CheckItem {
     /// The button that fixes it: `install`, `update`, `start`, `service`
     /// (restart a server running by itself as a service).
     pub action: Option<&'static str>,
+    /// Commands for the user to run on the Host themselves, shown to copy
+    /// (a Mac's LaunchAgent, which Abundio never sets up itself).
+    pub steps: Option<String>,
 }
 
 fn item(id: &'static str, state: &'static str, label: impl Into<String>) -> CheckItem {
-    CheckItem { id, label: label.into(), state, fix: None, action: None }
+    CheckItem { id, label: label.into(), state, fix: None, action: None, steps: None }
 }
 
 impl CheckItem {
@@ -460,6 +498,16 @@ fn reboot_item(p: &Probe, installed: bool) -> CheckItem {
             .fix(format!("{linger}, then Check again to set it up as a systemd user service.")),
         ("Linux", _) => item("reboot", "warn", "Won't come back after a reboot (no systemd --user)")
             .fix("Start it again from here after a reboot."),
+        // A Mac: kept running by the user's own LaunchAgent (phase 13).
+        ("Darwin", Some("user-launchd")) => {
+            item("reboot", "ok", "Comes back when you log in on the Mac (your LaunchAgent)")
+        }
+        ("Darwin", _) => {
+            let mut i = item("reboot", "warn", "Won't come back after a reboot")
+                .fix("Abundio does not set up a service on a Mac. To keep the server running, paste these lines into Terminal on the Mac, logged in as this user; they restart the server, ending its running panes.");
+            i.steps = Some(MAC_LAUNCH_AGENT_STEPS.to_string());
+            i
+        }
         _ => item("reboot", "warn", "Won't come back after a reboot"),
     }
 }
@@ -573,6 +621,23 @@ mod tests {
         let list = checklist(&odd, "3.1.0");
         assert_eq!(list.iter().find(|i| i.id == "platform").unwrap().state, "error");
         assert_eq!(list.iter().find(|i| i.id == "server").unwrap().action, None);
+    }
+
+    /// Phase 13: a Mac is kept running by the user's own LaunchAgent, which
+    /// the checklist recognises by its file and otherwise offers as steps.
+    #[test]
+    fn a_macs_reboot_line_offers_the_users_own_launch_agent() {
+        let mac = "ABUNDIO os=Darwin\nABUNDIO arch=arm64\nABUNDIO user=me\nABUNDIO home=/Users/me\nABUNDIO home_writable=yes\nABUNDIO current=3.1.0\nABUNDIO running=yes\nABUNDIO done=yes\n";
+        let reboot = |text: &str| checklist(&parse_probe(text), "3.1.0").into_iter().find(|i| i.id == "reboot").unwrap();
+        let without = reboot(mac);
+        assert_eq!((without.state, without.action), ("warn", None));
+        let steps = without.steps.unwrap();
+        assert!(steps.contains("dev.abundio.server.plist") && steps.contains("launchctl bootstrap gui/"));
+        assert!(steps.contains("<key>KeepAlive</key><true/>"));
+        let with = reboot(&format!("{mac}ABUNDIO service=user-launchd\n"));
+        assert_eq!(with.state, "ok");
+        assert!(with.steps.is_none());
+        assert_eq!(platform("Darwin", "arm64"), Ok("macos-universal"));
     }
 
     #[test]
