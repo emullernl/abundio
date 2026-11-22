@@ -68,6 +68,25 @@ impl HostSettings {
         }
     }
 
+    /// The commands a typed line starts an Agent with, for this Host's shell
+    /// integration (`shell_integration::AgentCommands`): its built-ins with
+    /// their switches, then its custom Agents.
+    pub fn agent_commands(&self) -> Vec<crate::shell_integration::AgentCommand> {
+        let builtins = BUILTIN_AGENT_IDS.iter().map(|id| crate::shell_integration::AgentCommand {
+            id: id.to_string(),
+            command: id.to_string(),
+            enabled: self.agent_switches.get(*id).copied().unwrap_or(false),
+        });
+        let custom = self.custom_agents.iter().filter_map(|a| {
+            Some(crate::shell_integration::AgentCommand {
+                id: a.get("id")?.as_str()?.to_string(),
+                command: a.get("command")?.as_str()?.to_string(),
+                enabled: a.get("enabled").and_then(Value::as_bool).unwrap_or(true),
+            })
+        });
+        builtins.chain(custom).collect()
+    }
+
     /// The built-in Agents switched on, for hooks and skill provisioning.
     pub fn enabled_builtins(&self) -> Vec<String> {
         BUILTIN_AGENT_IDS
@@ -130,6 +149,17 @@ mod tests {
         set(&s, &changed).unwrap();
         let again = ensure_seeded(&s, |_| true).unwrap();
         assert_eq!(again.enabled_builtins(), ["opencode"]);
+    }
+
+    #[test]
+    fn a_hosts_agent_commands_are_its_switches_and_custom_agents() {
+        let mut s = HostSettings::from_installed(|c| c == "opencode");
+        s.custom_agents.push(serde_json::json!({ "id": "mine", "name": "Mine", "command": "my-agent", "enabled": true }));
+        s.custom_agents.push(serde_json::json!({ "broken": true }));
+        let cmds = s.agent_commands();
+        let on: Vec<&str> = cmds.iter().filter(|c| c.enabled).map(|c| c.command.as_str()).collect();
+        assert_eq!(on, ["opencode", "my-agent"]);
+        assert_eq!(cmds.len(), BUILTIN_AGENT_IDS.len() + 1);
     }
 
     #[test]

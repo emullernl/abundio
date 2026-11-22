@@ -514,8 +514,15 @@ export const pty = {
 export const orchestrator = {
 	/** Creates (first time) and returns the Profile's Orchestrator workspace,
 	 *  rewriting its instruction files. */
-	ensure: (profileId: string) =>
-		invoke<WorkspaceWithTabs>("orchestrator_ensure", { profileId }),
+	ensure: async (profileId: string) => {
+		const ws = await invoke<WorkspaceWithTabs>("orchestrator_ensure", {
+			profileId,
+		});
+		// Its suggested questions on this computer, whatever its Host:
+		// Prompt actions are this computer's (ADR-0064).
+		void invoke<void>("prompt_actions_seed_orchestrator").catch(() => {});
+		return ws;
+	},
 	agent: (profileId: string) =>
 		invoke<string | null>("orchestrator_agent_get", { profileId }),
 	setAgent: (profileId: string, agentId: string | null) =>

@@ -5,6 +5,7 @@
 import { useAgentSignalsStore } from "../../stores/agentSignalsStore";
 import { useControlBadgeStore } from "../../stores/controlBadgeStore";
 import { useExplorerStore } from "../../stores/explorerStore";
+import { agentsForWorkspace } from "../../stores/hostAgentsStore";
 import {
 	subscribeStatusChange,
 	usePtyActivityStore,
@@ -663,7 +664,12 @@ async function newWorktree(
 	if (spec) {
 		const settings = useSettingsStore.getState();
 		const prompt = spec.prompt === null ? null : cleanPromptText(spec.prompt);
-		const start = startArgv(settings.agents, spec.kind, prompt, spec.args);
+		const start = startArgv(
+			agentsForWorkspace(scope.workspaceId),
+			spec.kind,
+			prompt,
+			spec.args,
+		);
 		agent = start.agent;
 		const shell =
 			settings.shellPath || (await shells.default().catch(() => ""));
@@ -845,7 +851,7 @@ async function startAgent(
 ) {
 	const settings = useSettingsStore.getState();
 	const { agent, argv } = startArgv(
-		settings.agents,
+		agentsForWorkspace(scope.workspaceId),
 		request.kind,
 		request.prompt === null ? null : cleanPromptText(request.prompt),
 		request.args,

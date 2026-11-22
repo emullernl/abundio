@@ -9,6 +9,7 @@ import {
 import { parseTabLayout } from "../lib/paneTree";
 import type { WorkspaceWithTabs } from "../lib/types";
 import { isOrchestrator } from "../lib/workspaceKind";
+import { useHostAgentsStore } from "./hostAgentsStore";
 import { fallbackProfileId, useProfileStore } from "./profileStore";
 import { usePtyActivityStore } from "./ptyActivityStore";
 import { useSettingsStore } from "./settingsStore";
@@ -209,6 +210,11 @@ export const useJoinedStore = create<JoinedState>((set, get) => {
 		setLink(entry.hostId, { state: "connecting" });
 		try {
 			await joinedApi.join(entry.hostId, entry.remoteProfileId, ask);
+			// Its Agents are its own (Host settings, ADR-0064).
+			void useHostAgentsStore.getState().load(entry.hostId);
+			void import("../lib/promptActionsCopy").then((m) =>
+				m.copyHostPromptActionsOnce(entry.hostId).catch(() => {}),
+			);
 			await refresh(entry);
 			setLink(entry.hostId, { state: "online" });
 			await restoreOpened(entry);

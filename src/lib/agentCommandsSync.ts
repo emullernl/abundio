@@ -1,6 +1,6 @@
 import { isNotConnectedError } from "../stores/hostLinkStore";
 import { useSettingsStore } from "../stores/settingsStore";
-import { agentCommandsApi } from "./ipc";
+import { agentCommandsApi, hostsApi } from "./ipc";
 import { isRustStatusAuthority } from "./statusSync";
 import type { CodingAgent } from "./types";
 
@@ -10,10 +10,18 @@ import type { CodingAgent } from "./types";
  * names one of the user's Agents (`matchTitleToAgent`). Tell it the list now
  * and on every change: the built-ins, custom Agents, and which are enabled.
  * Returns a stop function.
+ *
+ * This computer's list only: a Host builds its own from its Host settings
+ * (ADR-0064), so a remote Window sends nothing to its Host.
  */
 export function startAgentCommandsSync(): () => void {
 	if (!isRustStatusAuthority()) return () => {};
-	const send = (agents: CodingAgent[]) => {
+	let remote: boolean | null = null;
+	const send = async (agents: CodingAgent[]) => {
+		if (remote === null) {
+			remote = !!(await hostsApi.remoteProfileForWindow().catch(() => null));
+		}
+		if (remote) return;
 		agentCommandsApi
 			.set(agents.map(({ id, command, enabled }) => ({ id, command, enabled })))
 			.catch((e) => {
@@ -21,8 +29,8 @@ export function startAgentCommandsSync(): () => void {
 					console.warn("[agents] Rust did not take the list", e);
 			});
 	};
-	send(useSettingsStore.getState().agents);
+	void send(useSettingsStore.getState().agents);
 	return useSettingsStore.subscribe((s, prev) => {
-		if (s.agents !== prev.agents) send(s.agents);
+		if (s.agents !== prev.agents) void send(s.agents);
 	});
 }

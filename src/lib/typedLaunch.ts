@@ -1,5 +1,5 @@
+import { agentsForPane } from "../stores/hostAgentsStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
-import { useSettingsStore } from "../stores/settingsStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { agentCommandFor } from "./agents";
 import { pty } from "./ipc";
@@ -24,7 +24,7 @@ export function typedLaunch(paneId: string, agentId: string): boolean {
 	if (!ptyId) return false;
 	const activity = usePtyActivityStore.getState().activities[ptyId];
 	if (activity?.detectionMode === "agent") return false;
-	const command = agentCommandFor(useSettingsStore.getState().agents, agentId);
+	const command = agentCommandFor(agentsForPane(paneId), agentId);
 	if (!command) return false;
 	pty.write(ptyId, typedLine(command)).catch(() => {});
 	usePtyActivityStore.getState().setAgentPty(ptyId);

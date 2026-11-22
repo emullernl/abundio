@@ -114,18 +114,9 @@ pub(crate) fn remote_error(e: crate::host_router::CallError) -> AbundioError {
 }
 
 /// Settings a Window pushes to its backend that every backend it shows must
-/// have (phase 10): sent to each Host it joined too.
-const TO_EVERY_BACKEND: &[&str] = &[
-    "pty_set_scrollback",
-    "status_byte_threshold_set",
-    "agent_commands_set",
-    "agent_control_set_enabled",
-    "agent_hooks_provision",
-    "agent_hooks_provision_startup",
-    "agent_skill_provision",
-    "agent_skill_provision_startup",
-    "ensure_agent_hooks",
-];
+/// have (phase 10): sent to each Host it joined too. Only what is the
+/// user's, not a machine's: Host settings (ADR-0064) are each Host's own.
+const TO_EVERY_BACKEND: &[&str] = &["status_byte_threshold_set"];
 
 /// Run one host command for the calling Window: on its Host when it is on
 /// one (phase 7c), here otherwise. `host` sends it to another backend the

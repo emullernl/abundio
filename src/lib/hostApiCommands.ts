@@ -128,6 +128,7 @@ export const HOST_API_COMMANDS: ReadonlySet<string> = new Set([
 	"prompt_action_delete",
 	"prompt_action_update",
 	"prompt_actions_list",
+	"prompt_actions_seed_orchestrator",
 	"prompt_actions_reorder",
 	"telemetry_buckets",
 	"telemetry_list_turns",

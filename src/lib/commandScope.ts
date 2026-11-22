@@ -188,6 +188,7 @@ const HOST = [
 	"prompt_action_delete",
 	"prompt_action_update",
 	"prompt_actions_list",
+	"prompt_actions_seed_orchestrator",
 	"prompt_actions_reorder",
 	"pty_cleanup_stale_logs",
 	"pty_delete_log",

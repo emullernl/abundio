@@ -62,10 +62,14 @@ type By = "workspace" | "tab" | "pane" | "pty" | "path" | "profile";
  *  may belong to different backends. */
 type Route =
 	| { by: "own" }
+	/** Always this computer, whatever the Window's own backend: Prompt
+	 *  actions (ADR-0064). */
+	| { by: "local" }
 	| { by: By; arg: string; or?: { by: By; arg: string } }
 	| { split: string; item: (x: unknown) => [By, string] | null };
 
 const own: Route = { by: "own" };
+const local: Route = { by: "local" };
 const w = (arg = "workspaceId"): Route => ({ by: "workspace", arg });
 const path = (arg = "cwd"): Route => ({ by: "path", arg });
 const pty = (arg = "ptyId"): Route => ({ by: "pty", arg });
@@ -207,11 +211,12 @@ export const HOST_ROUTES: Record<string, Route> = {
 	// Notes, Prompt actions, statistics
 	note_get: w(),
 	note_set: w(),
-	prompt_action_create: own,
-	prompt_action_delete: own,
-	prompt_action_update: own,
-	prompt_actions_list: own,
-	prompt_actions_reorder: own,
+	prompt_action_create: local,
+	prompt_action_delete: local,
+	prompt_action_update: local,
+	prompt_actions_list: local,
+	prompt_actions_reorder: local,
+	prompt_actions_seed_orchestrator: local,
 	telemetry_buckets: profile(),
 	telemetry_list_turns: profile(),
 	telemetry_record_turn: w("turn.workspaceId"),
@@ -267,6 +272,10 @@ export function routeCall(
 	command: string,
 	args: Record<string, unknown>,
 ): RoutedCall[] {
+	const fixed = HOST_ROUTES[command];
+	if (fixed && "by" in fixed && fixed.by === "local") {
+		return [{ host: "local", args }];
+	}
 	if (joinedWorkspaces.size === 0 && joinedProfiles.size === 0) {
 		return [{ host: null, args }];
 	}
@@ -293,7 +302,7 @@ export function routeCall(
 			args: { ...args, [route.split]: items },
 		}));
 	}
-	if (route.by === "own") return [{ host: null, args }];
+	if (route.by === "own" || route.by === "local") return [{ host: null, args }];
 	let value = at(args, route.arg);
 	let by: By = route.by;
 	if (typeof value !== "string" && route.or) {

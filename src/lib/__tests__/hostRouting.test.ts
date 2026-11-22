@@ -70,7 +70,8 @@ describe("hostRouting", () => {
 		expect(hosts("pty_spawn", { cwd: "/home/dev/app/src" })).toEqual(["box"]);
 		// Unknown things, and the Window's own settings, stay home.
 		expect(hosts("fs_read_file", { path: "/etc/hosts" })).toEqual([null]);
-		expect(hosts("prompt_actions_list", {})).toEqual([null]);
+		// Prompt actions are always this computer's (ADR-0064).
+		expect(hosts("prompt_actions_list", {})).toEqual(["local"]);
 	});
 
 	it("splits a list across backends and joins the answers", () => {

@@ -11,8 +11,8 @@ import {
 	buildWorkspaceRows,
 	flattenRowsToIds,
 } from "../../lib/worktreeGrouping";
+import { useAgentsForWorkspace } from "../../stores/hostAgentsStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
-import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -49,11 +49,6 @@ export function NewAgentDialog({
 	const missingFolderIds = useWorkspaceStore((s) => s.missingFolderIds);
 	const facts = useWorkspaceGitStore((s) => s.worktreeFacts);
 	const opened = usePtyActivityStore((s) => s.openedWorkspaceIds);
-	const agents = useSettingsStore((s) => s.agents);
-	const enabledAgents = useMemo(
-		() => agents.filter((a) => a.enabled),
-		[agents],
-	);
 
 	const ordered = useMemo(() => {
 		const order = flattenRowsToIds(buildWorkspaceRows(workspaces, facts));
@@ -100,6 +95,12 @@ export function NewAgentDialog({
 	}, [filtered, missingFolderIds, wsIndex]);
 
 	const selectedWs = filtered[Math.min(wsIndex, filtered.length - 1)];
+	// The Agents of the chosen Workspace's Host (ADR-0064).
+	const agents = useAgentsForWorkspace(selectedWs?.id);
+	const enabledAgents = useMemo(
+		() => agents.filter((a) => a.enabled),
+		[agents],
+	);
 	const agent = enabledAgents[agentIndex];
 	const worktreeTarget = selectedWs
 		? addWorktreeTargetId(workspaces, facts, selectedWs.id)

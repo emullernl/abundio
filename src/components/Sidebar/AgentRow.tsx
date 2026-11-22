@@ -7,8 +7,8 @@ import type { FleetTile } from "../../lib/fleetConsole";
 import { clashingJoinedPanesCached } from "../../lib/handleClash";
 import { switchToPane } from "../../lib/paneLocation";
 import { useAgentSignalsStore } from "../../stores/agentSignalsStore";
+import { useAgentsForWorkspace } from "../../stores/hostAgentsStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
-import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { AgentStatusIcon } from "../AgentStatusIcon";
 import { HostChip, useJoinedHostName } from "../HostChip";
@@ -44,9 +44,11 @@ export function AgentRow({
 	const handle =
 		ownHandle && clash && hostName ? `${ownHandle} @ ${hostName}` : ownHandle;
 	const agentId = usePtyActivityStore((s) => s.detectedAgentIds[ptyId]);
-	const agentName = useSettingsStore((s) =>
-		agentId ? (s.agents.find((a) => a.id === agentId)?.name ?? "") : "",
-	);
+	// Named by its own Host's Agent list (ADR-0064).
+	const hostAgents = useAgentsForWorkspace(workspaceId);
+	const agentName = agentId
+		? (hostAgents.find((a) => a.id === agentId)?.name ?? "")
+		: "";
 	const workspaceName = useWorkspaceStore(
 		(s) => s.workspaces.find((w) => w.id === workspaceId)?.name ?? "",
 	);

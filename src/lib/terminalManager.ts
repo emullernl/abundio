@@ -5,6 +5,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { type ITerminalOptions, type ITheme, Terminal } from "@xterm/xterm";
+import { agentsForPane, hostOfWorkspace } from "../stores/hostAgentsStore";
 import { isNotConnectedError } from "../stores/hostLinkStore";
 import { useOrchestratorStore } from "../stores/orchestratorStore";
 import {
@@ -1774,7 +1775,8 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						// this chunk is now stale.
 						let nowIsAgent = isAgentMode;
 						if (cmd.commandText) {
-							const agents = useSettingsStore.getState().agents;
+							// The Agents of this pane's Host (ADR-0064).
+							const agents = agentsForPane(paneId);
 							const matched = matchTitleToAgent(cmd.commandText, agents);
 							if (matched) {
 								resetTitleStatus(managed);
@@ -2066,7 +2068,15 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 								cwd,
 								cols: term.cols,
 								rows: term.rows,
-								shell: useSettingsStore.getState().shellPath ?? undefined,
+								// This computer's shell setting is for this computer;
+								// a pane on a Host starts its Host's (ADR-0064).
+								shell:
+									hostOfWorkspace(
+										useWorkspaceStore.getState().findWorkspaceForPane(paneId)
+											?.id,
+									) === null
+										? (useSettingsStore.getState().shellPath ?? undefined)
+										: undefined,
 								logId: paneId,
 								ptyId: currentPtyId,
 								// Resolved from the pane's OWN workspace, not the active

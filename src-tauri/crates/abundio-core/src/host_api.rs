@@ -499,6 +499,7 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
         "host_settings_set" => {
             let settings = a!(c, raw, { settings: crate::host_settings::HostSettings }).settings;
             crate::host_settings::set(host.workspaces, &settings)?;
+            host.agents.set(settings.agent_commands());
             if let Some(n) = settings.scrollback {
                 host.ptys.set_scrollback(n);
             }
@@ -522,6 +523,15 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
         }
 
         // ── Prompt actions ──
+        // The Orchestrator's suggested questions, on this computer (Prompt
+        // actions are this computer's, ADR-0064), whatever the Orchestrator's
+        // Host.
+        "prompt_actions_seed_orchestrator" => {
+            if host.prompt_actions.seed_orchestrator_actions()? {
+                crate::prompt_actions::broadcast(host.events);
+            }
+            Value::Null
+        }
         "prompt_actions_list" => json(pa::prompt_actions_list(host.prompt_actions)?)?,
         "prompt_action_create" => {
             let action = a!(c, raw, { action: pa::PromptActionCreate }).action;

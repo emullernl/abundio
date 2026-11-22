@@ -9,6 +9,10 @@ vi.mock("../terminalManager", () => ({
 	restartPanePty: vi.fn(() => Promise.resolve()),
 }));
 
+import {
+	agentsFromHostSettings,
+	useHostAgentsStore,
+} from "../../stores/hostAgentsStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { recoverJoinedWorkspace } from "../paneRestart";
@@ -17,6 +21,19 @@ import { restartPanePty } from "../terminalManager";
 describe("recoverJoinedWorkspace (phase 10: a joined Host came back)", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// The Host's own Agent list (ADR-0064): Claude Code on.
+		useHostAgentsStore.setState({
+			byHost: {
+				box: agentsFromHostSettings({
+					agentSwitches: { claude: true },
+					customAgents: [],
+					agentHooksEnabled: true,
+					agentSkillEnabled: true,
+					shellPath: null,
+					scrollback: null,
+				}),
+			},
+		});
 		const layout = {
 			type: "split",
 			id: "s",

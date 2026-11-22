@@ -46,6 +46,7 @@ import {
 	subscribePaneRevision,
 } from "../../lib/terminalManager";
 import { typedLaunch } from "../../lib/typedLaunch";
+import { useAgentsForPane } from "../../stores/hostAgentsStore";
 import { usePromptActionStore } from "../../stores/promptActionStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
@@ -506,7 +507,7 @@ export function TerminalSlot({
 	// typing its command, mirroring CommandPalette's existing agent flow.
 	// Only enabled when this terminal is running a plain shell; once an agent
 	// is active we hide the submenu entries to prevent double-launching.
-	const agents = useSettingsStore((s) => s.agents);
+	const agents = useAgentsForPane(paneId);
 	const enabledAgents = useMemo(
 		() => agents.filter((a) => a.enabled),
 		[agents],

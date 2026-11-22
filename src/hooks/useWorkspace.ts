@@ -1,4 +1,6 @@
 import { useEffect } from "react";
+import { copyHostPromptActionsOnce } from "../lib/promptActionsCopy";
+import { useHostAgentsStore } from "../stores/hostAgentsStore";
 import { useJoinedStore } from "../stores/joinedStore";
 import { useProfileStore } from "../stores/profileStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
@@ -16,6 +18,13 @@ export async function loadWindow(): Promise<void> {
 		return;
 	}
 	await useWorkspaceStore.getState().loadWorkspaces();
+	// A remote Window's Agents are its Host's (Host settings, ADR-0064).
+	const remote = useProfileStore.getState().remote;
+	if (remote) {
+		void useHostAgentsStore.getState().load(remote.hostId);
+		// Its Prompt actions were the Host's until now: copied here once.
+		void copyHostPromptActionsOnce(remote.hostId).catch(() => {});
+	}
 	// The Joined profiles connect in the background (phase 10).
 	void useJoinedStore.getState().loadJoined();
 }
