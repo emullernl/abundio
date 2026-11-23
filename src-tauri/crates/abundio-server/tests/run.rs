@@ -49,6 +49,30 @@ fn server(dir: &std::path::Path) -> Server {
 }
 
 /// Read the server's log until a line contains `needle`.
+/// A process's log, line by line, read on a thread of its own: a line not
+/// coming within 30 s ends it, so a test fails rather than hangs when the
+/// server stops talking (a CI run once waited 45 minutes on one).
+struct LogLines(std::sync::mpsc::Receiver<String>);
+
+impl Iterator for LogLines {
+    type Item = String;
+    fn next(&mut self) -> Option<String> {
+        self.0.recv_timeout(Duration::from_secs(30)).ok()
+    }
+}
+
+fn log_lines(stderr: impl std::io::Read + Send + 'static) -> LogLines {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            if tx.send(line).is_err() {
+                return;
+            }
+        }
+    });
+    LogLines(rx)
+}
+
 fn wait_for(lines: &mut impl Iterator<Item = String>, needle: &str) -> String {
     let start = Instant::now();
     for line in lines {
@@ -64,7 +88,7 @@ fn wait_for(lines: &mut impl Iterator<Item = String>, needle: &str) -> String {
 fn starts_alone_on_its_data_folder_and_stops_on_sigterm() {
     let dir = tempfile::tempdir().unwrap();
     let mut first = server(dir.path());
-    let mut log = BufReader::new(first.stderr.take().unwrap()).lines().map_while(Result::ok);
+    let mut log = log_lines(first.stderr.take().unwrap());
     wait_for(&mut log, "hook server on 127.0.0.1:");
     wait_for(&mut log, "waiting for a Client");
     assert!(dir.path().join(abundio_core::app_paths::DATA_EPOCH).join("abundio.db").exists());
@@ -131,7 +155,7 @@ fn the_app_reaches_the_server_through_connect() {
     assert!(e.contains("no Abundio server is running"), "{e}");
 
     let mut server = server(dir.path());
-    let mut log = BufReader::new(server.stderr.take().unwrap()).lines().map_while(Result::ok);
+    let mut log = log_lines(server.stderr.take().unwrap());
     let hook_line = wait_for(&mut log, "hook server on 127.0.0.1:");
     let port: u16 = hook_line.rsplit(':').next().unwrap().trim().parse().unwrap();
     wait_for(&mut log, "waiting for a Client");
@@ -251,7 +275,7 @@ fn windows_on_a_host_get_its_answers_events_and_output() {
 fn routes_windows_to(target: abundio_core::host_router::HostTarget, dir: &std::path::Path) {
     use abundio_core::host_router::HostRouter;
     let mut server = server(dir);
-    let mut log = BufReader::new(server.stderr.take().unwrap()).lines().map_while(Result::ok);
+    let mut log = log_lines(server.stderr.take().unwrap());
     wait_for(&mut log, "waiting for a Client");
 
     let windows = std::sync::Arc::new(Windows::default());
@@ -335,7 +359,7 @@ fn routes_windows_to(target: abundio_core::host_router::HostTarget, dir: &std::p
         std::thread::sleep(Duration::from_millis(50));
     }
     let mut again = self::server(dir);
-    let mut log = BufReader::new(again.stderr.take().unwrap()).lines().map_while(Result::ok);
+    let mut log = log_lines(again.stderr.take().unwrap());
     wait_for(&mut log, "waiting for a Client");
     let start = Instant::now();
     while !router.is_connected("box") {
@@ -382,7 +406,7 @@ fn two_apps_on_one_host_share_its_profile_and_take_turns_sizing_a_pane() {
     use abundio_core::host_client::HostProcess;
     let dir = tempfile::tempdir().unwrap();
     let mut server = server(dir.path());
-    let mut log = BufReader::new(server.stderr.take().unwrap()).lines().map_while(Result::ok);
+    let mut log = log_lines(server.stderr.take().unwrap());
     wait_for(&mut log, "waiting for a Client");
     let (heard_a, heard_b) = (std::sync::Arc::new(Heard::default()), std::sync::Arc::new(Heard::default()));
     let (a, _pa) = HostProcess::spawn(connect_command(dir.path()), heard_a.clone()).unwrap();
@@ -472,7 +496,7 @@ fn an_app_that_falls_behind_skips_ahead_to_the_screen() {
     use std::process::Stdio;
     let dir = tempfile::tempdir().unwrap();
     let mut server = server(dir.path());
-    let mut log = BufReader::new(server.stderr.take().unwrap()).lines().map_while(Result::ok);
+    let mut log = log_lines(server.stderr.take().unwrap());
     wait_for(&mut log, "waiting for a Client");
 
     // The slow app: it shakes hands, then reads nothing for a while.
@@ -491,7 +515,10 @@ fn an_app_that_falls_behind_skips_ahead_to_the_screen() {
     let script = folder.path().join("flood.sh");
     std::fs::write(
         &script,
-        "while [ ! -f go ]; do sleep 0.1; done\ni=0\nwhile [ $i -lt 40000 ]; do echo \"flood line $i\"; i=$((i+1)); done\necho FLOOD-DONE\nwhile :; do sleep 1; done\n",
+        // Far more than every buffer between the server and the slow app can
+        // hold (socket buffers alone are ~200 KB each way on stock Linux), so
+        // it surely falls behind: 40,000 lines once fit on a CI runner.
+        "while [ ! -f go ]; do sleep 0.1; done\ni=0\nwhile [ $i -lt 400000 ]; do echo \"flood line $i\"; i=$((i+1)); done\necho FLOOD-DONE\nwhile :; do sleep 1; done\n",
     )
     .unwrap();
     let pty = call(
@@ -531,7 +558,7 @@ fn an_app_that_falls_behind_skips_ahead_to_the_screen() {
     let snapshot = rx.recv_timeout(Duration::from_secs(20)).expect("no snapshot arrived");
     let text = String::from_utf8_lossy(&snapshot);
     assert!(text.contains("FLOOD-DONE"), "the snapshot is not the screen now");
-    assert!(text.contains("flood line 39999"));
+    assert!(text.contains("flood line 399999"));
     wait_for(&mut log, "skipped ahead on");
 
     let _ = slow.kill();
@@ -548,7 +575,7 @@ fn a_paused_connection_brings_its_windows_the_screen() {
     use abundio_core::screen_snapshot::RESYNC_MARK;
     let dir = tempfile::tempdir().unwrap();
     let mut server = server(dir.path());
-    let mut log = BufReader::new(server.stderr.take().unwrap()).lines().map_while(Result::ok);
+    let mut log = log_lines(server.stderr.take().unwrap());
     wait_for(&mut log, "waiting for a Client");
     let windows = std::sync::Arc::new(Windows::default());
     let router = HostRouter::new(windows.clone());
@@ -626,7 +653,7 @@ fn an_app_back_from_away_gets_its_panes_screens() {
     }
     let dir = tempfile::tempdir().unwrap();
     let mut server = server(dir.path());
-    let mut log = BufReader::new(server.stderr.take().unwrap()).lines().map_while(Result::ok);
+    let mut log = log_lines(server.stderr.take().unwrap());
     wait_for(&mut log, "waiting for a Client");
     let frames = std::sync::Arc::new(Frames::default());
     let (app, _p) = HostProcess::spawn(connect_command(dir.path()), frames.clone()).unwrap();
