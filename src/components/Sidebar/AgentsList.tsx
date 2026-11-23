@@ -121,11 +121,13 @@ export function AgentsList() {
 								// A grouped Workspace sits on a darker card, so its Agents read
 								// as one block. Black at partial opacity darkens whatever the
 								// sidebar is in every theme (--bg-primary is lighter than the
-								// sidebar in many themes), and a row's hover still shows on it.
+								// sidebar in many themes), and a row's hover still shows on it;
+								// how much black follows the theme (`sunkenCardBg`).
 								style={
 									grouped
 										? {
-												background: "rgba(0, 0, 0, 0.25)",
+												background:
+													"var(--sunken-card-bg, rgba(0, 0, 0, 0.25))",
 												borderRadius: 6,
 												padding: 2,
 											}

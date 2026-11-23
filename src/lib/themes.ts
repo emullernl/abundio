@@ -825,6 +825,9 @@ export function applyTheme(theme: AppTheme) {
 	root.style.setProperty("--error", theme.ui.error);
 	root.style.setProperty("--warning", theme.ui.warning);
 	root.style.setProperty("--success", theme.ui.success);
+	// A card a shade darker than the sidebar (the Agents list's groups): a
+	// dark theme takes a lot of black for it to show, a light one very little.
+	root.style.setProperty("--sunken-card-bg", sunkenCardBg(theme.variant));
 	rememberWindowBackground(theme.ui.bgPrimary);
 
 	// Re-define the Monaco editor theme with the new CSS variable values
@@ -860,4 +863,9 @@ function rememberWindowBackground(color: string): void {
 	void import("./ipc")
 		.then((m) => m.windowBackground.set(color))
 		.catch(() => {});
+}
+
+/** The background of a card sunk into the sidebar, by the theme's variant. */
+export function sunkenCardBg(variant: ThemeVariant): string {
+	return variant === "light" ? "rgba(0, 0, 0, 0.06)" : "rgba(0, 0, 0, 0.25)";
 }
