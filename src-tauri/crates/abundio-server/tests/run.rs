@@ -663,11 +663,16 @@ fn an_app_back_from_away_gets_its_panes_screens() {
     let folder = tempfile::tempdir().unwrap();
     let profile = "00000000-0000-0000-0000-000000000001";
     let ws = call("workspace_create", serde_json::json!({ "name": "R", "rootFolder": folder.path(), "profileId": profile }));
+    // A script, as pty_spawn splits a command at whitespace and honours no
+    // quotes: `sh -c 'echo …'` once passed on macOS only because its sh named
+    // the broken script's error after the word "screen-before;".
+    let script = folder.path().join("before.sh");
+    std::fs::write(&script, "echo screen-before\nsleep 30\n").unwrap();
     let pty = call(
         "pty_spawn",
         serde_json::json!({
             "cwd": folder.path(), "cols": 80, "rows": 24, "workspaceId": ws["id"],
-            "command": "/bin/sh -c 'echo screen-before; sleep 30'",
+            "command": format!("/bin/sh {}", script.display()),
         }),
     );
     let pty = pty.as_str().unwrap().to_string();
