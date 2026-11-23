@@ -1,3 +1,4 @@
+import { Cloud } from "lucide-react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -170,6 +171,20 @@ export const CollapsedStrip = memo(function CollapsedStrip({
 					transition: "background-color var(--transition-fast)",
 				}}
 			>
+				{workspace.joined && (
+					// A joined profile's Workspace: on a Host, marked as the
+					// expanded sidebar's section header marks it.
+					<Cloud
+						size={9}
+						aria-label="on a Host"
+						style={{
+							position: "absolute",
+							top: 3,
+							right: 3,
+							color: "var(--fg-secondary)",
+						}}
+					/>
+				)}
 				{indent > 0 && (
 					// Vertical rail tying Linked worktrees to the Primary above. Each
 					// strip draws its own full-height segment, so stacked strips form

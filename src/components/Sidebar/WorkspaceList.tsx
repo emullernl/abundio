@@ -611,7 +611,9 @@ export function WorkspaceList({
 				? // Collapsed strips in grouped display order; Linked worktrees keep
 					// the same indentation + rail as the expanded sidebar. Folding is
 					// honoured here too — one fold state, both sidebar widths — with
-					// the hidden members' status surviving as a badge dot.
+					// the hidden members' status surviving as a badge dot. A folded
+					// section shows no strips either.
+					!ownFolded &&
 					rows.map((row) =>
 						row.kind === "set" ? (
 							<CollapsedSetBlock
@@ -657,6 +659,28 @@ export function WorkspaceList({
 					})}
 
 			{!collapsed && nearestSlot === rows.length && <DropIndicator />}
+
+			{collapsed && (
+				<JoinedSections
+					collapsed
+					ownShows={!ownFolded && rows.length > 0}
+					renderRows={() => null}
+					renderCollapsed={(list) =>
+						buildWorkspaceRows(list, worktreeFacts).map((row) =>
+							row.kind === "set" ? (
+								<CollapsedSetBlock
+									key={rowId(row)}
+									row={row}
+									folded={foldedKeys.has(row.groupKey)}
+									renderStrip={renderCollapsedStrip}
+								/>
+							) : (
+								renderCollapsedStrip(row.workspace, 0)
+							),
+						)
+					}
+				/>
+			)}
 
 			{!collapsed && (
 				<JoinedSections

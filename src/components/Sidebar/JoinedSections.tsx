@@ -1,8 +1,10 @@
 import { Cloud, MoreHorizontal, Plus } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
+import { dividersBefore } from "../../lib/sectionDividers";
 import type { WorkspaceWithTabs } from "../../lib/types";
 import { type JoinedEntry, useJoinedStore } from "../../stores/joinedStore";
 import { useProfileStore } from "../../stores/profileStore";
+import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { OpenRemoteProfileDialog } from "../OpenRemoteProfileDialog";
 import { PaneContextMenu } from "../Terminal/PaneContextMenu";
@@ -32,18 +34,58 @@ export function lastSeen(ms: number | null, now = Date.now()): string {
  */
 export function JoinedSections({
 	renderRows,
+	collapsed = false,
+	renderCollapsed,
+	ownShows = true,
 }: {
 	renderRows: (workspaces: WorkspaceWithTabs[], offline: boolean) => ReactNode;
+	/** The sidebar is collapsed: each section's Workspaces as strips, under a
+	 *  divider, with no header. */
+	collapsed?: boolean;
+	renderCollapsed?: (workspaces: WorkspaceWithTabs[]) => ReactNode;
+	/** This Window's own section shows something above these. */
+	ownShows?: boolean;
 }) {
 	const entries = useJoinedStore((s) => s.entries);
 	const remote = useProfileStore((s) => s.remote);
+	const workspaces = useWorkspaceStore((s) => s.workspaces);
+	const folded = useWindowUiStore((s) => s.foldedSectionKeys);
 	const [joining, setJoining] = useState(false);
 	// Joining is a local Profile's: a remote Window shows its one Host.
 	if (remote) return null;
+	// A divider only between sections that both show something.
+	const shows = entries.map(
+		(e) =>
+			!collapsed ||
+			(!folded.includes(`host:${e.hostId}`) &&
+				workspaces.some((w) => w.joined?.hostId === e.hostId)),
+	);
+	const dividers = dividersBefore([ownShows, ...shows]).slice(1);
+	if (collapsed) {
+		return (
+			<>
+				{entries.map((e, i) =>
+					shows[i] ? (
+						<CollapsedJoined
+							key={e.hostId}
+							entry={e}
+							divider={dividers[i]}
+							render={renderCollapsed}
+						/>
+					) : null,
+				)}
+			</>
+		);
+	}
 	return (
 		<>
-			{entries.map((e) => (
-				<JoinedSection key={e.hostId} entry={e} renderRows={renderRows} />
+			{entries.map((e, i) => (
+				<JoinedSection
+					key={e.hostId}
+					entry={e}
+					renderRows={renderRows}
+					divider={dividers[i]}
+				/>
 			))}
 			<button
 				type="button"
@@ -69,12 +111,67 @@ export function JoinedSections({
 	);
 }
 
+/** The line between two sections of the Workspace list. */
+export function SectionDivider({ short = false }: { short?: boolean }) {
+	return (
+		<hr
+			style={{
+				height: 1,
+				border: "none",
+				margin: short ? "6px 12px" : "10px 8px 4px",
+				backgroundColor: "var(--border)",
+			}}
+		/>
+	);
+}
+
+/** A Joined profile's Workspaces in the collapsed sidebar: strips under a
+ *  divider, dimmed while its Host is away (hover says so). */
+function CollapsedJoined({
+	entry,
+	divider,
+	render,
+}: {
+	entry: JoinedEntry;
+	divider: boolean;
+	render?: (workspaces: WorkspaceWithTabs[]) => ReactNode;
+}) {
+	const link = useJoinedStore((s) => s.links[entry.hostId]);
+	const workspaces = useWorkspaceStore((s) => s.workspaces);
+	const mine = useMemo(
+		() => workspaces.filter((w) => w.joined?.hostId === entry.hostId),
+		[workspaces, entry.hostId],
+	);
+	const offline = link?.state !== "online";
+	return (
+		<section aria-label={`${entry.hostName} · ${entry.remoteProfileName}`}>
+			{divider && <SectionDivider short />}
+			<div
+				title={
+					offline
+						? `${entry.hostName} is not connected`
+						: `${entry.hostName} · ${entry.remoteProfileName}`
+				}
+				style={{
+					opacity: offline ? 0.5 : 1,
+					pointerEvents: offline ? "none" : undefined,
+				}}
+				aria-disabled={offline}
+			>
+				{render?.(mine)}
+			</div>
+		</section>
+	);
+}
+
 function JoinedSection({
 	entry,
 	renderRows,
+	divider,
 }: {
 	entry: JoinedEntry;
 	renderRows: (workspaces: WorkspaceWithTabs[], offline: boolean) => ReactNode;
+	divider: boolean;
 }) {
 	const link = useJoinedStore((s) => s.links[entry.hostId]);
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
@@ -102,10 +199,8 @@ function JoinedSection({
 				? "Connecting…"
 				: null;
 	return (
-		<section
-			aria-label={`${entry.hostName} · ${entry.remoteProfileName}`}
-			style={{ marginTop: 10 }}
-		>
+		<section aria-label={`${entry.hostName} · ${entry.remoteProfileName}`}>
+			{divider ? <SectionDivider /> : <div style={{ height: 10 }} />}
 			<WorkspaceSectionHeader
 				sectionKey={sectionKey}
 				icon={<Cloud size={12} />}
