@@ -46,9 +46,29 @@ vi.mock("../../lib/ipc", () => ({
 	windowSession: {
 		focus: vi.fn(() => Promise.resolve()),
 	},
+	hostsApi: {
+		remoteProfileForWindow: vi.fn(() => Promise.resolve(null)),
+		serverProfiles: vi.fn(() =>
+			Promise.resolve([
+				{
+					id: "p-default",
+					name: "Server",
+					position: 0,
+					createdAt: 0,
+					updatedAt: 0,
+				},
+			]),
+		),
+		setClientProfile: vi.fn(() => Promise.resolve()),
+	},
+	listenToThisWindow: vi.fn(() => Promise.resolve(() => {})),
 }));
 
-import { profiles as profilesApi, windowSession } from "../../lib/ipc";
+import {
+	hostsApi,
+	profiles as profilesApi,
+	windowSession,
+} from "../../lib/ipc";
 import { useProfileStore } from "../profileStore";
 import { usePtyActivityStore } from "../ptyActivityStore";
 import { useWorkspaceStore } from "../workspaceStore";
@@ -310,5 +330,54 @@ describe("switchProfile", () => {
 		expect(closeWorkspace).not.toHaveBeenCalled();
 		expect(useProfileStore.getState().activeProfileId).toBe("p-default");
 		logged.mockRestore();
+	});
+});
+
+describe("a Window on a remote Host", () => {
+	beforeEach(() => {
+		useProfileStore.setState({
+			profiles: [],
+			activeProfileId: null,
+			profilesLoaded: false,
+			ownershipMap: {},
+			remote: null,
+			remoteError: null,
+		});
+		vi.mocked(profilesApi.setActiveProfileId).mockClear();
+	});
+
+	it("shows its Host's Profile and never claims a local one", async () => {
+		const remote = {
+			hostId: "h",
+			hostName: "build-box",
+			profileId: "p-default",
+			profileName: "Server",
+		};
+		vi.mocked(hostsApi.remoteProfileForWindow).mockResolvedValueOnce(remote);
+		await useProfileStore.getState().loadProfiles();
+		const s = useProfileStore.getState();
+		expect(s.remote).toEqual(remote);
+		expect(s.activeProfileId).toBe("p-default");
+		expect(s.profiles.map((p) => p.name)).toEqual(["Server"]);
+		expect(hostsApi.setClientProfile).toHaveBeenCalledWith("p-default");
+		// The local default has the same id: it must not be claimed.
+		expect(profilesApi.setActiveProfileId).not.toHaveBeenCalled();
+	});
+
+	it("waits for its Host when it is not connected yet", async () => {
+		vi.mocked(hostsApi.remoteProfileForWindow).mockResolvedValueOnce({
+			hostId: "h",
+			hostName: "build-box",
+			profileId: "p-default",
+			profileName: "Server",
+		});
+		vi.mocked(hostsApi.serverProfiles).mockRejectedValueOnce(
+			"not connected to h",
+		);
+		await useProfileStore.getState().loadProfiles();
+		const s = useProfileStore.getState();
+		expect(s.remoteError).toContain("not connected");
+		expect(s.activeProfileId).toBe("p-default");
+		expect(profilesApi.setActiveProfileId).not.toHaveBeenCalled();
 	});
 });

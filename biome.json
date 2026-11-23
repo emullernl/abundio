@@ -1,7 +1,19 @@
 {
 	"$schema": "https://biomejs.dev/schemas/2.4.9/schema.json",
 	"files": {
-		"includes": ["src/**", "*.ts", "*.tsx", "*.json", "*.js"]
+		"includes": [
+			"src/**",
+			"*.ts",
+			"*.tsx",
+			"*.json",
+			"*.js",
+			"!src/lib/__tests__/fixtures/statusParity.json",
+			"!src/lib/__tests__/fixtures/statusShadowStore.json",
+			"!src/lib/__tests__/fixtures/layoutOps.json",
+			"!src/lib/__tests__/fixtures/hookRoute.json",
+			"!src/lib/__tests__/fixtures/titleStatus.json",
+			"!src/lib/__tests__/fixtures/shellIntegration.json"
+		]
 	},
 	"assist": { "actions": { "source": { "organizeImports": "on" } } },
 	"linter": {

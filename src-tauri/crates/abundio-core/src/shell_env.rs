@@ -1,0 +1,470 @@
+use std::env;
+use std::path::Path;
+use std::process::{Command, Stdio};
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+use std::sync::mpsc;
+use std::sync::OnceLock;
+use std::time::Duration;
+
+use serde::Serialize;
+
+/// Windows process creation flag to suppress console window popups.
+#[cfg(target_os = "windows")]
+pub const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+/// Returns the user's default shell.
+/// On Windows, prefers Git Bash (bash.exe) for shell integration support.
+pub fn default_shell() -> String {
+    if cfg!(target_os = "windows") {
+        // Prefer Git Bash for shell integration (precmd/preexec hooks)
+        for path in [
+            "C:\\Program Files\\Git\\bin\\bash.exe",
+            "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+        ] {
+            if std::path::Path::new(path).exists() {
+                return path.to_string();
+            }
+        }
+        // Check PATH for bash
+        let mut cmd = std::process::Command::new("where");
+        cmd.arg("bash.exe");
+        // `#[cfg]` (not `cfg!()`) needed — `cfg!()` compiles both branches
+        // but CommandExt::creation_flags doesn't exist on non-Windows
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        if let Ok(output) = cmd.output()
+        {
+            if output.status.success() {
+                let path = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if !path.is_empty() {
+                    // Win32 CreateProcess accepts backslashes natively;
+                    // no slash conversion needed here (unlike --rcfile /
+                    // ZDOTDIR which go through Git Bash's MSYS path layer)
+                    return path;
+                }
+            }
+        }
+        // Fallback to cmd.exe (no shell integration)
+        env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+    } else {
+        env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
+    }
+}
+
+/// Returns the user's full login shell PATH.
+///
+/// On macOS, apps launched from Finder inherit a minimal PATH that doesn't
+/// include Homebrew directories. This resolves the real PATH by invoking the
+/// user's login shell once, then caches the result for the process lifetime.
+///
+/// The shell is invoked with `-l -i` (login + interactive) to match the flags
+/// used when spawning terminal PTYs. Many tools (Claude Code's installer, etc.)
+/// add themselves to PATH only from interactive-shell config (`.zshrc`), which
+/// a login-but-not-interactive shell never sources — so without `-i` those
+/// binaries resolve as "not installed" here even though they run fine inside a
+/// pane. Interactive config may print to stdout (prompts, plugins), so the
+/// PATH is wrapped in sentinels and extracted rather than parsing the whole
+/// stream.
+pub fn shell_path() -> String {
+    resolved_shell_path().0
+}
+
+/// True when [`shell_path`] is the user's real login-shell `PATH`, false when
+/// the shell failed or timed out and it is the minimal fallback. A scan on the
+/// fallback can find *some* agents (Homebrew ones) while missing others
+/// (`~/.local/bin`), so a caller that would do something irreversible with a
+/// "not installed" answer must check this first.
+pub fn shell_path_is_resolved() -> bool {
+    resolved_shell_path().1
+}
+
+/// The resolved PATH, whether it is the login shell's, and when it was read.
+type Resolved = (String, bool, std::time::Instant);
+
+fn cache() -> &'static std::sync::RwLock<Option<Resolved>> {
+    static PATH: OnceLock<std::sync::RwLock<Option<Resolved>>> = OnceLock::new();
+    PATH.get_or_init(|| std::sync::RwLock::new(None))
+}
+
+fn resolved_shell_path() -> (String, bool) {
+    if let Some((path, ok, _)) = cache().read().ok().and_then(|c| c.clone()) {
+        return (path, ok);
+    }
+    let fresh = resolve_now();
+    let mut c = cache().write().unwrap_or_else(|e| e.into_inner());
+    let got = c.get_or_insert((fresh.0, fresh.1, std::time::Instant::now()));
+    (got.0.clone(), got.1)
+}
+
+/// Read the login shell's PATH again when the copy is older than `max_age`
+/// (an Abundio server runs for weeks, and an Agent installed meanwhile adds
+/// itself to `.bashrc`). A failed read keeps the last good one.
+pub fn refresh_shell_path_if_older(max_age: Duration) {
+    refresh_in(cache(), max_age, resolve_now);
+}
+
+fn refresh_in(
+    cache: &std::sync::RwLock<Option<Resolved>>,
+    max_age: Duration,
+    resolve: impl FnOnce() -> (String, bool),
+) {
+    let stale = cache
+        .read()
+        .ok()
+        .and_then(|c| c.as_ref().map(|(_, _, at)| at.elapsed() > max_age))
+        .unwrap_or(true);
+    if !stale {
+        return;
+    }
+    let (path, ok) = resolve();
+    let mut c = cache.write().unwrap_or_else(|e| e.into_inner());
+    match c.as_mut() {
+        // Keep a good PATH over a failed read; note the try either way.
+        Some(old) if old.1 && !ok => old.2 = std::time::Instant::now(),
+        _ => *c = Some((path, ok, std::time::Instant::now())),
+    }
+}
+
+fn resolve_now() -> (String, bool) {
+    if cfg!(target_os = "windows") {
+        return (env::var("PATH").unwrap_or_default(), true);
+    }
+
+    let shell = default_shell();
+    if let Some(stdout) = capture_login_shell_path(&shell) {
+        if let Some(path) =
+            extract_between(&stdout, "__ABUNDIO_PATH_START__", "__ABUNDIO_PATH_END__")
+        {
+            if !path.is_empty() {
+                return (path.to_string(), true);
+            }
+        }
+    }
+
+    // Fallback: current PATH + common Homebrew locations
+    let current = env::var("PATH").unwrap_or_default();
+    (format!("{current}:/opt/homebrew/bin:/usr/local/bin"), false)
+}
+
+/// Upper bound on how long we wait for the login+interactive shell to print its
+/// PATH. Interactive rc files can do slow or even blocking work (`compinit`,
+/// `nvm`, network-touching plugins); if one wedges, we give up and let the
+/// caller fall through to the Homebrew fallback rather than hanging forever.
+const SHELL_PATH_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Runs the user's login + interactive shell to capture its sentinel-wrapped
+/// `PATH`, bounded by [`SHELL_PATH_TIMEOUT`]. Returns the raw stdout on success,
+/// or `None` if the shell failed to spawn or timed out.
+///
+/// Two guards make this safe now that we source interactive config:
+/// - **stdin is nulled** so a sourced rc snippet that issues a `read` gets EOF
+///   immediately instead of blocking on the parent's inherited stdin.
+/// - **stdout is drained on a worker thread** so a hung shell can be killed on
+///   timeout without leaking the reader (the read returns once the killed
+///   child's stdout closes).
+fn capture_login_shell_path(shell: &str) -> Option<String> {
+    use std::io::Read;
+
+    let mut child = Command::new(shell)
+        .args([
+            "-l",
+            "-i",
+            "-c",
+            "printf '__ABUNDIO_PATH_START__%s__ABUNDIO_PATH_END__' \"$PATH\"",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+
+    let mut stdout = child.stdout.take()?;
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = String::new();
+        let _ = stdout.read_to_string(&mut buf);
+        let _ = tx.send(buf);
+    });
+
+    match rx.recv_timeout(SHELL_PATH_TIMEOUT) {
+        // Exit status is intentionally ignored: an interactive shell with no
+        // tty often exits non-zero (job-control warnings) even when `printf`
+        // succeeded. The sentinel extraction is the real success check.
+        Ok(buf) => {
+            let _ = child.wait();
+            Some(buf)
+        }
+        Err(_) => {
+            // Timed out (or the reader vanished) — kill the shell and bail.
+            let _ = child.kill();
+            let _ = child.wait();
+            None
+        }
+    }
+}
+
+/// Returns the substring strictly between the first `start` marker and the
+/// first following `end` marker, or `None` if either marker is absent.
+fn extract_between<'a>(haystack: &'a str, start: &str, end: &str) -> Option<&'a str> {
+    let after_start = haystack.split_once(start)?.1;
+    Some(after_start.split_once(end)?.0)
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableShell {
+    pub name: String,
+    pub path: String,
+    pub available: bool,
+    pub is_default: bool,
+}
+
+/// Returns a list of shells available on the system.
+///
+/// On Unix, reads `/etc/shells` and validates each path exists.
+/// On Windows, checks for Git Bash and PowerShell.
+pub fn list_available_shells() -> Vec<AvailableShell> {
+    let default = default_shell();
+
+    if cfg!(target_os = "windows") {
+        list_available_shells_windows(&default)
+    } else {
+        list_available_shells_unix(&default)
+    }
+}
+
+fn list_available_shells_unix(default: &str) -> Vec<AvailableShell> {
+    let mut shells = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    if let Ok(contents) = std::fs::read_to_string("/etc/shells") {
+        for line in contents.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if !seen.insert(line.to_string()) {
+                continue;
+            }
+            let path = Path::new(line);
+            let available = path.exists();
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(line)
+                .to_string();
+            shells.push(AvailableShell {
+                name,
+                path: line.to_string(),
+                available,
+                is_default: line == default,
+            });
+        }
+    }
+
+    shells
+}
+
+fn list_available_shells_windows(default: &str) -> Vec<AvailableShell> {
+    let mut shells = Vec::new();
+
+    // Git Bash
+    let git_bash_path = find_git_bash();
+    let git_bash_available = git_bash_path.is_some();
+    shells.push(AvailableShell {
+        name: "Git Bash".to_string(),
+        path: git_bash_path.unwrap_or_else(|| "bash.exe".to_string()),
+        available: git_bash_available,
+        is_default: git_bash_available && default.contains("bash"),
+    });
+
+    // PowerShell 7 (pwsh)
+    let pwsh_path = find_powershell("pwsh");
+    let pwsh_available = pwsh_path.is_some();
+
+    // Windows PowerShell 5.1 (powershell.exe)
+    let ps5_path = find_powershell("powershell");
+    let ps5_available = ps5_path.is_some();
+
+    if pwsh_available {
+        shells.push(AvailableShell {
+            name: "PowerShell 7".to_string(),
+            path: pwsh_path.unwrap(),
+            available: true,
+            is_default: !git_bash_available,
+        });
+    }
+    if ps5_available {
+        shells.push(AvailableShell {
+            name: "Windows PowerShell".to_string(),
+            path: ps5_path.unwrap(),
+            available: true,
+            is_default: !git_bash_available && !pwsh_available,
+        });
+    }
+
+    // If neither pwsh nor powershell found, add a disabled entry
+    if !pwsh_available && !ps5_available {
+        shells.push(AvailableShell {
+            name: "PowerShell".to_string(),
+            path: "pwsh.exe".to_string(),
+            available: false,
+            is_default: false,
+        });
+    }
+
+    shells
+}
+
+fn find_git_bash() -> Option<String> {
+    for path in [
+        "C:\\Program Files\\Git\\bin\\bash.exe",
+        "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+    ] {
+        if Path::new(path).exists() {
+            return Some(path.to_string());
+        }
+    }
+    // Check PATH
+    where_command("bash.exe")
+}
+
+fn find_powershell(name: &str) -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        let exe = format!("{name}.exe");
+        where_command(&exe)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = name;
+        None
+    }
+}
+
+fn where_command(exe: &str) -> Option<String> {
+    let mut cmd = Command::new(if cfg!(target_os = "windows") { "where" } else { "which" });
+    cmd.arg(exe);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let output = cmd.output().ok()?;
+    if output.status.success() {
+        let path = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if !path.is_empty() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+
+/// Probe `$PATH` + a few well-known dirs for an executable. On macOS,
+/// launching via the Tauri app bundle yields a minimal `$PATH` that excludes
+/// the user's shell PATH (e.g. `~/.local/bin`, where Claude Code's installer
+/// puts `claude`), so we resolve the full login-shell PATH via `shell_path()`
+/// rather than the inherited process env. `/usr/local/bin` and
+/// `/opt/homebrew/bin` are still appended as extras. On Windows, probes common
+/// binary extensions.
+///
+/// Cost note: the first call process-wide (shared with `gh_commands`) blocks on
+/// a login-shell subprocess to resolve the PATH (~50–300ms on macOS); the
+/// result is cached for the process lifetime, so subsequent calls are cheap.
+/// Today's callers (`lib.rs` setup, `list_installed_agent_commands`,
+/// `detect_all`) are off the UI hot path — keep them there, or warm
+/// `shell_path()` ahead of time if this ever moves onto a UI-blocking path.
+pub fn find_in_path(name: &str) -> Option<std::path::PathBuf> {
+    let path_var = crate::shell_env::shell_path();
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    let mut dirs: Vec<std::path::PathBuf> = std::env::split_paths(&path_var).collect();
+    #[cfg(target_os = "macos")]
+    {
+        for extra in ["/usr/local/bin", "/opt/homebrew/bin"] {
+            let p = std::path::PathBuf::from(extra);
+            if !dirs.iter().any(|d| d == &p) {
+                dirs.push(p);
+            }
+        }
+    }
+    for dir in dirs {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        #[cfg(target_os = "windows")]
+        {
+            for ext in ["exe", "cmd", "bat"] {
+                let candidate_ext = dir.join(format!("{}.{}", name, ext));
+                if candidate_ext.is_file() {
+                    return Some(candidate_ext);
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_non_empty_string() {
+        let shell = default_shell();
+        assert!(!shell.is_empty());
+    }
+
+    #[test]
+    fn returns_a_valid_path() {
+        let shell = default_shell();
+        // On Unix, the shell should start with / or be a known command
+        if !cfg!(target_os = "windows") {
+            assert!(shell.starts_with('/') || shell == "cmd.exe");
+        }
+    }
+
+    #[test]
+    fn extract_between_pulls_path_out_of_noisy_stream() {
+        // Interactive shell config can print to stdout before the PATH value;
+        // the sentinels must isolate just the PATH regardless of that noise.
+        let stream = "welcome banner\nplugin loaded\n__ABUNDIO_PATH_START__/usr/local/bin:/usr/bin__ABUNDIO_PATH_END__";
+        assert_eq!(
+            extract_between(stream, "__ABUNDIO_PATH_START__", "__ABUNDIO_PATH_END__"),
+            Some("/usr/local/bin:/usr/bin")
+        );
+    }
+
+    #[test]
+    fn the_login_paths_copy_is_read_again_once_old_and_a_failed_read_keeps_the_good_one() {
+        let cache = std::sync::RwLock::new(None);
+        refresh_in(&cache, Duration::from_secs(30), || ("/usr/bin".into(), true));
+        // Fresh: not read again.
+        refresh_in(&cache, Duration::from_secs(30), || panic!("read again too soon"));
+        // Old: an Agent installed meanwhile is on the new PATH.
+        refresh_in(&cache, Duration::ZERO, || ("/home/dev/.opencode/bin:/usr/bin".into(), true));
+        assert_eq!(cache.read().unwrap().as_ref().unwrap().0, "/home/dev/.opencode/bin:/usr/bin");
+        // The shell timing out does not lose it.
+        refresh_in(&cache, Duration::ZERO, || ("/fallback".into(), false));
+        let kept = cache.read().unwrap().clone().unwrap();
+        assert_eq!((kept.0.as_str(), kept.1), ("/home/dev/.opencode/bin:/usr/bin", true));
+    }
+
+    #[test]
+    fn extract_between_returns_none_without_markers() {
+        assert_eq!(extract_between("no markers here", "__START__", "__END__"), None);
+        assert_eq!(
+            extract_between("__START__only start", "__START__", "__END__"),
+            None
+        );
+    }
+}

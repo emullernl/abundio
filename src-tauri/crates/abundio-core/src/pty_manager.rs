@@ -1,0 +1,3265 @@
+use std::collections::HashSet;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
+use std::thread;
+
+use base64::Engine;
+use crossbeam_channel::{self, Receiver, Sender};
+use dashmap::DashMap;
+use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+
+use crate::error::AbundioError;
+use crate::event_sink::{Events, EventsExt};
+use crate::events::{PtyActivity, PtyStatus};
+use crate::process_monitor;
+use crate::shell_env;
+
+const MAX_LOG_SIZE: u64 = 5 * 1024 * 1024; // 5 MB
+
+/// What a spawn needs from the rest of the app, passed in rather than looked
+/// up through Tauri state so the PTY manager works without Tauri (an Abundio
+/// server, tests).
+pub struct SpawnDeps<'a> {
+    pub events: Events,
+    /// The hook server's port and token, placed in the child's environment.
+    pub hook_env: Option<HookEnv>,
+    /// Where the Workspace's injected Environment Bundle is read from.
+    pub env_store: Option<&'a crate::env_vars::EnvVarStore>,
+}
+
+/// The hook server's address as a PTY sees it.
+#[derive(Clone)]
+pub struct HookEnv {
+    pub port: u16,
+    pub token: String,
+}
+
+/// Commands sent from the main thread to a PTY's dedicated thread.
+enum PtyCommand {
+    Write(Vec<u8>),
+    Resize(u16, u16),
+    /// Send SIGWINCH to the PTY's foreground process group without changing
+    /// its size, so the program running there redraws its screen.
+    Redraw,
+    Kill,
+}
+
+/// Metadata stored in the registry for each PTY.
+struct PtyEntry {
+    tx: Sender<PtyCommand>,
+    #[allow(dead_code)]
+    alive: Arc<AtomicBool>,
+    /// The PTY's screen as text (ADR-0063), fed by its reader thread.
+    screen: Arc<Mutex<crate::screen::Screen>>,
+}
+
+/// A **New task** launch: the Agent's argv (the resolved Task prompt is one
+/// element of it) and optional **Worktree setup commands** to run first.
+/// Spawned through `shell -c` with the argv as positional parameters, so the
+/// prompt never passes through a shell parser. See ADR-0042.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskLaunch {
+    pub argv: Vec<String>,
+    #[serde(default)]
+    pub setup: Option<String>,
+    /// The Agent's plain launch line, run instead when `argv` (a session
+    /// resume) exits non-zero within `fallback_within_secs`: "nothing to
+    /// resume". Only the Orchestrator uses it (ADR-0057). A launch line, as
+    /// typed at a prompt on every other path, so the script `eval`s it.
+    #[serde(default)]
+    pub fallback: Option<String>,
+    #[serde(default)]
+    pub fallback_within_secs: Option<u32>,
+}
+
+/// Which Workspace a live PTY belongs to.
+///
+/// Recorded at spawn so the `abundio-env` helper can resolve a Bundle from
+/// nothing but `ABUNDIO_PTY_ID`. That is what stops a pane asking for another
+/// Workspace's variables: the Workspace is derived from the pty id, never taken
+/// from the request body. See `hook_server.rs`.
+#[derive(Clone, Debug)]
+pub struct SpawnContext {
+    pub workspace_id: String,
+    /// Main-worktree Workspace this pane inherits from, if any.
+    pub inherit_from: Option<String>,
+}
+
+/// Told when a PTY ends: its id and exit code (`None` when killed).
+pub type ExitListener = Arc<dyn Fn(&str, Option<u32>) + Send + Sync>;
+
+/// Told when a PTY's terminal title changes: its id and the new title.
+pub type TitleListener = Arc<dyn Fn(&str, &str) + Send + Sync>;
+
+/// Told what a PTY's shell reported on the shell-integration channel.
+pub type ShellListener = Arc<dyn Fn(&str, Vec<crate::shell_integration::ShellCommand>) + Send + Sync>;
+
+/// Told of each read of a PTY's output (its length), or of input written
+/// to it (the bytes).
+pub type BytesListener = Arc<dyn Fn(&str, &[u8]) + Send + Sync>;
+
+/// What hears a PTY's output and input besides its Windows (see
+/// `on_title`, `on_shell`, `on_output`, `on_input`). Set once, at startup.
+#[derive(Default)]
+struct OutputListeners {
+    title: std::sync::OnceLock<TitleListener>,
+    shell: std::sync::OnceLock<ShellListener>,
+    output: std::sync::OnceLock<BytesListener>,
+    input: std::sync::OnceLock<BytesListener>,
+}
+
+pub struct PtyManager {
+    entries: DashMap<String, PtyEntry>,
+    spawn_contexts: DashMap<String, SpawnContext>,
+    /// pty id → label of the Window that spawned it, so closing a Window can
+    /// kill its PTYs. React cleanup never runs when a webview is destroyed, so
+    /// without this every shell and Agent of a closed Window ran until quit.
+    owner_windows: DashMap<String, String>,
+    /// Per-PTY **Agent control** tokens (ADR-0054), issued at spawn.
+    control_tokens: Arc<crate::control_protocol::ControlTokens>,
+    /// Scrollback lines each PTY's screen keeps: the terminal setting.
+    scrollback: AtomicUsize,
+    /// See [`PtyManager::on_exit`].
+    exit_listener: Arc<std::sync::OnceLock<ExitListener>>,
+    /// See [`PtyManager::on_title`] and [`PtyManager::on_shell`].
+    output_listeners: Arc<OutputListeners>,
+    /// Each Client's size for each PTY: the last to act sizes it (phase 9).
+    pub sizes: crate::pty_sizes::PtySizes,
+}
+
+impl PtyManager {
+    pub fn new() -> Self {
+        Self {
+            entries: DashMap::new(),
+            spawn_contexts: DashMap::new(),
+            owner_windows: DashMap::new(),
+            control_tokens: Default::default(),
+            exit_listener: Arc::new(std::sync::OnceLock::new()),
+            output_listeners: Arc::default(),
+            scrollback: AtomicUsize::new(crate::screen::DEFAULT_SCROLLBACK),
+            sizes: Default::default(),
+        }
+    }
+
+    /// Keep `lines` of scrollback in every PTY's screen, now and from now on.
+    pub fn set_scrollback(&self, lines: usize) {
+        self.scrollback.store(lines, Ordering::Relaxed);
+        for entry in self.entries.iter() {
+            if let Ok(mut screen) = entry.screen.lock() {
+                screen.set_scrollback(lines);
+            }
+        }
+    }
+
+    /// The text of a PTY's screen (`abundio pane read`), read from its Rust
+    /// emulator. See `screen::Screen::read`.
+    /// Hand `send` the bytes that draw this PTY's screen again (phase 9
+    /// skip-ahead), while its output is held back: the PTY's reader sends
+    /// output under the same lock, so nothing is sent between the snapshot
+    /// and `send`. `send` must not touch this PTY's screen. `false`: no
+    /// such PTY.
+    pub fn with_screen_snapshot(&self, pty_id: &str, send: &mut dyn FnMut(Vec<u8>)) -> bool {
+        let Some(entry) = self.entries.get(pty_id) else { return false };
+        let screen = entry.screen.clone();
+        drop(entry);
+        let Ok(screen) = screen.lock() else { return false };
+        send(screen.snapshot());
+        true
+    }
+
+    /// Which of `pty_ids` still run here: a Window loading its layouts
+    /// reattaches to these and starts the rest afresh (phase 9: a second
+    /// app, or a Window reloaded after a reconnect, on a Host).
+    pub fn alive(&self, pty_ids: &[String]) -> Vec<String> {
+        pty_ids.iter().filter(|id| self.entries.contains_key(id.as_str())).cloned().collect()
+    }
+
+    /// The PTYs started in these Workspaces (a Host's Profile being deleted).
+    pub fn ptys_of_workspaces(&self, workspace_ids: &std::collections::HashSet<String>) -> Vec<String> {
+        self.spawn_contexts
+            .iter()
+            .filter(|e| workspace_ids.contains(&e.value().workspace_id))
+            .map(|e| e.key().clone())
+            .collect()
+    }
+
+    pub fn read_screen(
+        &self,
+        pty_id: &str,
+        visible: bool,
+        lines: Option<usize>,
+    ) -> Result<Vec<String>, AbundioError> {
+        let entry = self
+            .entries
+            .get(pty_id)
+            .ok_or_else(|| AbundioError::NotFound(format!("PTY not found: {}", pty_id)))?;
+        let screen = entry
+            .screen
+            .lock()
+            .map_err(|_| AbundioError::Pty("screen lock poisoned".into()))?;
+        Ok(screen.read(visible, lines))
+    }
+
+    /// The input modes the program in a PTY has turned on.
+    pub fn input_modes(&self, pty_id: &str) -> Option<crate::screen::InputModes> {
+        let entry = self.entries.get(pty_id)?;
+        let screen = entry.screen.lock().ok()?;
+        Some(screen.modes())
+    }
+
+    /// The Window that spawned a PTY (its label).
+    pub fn owner_window(&self, pty_id: &str) -> Option<String> {
+        self.owner_windows.get(pty_id).map(|e| e.clone())
+    }
+
+    /// Whether a PTY with this id is running (spawned, not exited or killed).
+    pub fn is_live(&self, pty_id: &str) -> bool {
+        self.entries
+            .get(pty_id)
+            .is_some_and(|e| e.alive.load(Ordering::Relaxed))
+    }
+
+    pub fn control_tokens(&self) -> &crate::control_protocol::ControlTokens {
+        &self.control_tokens
+    }
+
+    /// The Workspace a live PTY belongs to, or `None` if the pty id is unknown
+    /// (already exited, or spawned before a workspace id was available).
+    pub fn spawn_context(&self, pty_id: &str) -> Option<SpawnContext> {
+        self.spawn_contexts.get(pty_id).map(|e| e.clone())
+    }
+
+    /// Spawn a new PTY in a dedicated OS thread.
+    ///
+    /// - `cwd`: working directory for the shell
+    /// - `command`: optional command to run instead of the default shell
+    /// - `cols`, `rows`: initial terminal size
+    /// - `log_id`: optional stable identifier for the PTY output log file
+    /// - `workspace_id` / `inherit_from_workspace_id`: which Workspace's
+    ///   injected Bundle to place in the child's environment. The second is the
+    ///   main-worktree Workspace for a linked worktree; worktree grouping is
+    ///   derived in the frontend and is not recomputed here.
+    ///
+    /// Returns the PTY ID.
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn(
+        &self,
+        deps: SpawnDeps<'_>,
+        owner_window: &str,
+        cwd: &str,
+        command: Option<&str>,
+        shell: Option<&str>,
+        cols: u16,
+        rows: u16,
+        log_id: Option<&str>,
+        pty_id: Option<&str>,
+        workspace_name: Option<&str>,
+        window_label: Option<&str>,
+        workspace_id: Option<&str>,
+        inherit_from_workspace_id: Option<&str>,
+        task: Option<&TaskLaunch>,
+    ) -> Result<String, AbundioError> {
+        if let Some(t) = task {
+            if t.argv.is_empty() {
+                return Err(AbundioError::Pty("New task: empty agent command".into()));
+            }
+        }
+        let pty_id = pty_id
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+        let pty_system = native_pty_system();
+        let size = PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+
+        let pair = pty_system
+            .openpty(size)
+            .map_err(|e| AbundioError::Pty(e.to_string()))?;
+
+        let shell = match shell {
+            Some(s) if Path::new(s).exists() => s.to_string(),
+            Some(s) => {
+                let fallback = shell_env::default_shell();
+                deps.events.broadcast(
+                    &format!("pty-status-{}", pty_id),
+                    PtyStatus::ShellNotFound {
+                        configured: s.to_string(),
+                        fallback: fallback.clone(),
+                    },
+                );
+                fallback
+            }
+            None => shell_env::default_shell(),
+        };
+        let shell_type = detect_shell_type(&shell);
+        let integration_dir = shell_integration_dir();
+        if task.is_some() && !matches!(shell_type, ShellType::Zsh | ShellType::Bash) {
+            return Err(AbundioError::Pty(format!(
+                "New task needs zsh or bash as the terminal shell (this one is {shell}). \
+                 Change it in Settings \u{25B8} Terminal, or start the agent with New agent."
+            )));
+        }
+
+        let mut cmd = if let Some(command) = command {
+            let parts: Vec<&str> = command.split_whitespace().collect();
+            let mut cmd = CommandBuilder::new(parts[0]);
+            for arg in &parts[1..] {
+                cmd.arg(arg);
+            }
+            cmd
+        } else {
+            let mut cmd = CommandBuilder::new(&shell);
+            match shell_type {
+                ShellType::Zsh => {
+                    cmd.args(["-l", "-i"]);
+                    // Redirect ZDOTDIR so zsh loads our wrapper .zshrc
+                    let original_zdotdir =
+                        std::env::var("ZDOTDIR").unwrap_or_default();
+                    cmd.env("ABUNDIO_ORIGINAL_ZDOTDIR", &original_zdotdir);
+                    let zdotdir_str = integration_dir.to_string_lossy().into_owned();
+                    #[cfg(target_os = "windows")]
+                    let zdotdir_str = zdotdir_str.replace('\\', "/");
+                    cmd.env("ZDOTDIR", &zdotdir_str);
+                    if let Some(t) = task {
+                        // The wrapper .zshrc points ZDOTDIR back at the user's
+                        // folder (and it stays exported), so the re-exec must
+                        // aim it at the wrapper again or the shell left after
+                        // the Agent has no shell integration.
+                        cmd.args(task_c_args(&shell, &zsh_reexec(&zdotdir_str), t));
+                    }
+                }
+                ShellType::Bash => {
+                    // Use --rcfile to load our wrapper (not -l; --rcfile is ignored for login shells)
+                    let rcfile = integration_dir.join(".bashrc");
+                    let rcfile_str = rcfile.to_string_lossy().into_owned();
+                    // Git Bash on Windows needs forward-slash paths
+                    #[cfg(target_os = "windows")]
+                    let rcfile_str = rcfile_str.replace('\\', "/");
+                    cmd.args(["--rcfile", &rcfile_str, "-i"]);
+                    if let Some(t) = task {
+                        cmd.args(task_c_args(&shell, &bash_reexec(&rcfile_str), t));
+                    }
+                    // Our wrapper rcfile sources /etc/profile for login-shell
+                    // parity. On Git Bash (MSYS2), /etc/profile does `cd "$HOME"`
+                    // unless CHERE_INVOKING is set — which would clobber the spawn
+                    // cwd and land every new terminal in the user's home folder
+                    // instead of the workspace folder.
+                    #[cfg(target_os = "windows")]
+                    cmd.env("CHERE_INVOKING", "1");
+                }
+                ShellType::PowerShell => {
+                    let init_script = integration_dir.join("abundio_init.ps1");
+                    let init_str = init_script.to_string_lossy().into_owned();
+                    #[cfg(target_os = "windows")]
+                    let init_str = init_str.replace('\\', "/");
+                    // Bypass execution policy for this process only (same as VS Code terminal)
+                    // so our integration script loads regardless of system policy.
+                    cmd.args(["-NoProfile", "-NoLogo", "-ExecutionPolicy", "Bypass", "-NoExit", "-File", &init_str]);
+                }
+                ShellType::Other => {
+                    #[cfg(not(target_os = "windows"))]
+                    cmd.args(["-l", "-i"]);
+                }
+            }
+            cmd
+        };
+
+        cmd.env("TERM", "xterm-256color");
+        cmd.env("TERM_PROGRAM", "Abundio");
+        // Where the wrapper rc files and the `abundio-env` helper live. The
+        // wrappers prepend this to PATH after the user's rc so `abundio-env` is
+        // callable even if the rc rebuilds PATH from scratch.
+        cmd.env(
+            "ABUNDIO_INTEGRATION_DIR",
+            integration_dir.to_string_lossy().as_ref(),
+        );
+        cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+        // Suppress zsh's partial-line EOL marker (%) so it doesn't appear in replayed scrollback logs
+        cmd.env("PROMPT_EOL_MARK", "");
+
+        // Agent hook correlation: the agent and its hook commands inherit these,
+        // letting the abundio-hook relay attribute hook events to this PTY.
+        if let Some(hook_server) = deps.hook_env.as_ref() {
+            cmd.env("ABUNDIO_PTY_ID", &pty_id);
+            cmd.env("ABUNDIO_HOOK_PORT", hook_server.port.to_string());
+            cmd.env("ABUNDIO_HOOK_TOKEN", &hook_server.token);
+            // Debug context for the hook server's log — these go out as request
+            // headers (see RELAY_SH / RELAY_PS1). Captured at spawn time, so a
+            // workspace rename after launch will not update them.
+            cmd.env("ABUNDIO_WORKSPACE_NAME", workspace_name.unwrap_or(""));
+            cmd.env("ABUNDIO_WINDOW_LABEL", window_label.unwrap_or(""));
+        }
+
+        // Agent control (ADR-0054): a token of this PTY's own, naming its
+        // pane, Workspace and Window. Only a Workspace pane gets one; the
+        // frontend passes the pane id as `log_id`.
+        let control_token = match (workspace_id, log_id) {
+            (Some(ws), Some(pane)) => {
+                let token = self.control_tokens.issue(crate::control_protocol::Caller {
+                    pty_id: pty_id.clone(),
+                    pane_id: pane.to_string(),
+                    workspace_id: ws.to_string(),
+                    window_label: owner_window.to_string(),
+                    label: None,
+                });
+                cmd.env("ABUNDIO_AGENT_TOKEN", &token);
+                Some(token)
+            }
+            _ => None,
+        };
+
+        // ── Workspace environment variables (injected Bundle) ──
+        //
+        // This must NEVER block the spawn. A locked or denied credential store,
+        // or a row that cannot be decrypted, degrades to an empty set plus an
+        // event the UI turns into a banner — the terminal still opens.
+        let injected: Vec<(String, String)> = match (
+            workspace_id,
+            deps.env_store,
+        ) {
+            // Probe for rows BEFORE asking for the key. Touching the credential
+            // store here would pop a Keychain prompt on the very first terminal
+            // for users who never use this feature — and mint a key for them.
+            (Some(ws), Some(store))
+                if store
+                    .has_injected_vars(ws, inherit_from_workspace_id)
+                    .unwrap_or(false) =>
+            {
+                match crate::env_crypto::master_key() {
+                    Ok(key) => store
+                        .resolve_for_spawn(&key, ws, inherit_from_workspace_id)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|(name, value)| (name, value.to_string()))
+                        .collect(),
+                    Err(e) => {
+                        log::warn!("[pty] workspace environment unavailable for {ws}: {e}");
+                        deps.events.broadcast(
+                            "env-vars-unavailable",
+                            serde_json::json!({ "workspaceId": ws, "reason": e.to_string() }),
+                        );
+                        Vec::new()
+                    }
+                }
+            }
+            _ => Vec::new(),
+        };
+
+        // Only the three wrapper scripts consume (and unset) the shadow copies.
+        // A task spawn is still the wrapper-loaded shell (`-i -c`), so it counts.
+        let has_wrapper = command.is_none()
+            && matches!(
+                shell_type,
+                ShellType::Zsh | ShellType::Bash | ShellType::PowerShell
+            );
+        let (pairs, keys_manifest, skipped) = build_env_injection(
+            &injected,
+            crate::env_crypto::MAX_INJECTED_BYTES,
+            has_wrapper,
+        );
+        for (name, value) in &pairs {
+            cmd.env(name, value);
+        }
+        if !keys_manifest.is_empty() {
+            cmd.env("ABUNDIO_ENV_KEYS", &keys_manifest);
+            if task.is_some() {
+                // For the task script's re-exec; see ZSH_ENV_RESTORE.
+                cmd.env("ABUNDIO_TASK_ENV_KEYS", &keys_manifest);
+            }
+        }
+        // The resume fallback, read and unset by the task script before the
+        // Agent starts (see `task_script`).
+        if let Some(TaskLaunch { fallback: Some(fallback), fallback_within_secs, .. }) = task {
+            cmd.env("ABUNDIO_TASK_FALLBACK", fallback);
+            cmd.env(
+                "ABUNDIO_TASK_FALLBACK_WITHIN",
+                fallback_within_secs.unwrap_or(0).to_string(),
+            );
+        }
+        if !skipped.is_empty() {
+            log::warn!(
+                "[pty] dropped {} workspace environment variable(s) over the {} byte budget: {}",
+                skipped.len(),
+                crate::env_crypto::MAX_INJECTED_BYTES,
+                skipped.join(", ")
+            );
+        }
+
+        if let Some(ws) = workspace_id {
+            self.spawn_contexts.insert(
+                pty_id.clone(),
+                SpawnContext {
+                    workspace_id: ws.to_string(),
+                    inherit_from: inherit_from_workspace_id.map(|s| s.to_string()),
+                },
+            );
+        }
+
+        // A stamped cwd may arrive in Git Bash's MSYS form (`/c/Users/…`), which
+        // Path can't validate on Windows; convert it to native form first.
+        #[cfg(target_os = "windows")]
+        let cwd = &msys_to_windows_path(cwd);
+        if Path::new(cwd).is_dir() {
+            cmd.cwd(cwd);
+        }
+
+        let child = match pair.slave.spawn_command(cmd) {
+            Ok(child) => child,
+            Err(e) => {
+                if let Some(t) = &control_token {
+                    self.control_tokens.revoke_token(t);
+                }
+                return Err(AbundioError::Pty(e.to_string()));
+            }
+        };
+
+        // Drop slave — we only need the master
+        drop(pair.slave);
+
+        let (tx, rx): (Sender<PtyCommand>, Receiver<PtyCommand>) = crossbeam_channel::unbounded();
+        let alive = Arc::new(AtomicBool::new(true));
+        let screen = Arc::new(Mutex::new(crate::screen::Screen::new(
+            cols,
+            rows,
+            self.scrollback.load(Ordering::Relaxed),
+        )));
+
+        self.entries.insert(
+            pty_id.clone(),
+            PtyEntry {
+                tx,
+                alive: alive.clone(),
+                screen: screen.clone(),
+            },
+        );
+        self.owner_windows
+            .insert(pty_id.clone(), owner_window.to_string());
+
+        // Open log file for PTY output persistence
+        let log_file = log_id.and_then(|id| {
+            let log_dir = Self::log_dir();
+            fs::create_dir_all(&log_dir).ok()?;
+            let log_path = log_dir.join(format!("{}.log", id));
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+                .ok()
+                .map(|f| (f, log_path))
+        });
+
+        let id_clone = pty_id.clone();
+        let master = pair.master;
+
+        let tokens = self.control_tokens.clone();
+        let events = deps.events;
+        let on_exit = self.exit_listener.clone();
+        let on_output = self.output_listeners.clone();
+        thread::spawn(move || {
+            pty_thread(
+                id_clone, master, child, rx, alive, events, screen, log_file, shell_type, on_exit,
+                on_output,
+            );
+            // The PTY is gone: its token must not outlive it (a background
+            // process it left behind still has the token in its environment).
+            if let Some(t) = control_token {
+                tokens.revoke_token(&t);
+            }
+        });
+
+        Ok(pty_id)
+    }
+
+    pub fn write(&self, pty_id: &str, data: Vec<u8>) -> Result<(), AbundioError> {
+        let entry = self
+            .entries
+            .get(pty_id)
+            .ok_or_else(|| AbundioError::NotFound(format!("PTY not found: {}", pty_id)))?;
+        if let Some(listener) = self.output_listeners.input.get() {
+            listener(pty_id, &data);
+        }
+        entry
+            .tx
+            .send(PtyCommand::Write(data))
+            .map_err(|e| AbundioError::Channel(e.to_string()))
+    }
+
+    pub fn resize(&self, pty_id: &str, cols: u16, rows: u16) -> Result<(), AbundioError> {
+        let entry = self
+            .entries
+            .get(pty_id)
+            .ok_or_else(|| AbundioError::NotFound(format!("PTY not found: {}", pty_id)))?;
+        if let Ok(mut screen) = entry.screen.lock() {
+            screen.resize(cols, rows);
+        }
+        entry
+            .tx
+            .send(PtyCommand::Resize(cols, rows))
+            .map_err(|e| AbundioError::Channel(e.to_string()))
+    }
+
+    /// Ask the program in the foreground of this PTY to redraw, at its current
+    /// size: SIGWINCH to its foreground process group, or — when there is no
+    /// group to signal — a one-row size nudge done by the PTY thread itself.
+    /// `true` means the redraw was queued. Returns `false` on Windows (ConPTY
+    /// has no SIGWINCH), where the caller nudges the size with a pause between
+    /// the two resizes instead.
+    ///
+    /// A same-size `resize` cannot do this: the kernel raises SIGWINCH only
+    /// when the window size actually changes, on macOS and Linux alike.
+    pub fn redraw(&self, pty_id: &str) -> Result<bool, AbundioError> {
+        let entry = self
+            .entries
+            .get(pty_id)
+            .ok_or_else(|| AbundioError::NotFound(format!("PTY not found: {}", pty_id)))?;
+        if cfg!(unix) {
+            entry
+                .tx
+                .send(PtyCommand::Redraw)
+                .map_err(|e| AbundioError::Channel(e.to_string()))?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    pub fn kill(&self, pty_id: &str) -> Result<(), AbundioError> {
+        if let Some(entry) = self.entries.get(pty_id) {
+            let _ = entry.tx.send(PtyCommand::Kill);
+        }
+        self.entries.remove(pty_id);
+        self.sizes.forget_pty(pty_id);
+        self.spawn_contexts.remove(pty_id);
+        self.owner_windows.remove(pty_id);
+        self.control_tokens.revoke_pty(pty_id);
+        Ok(())
+    }
+
+    /// Be told whenever a PTY ends (exits or is killed), with its exit code,
+    /// before its `pty-status` event goes out. Set once, at startup.
+    pub fn on_exit(&self, listener: ExitListener) {
+        let _ = self.exit_listener.set(listener);
+    }
+
+    /// Be told whenever a PTY's program sets its terminal title (OSC 0 or 2,
+    /// read by its Rust screen), in order, after the output that set it.
+    /// Set once, at startup.
+    pub fn on_title(&self, listener: TitleListener) {
+        let _ = self.output_listeners.title.set(listener);
+    }
+
+    /// Be told what each PTY's shell reports on the shell-integration
+    /// channel (`shell_integration.rs`), in order, before the titles set by
+    /// the same output. Set once, at startup.
+    pub fn on_shell(&self, listener: ShellListener) {
+        let _ = self.output_listeners.shell.set(listener);
+    }
+
+    /// Be told of each read of each PTY's output, before the shell's
+    /// reports and titles in it. Set once, at startup.
+    pub fn on_output(&self, listener: BytesListener) {
+        let _ = self.output_listeners.output.set(listener);
+    }
+
+    /// Be told of every write to a PTY (`write`), before it is sent. Set
+    /// once, at startup.
+    pub fn on_input(&self, listener: BytesListener) {
+        let _ = self.output_listeners.input.set(listener);
+    }
+
+    /// Kill every PTY (the server shutting down).
+    pub fn kill_all(&self) {
+        let ids: Vec<String> = self.entries.iter().map(|e| e.key().clone()).collect();
+        for id in ids {
+            let _ = self.kill(&id);
+        }
+    }
+
+    /// Kill every PTY spawned by Window `label`. Called when the Window is
+    /// destroyed. Logs are kept, so the panes restore their scrollback when the
+    /// Profile is opened again (a fresh load never reattaches to a live PTY).
+    pub fn kill_for_window(&self, label: &str) {
+        let owned: Vec<String> = self
+            .owner_windows
+            .iter()
+            .filter(|e| e.value() == label)
+            .map(|e| e.key().clone())
+            .collect();
+        for pty_id in owned {
+            let _ = self.kill(&pty_id);
+        }
+    }
+
+    fn log_dir() -> PathBuf {
+        // Epoch-scoped: pane ids are carried over when a new epoch imports the
+        // previous database, so a shared directory would have two builds
+        // interleaving writes into the same `<paneId>.log`.
+        crate::app_paths::pty_logs_dir()
+    }
+
+    /// Read a PTY output log file, returning its contents as base64.
+    pub fn read_log(log_id: &str) -> Result<Option<String>, AbundioError> {
+        let log_path = Self::log_dir().join(format!("{}.log", log_id));
+        if !log_path.exists() {
+            return Ok(None);
+        }
+        let data = fs::read(&log_path)?;
+        if data.is_empty() {
+            return Ok(None);
+        }
+        let engine = base64::engine::general_purpose::STANDARD;
+        Ok(Some(engine.encode(&data)))
+    }
+
+    /// Write a serialized terminal snapshot (from xterm SerializeAddon), and
+    /// how long the pane's output log was then (`<pane>.mark`), so a restore
+    /// can add what the log gained after it.
+    pub fn write_snapshot(pane_id: &str, data: &str) -> Result<(), AbundioError> {
+        let dir = Self::log_dir();
+        fs::create_dir_all(&dir)?;
+        let log_len = fs::metadata(dir.join(format!("{}.log", pane_id))).map(|m| m.len()).unwrap_or(0);
+        fs::write(dir.join(format!("{}.snapshot", pane_id)), data.as_bytes())?;
+        fs::write(dir.join(format!("{}.mark", pane_id)), log_len.to_string())?;
+        Ok(())
+    }
+
+    /// Read a terminal snapshot, with the output its pane logged after it
+    /// was taken (a shell that kept running after the snapshot: a server that
+    /// stopped without the app quitting, an app that crashed). `None` when
+    /// there is none, or when the log was cut short since and the snapshot's
+    /// place in it is lost: the log alone is then the better restore.
+    pub fn read_snapshot(pane_id: &str) -> Result<Option<String>, AbundioError> {
+        let dir = Self::log_dir();
+        let path = dir.join(format!("{}.snapshot", pane_id));
+        if !path.exists() {
+            return Ok(None);
+        }
+        let data = fs::read_to_string(&path)?;
+        if data.is_empty() {
+            return Ok(None);
+        }
+        let mark = fs::read_to_string(dir.join(format!("{}.mark", pane_id)))
+            .ok()
+            .and_then(|m| m.trim().parse::<u64>().ok());
+        let log = dir.join(format!("{}.log", pane_id));
+        let modified = |p: &Path| fs::metadata(p).and_then(|m| m.modified()).ok();
+        // A shell's last words after the app quit are a second or so later.
+        let stale = match (modified(&path), modified(&log)) {
+            (Some(snap), Some(log)) => log.duration_since(snap).is_ok_and(|d| d > std::time::Duration::from_secs(5)),
+            _ => false,
+        };
+        Ok(snapshot_with_tail(data, &log, mark, stale))
+    }
+
+    /// Delete a PTY output log file and its snapshot.
+    pub fn delete_log(log_id: &str) -> Result<(), AbundioError> {
+        let log_dir = Self::log_dir();
+        let log_path = log_dir.join(format!("{}.log", log_id));
+        if log_path.exists() {
+            fs::remove_file(&log_path)?;
+        }
+        let snapshot_path = log_dir.join(format!("{}.snapshot", log_id));
+        if snapshot_path.exists() {
+            fs::remove_file(&snapshot_path)?;
+        }
+        let _ = fs::remove_file(log_dir.join(format!("{}.mark", log_id)));
+        Ok(())
+    }
+
+    /// Remove log and snapshot files that don't belong to any known pane ID.
+    pub fn cleanup_stale_logs(valid_pane_ids: &[String]) -> Result<(), AbundioError> {
+        let log_dir = Self::log_dir();
+        if !log_dir.exists() {
+            return Ok(());
+        }
+        let valid: HashSet<&str> = valid_pane_ids.iter().map(|s| s.as_str()).collect();
+        for entry in fs::read_dir(&log_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if !valid.contains(stem) {
+                    let _ = fs::remove_file(&path);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The script a **New task** PTY runs as `shell -i -c <script> <shell> <setup> <argv…>`.
+///
+/// `$0` is the shell's own path (so it can `exec` itself afterwards), `$1` the
+/// setup commands, and the rest the Agent's argv, prompt included, which is
+/// run as `"$@"` and therefore never re-parsed. The script reports the Agent
+/// as a command on the shell-integration channel (`7770`), since shell
+/// integration only sees commands typed at a prompt: `command_start` puts the
+/// Pane into agent mode, `command_end` takes it out when the Agent exits, so
+/// a finished Task Agent is forgotten rather than relaunched. Then `reexec`
+/// turns it into an ordinary interactive shell with the same flags (and, for
+/// zsh, the wrapper's ZDOTDIR restored). See ADR-0042.
+///
+/// The setup is `eval`ed: it is **Worktree setup commands**, author-written
+/// shell that is typed at a prompt on every other path. The "no eval" rule
+/// is about *values*, which never reach it. It runs in this shell (so a `cd`
+/// or `export` carries over to the Agent) one complete command at a time,
+/// and stops at the first that fails. A command is complete once the text so
+/// far parses (`<shell> -n`) and does not end in `\`, so `if … fi` and
+/// continued lines work as they would typed at a prompt. On a failure the
+/// Agent is **not** started: the script prints the failing command and
+/// reports only a `command_end` with its exit code, which the frontend reads
+/// as "the Task never started" (see `taskSetupFailed`). The lines are read
+/// from fd 3, so a setup command that reads stdin gets the terminal, not the
+/// rest of the setup.
+fn task_script(reexec: &str) -> String {
+    format!(
+        r#"__abundio_sh=$0
+__abundio_keys=$ABUNDIO_TASK_ENV_KEYS; unset ABUNDIO_TASK_ENV_KEYS
+__abundio_fb=$ABUNDIO_TASK_FALLBACK; __abundio_within=${{ABUNDIO_TASK_FALLBACK_WITHIN:-0}}
+unset ABUNDIO_TASK_FALLBACK ABUNDIO_TASK_FALLBACK_WITHIN
+__abundio_setup=$1; shift
+__abundio_rc=0
+__abundio_cmd=
+__abundio_parses() {{
+  if [ -n "$ZSH_VERSION" ]; then "$__abundio_sh" -f -n -c "$1"
+  else BASH_ENV= "$__abundio_sh" -n -c "$1"; fi 2>/dev/null
+}}
+if [ -n "$__abundio_setup" ]; then
+  while IFS= read -r __abundio_line <&3; do
+    if [ -n "$__abundio_cmd" ]; then __abundio_cmd="$__abundio_cmd
+$__abundio_line"; else __abundio_cmd=$__abundio_line; fi
+    case $__abundio_cmd in *'\') continue ;; esac
+    __abundio_parses "$__abundio_cmd" || continue
+    eval "$__abundio_cmd" 3<&- || {{ __abundio_rc=$?; break; }}
+    __abundio_cmd=
+  done 3<<<"$__abundio_setup"
+  # Text left over never completed: run it so the error is the shell's own.
+  if [ "$__abundio_rc" -eq 0 ] && [ -n "$__abundio_cmd" ]; then
+    eval "$__abundio_cmd" 3<&- || __abundio_rc=$?
+  fi
+fi
+unset -f __abundio_parses
+unset __abundio_setup __abundio_line
+if [ "$__abundio_rc" -ne 0 ]; then
+  printf '\n\033[31mSetup failed (exit %s) on:\033[0m\n%s\n\033[31mThe agent was not started.\033[0m\n' "$__abundio_rc" "$__abundio_cmd"
+  printf '\033]7770;command_end;%s\007' "$__abundio_rc"
+else
+  printf '\033]7770;command_start;%s\007' "${{1//$'\a'/ }}"
+  __abundio_t0=$SECONDS
+  "$@"
+  __abundio_rc=$?
+  # A resume that fails at once found nothing to resume: start fresh, still
+  # inside the one command_start/command_end, so the Pane never leaves agent
+  # mode in between (and keeps its Agent and handle).
+  # Whole seconds: a zsh setup may make SECONDS a float (typeset -F), and
+  # `[ -lt ]` takes integers only.
+  __abundio_el=$((SECONDS - __abundio_t0)); __abundio_el=${{__abundio_el%%.*}}
+  # Not after Ctrl+C or a kill (130, 143): that is the user quitting, and a
+  # fresh session nobody asked for must not start.
+  if [ "$__abundio_rc" -ne 0 ] && [ "$__abundio_rc" -ne 130 ] \
+    && [ "$__abundio_rc" -ne 143 ] && [ -n "$__abundio_fb" ] \
+    && [ "${{__abundio_el:-0}}" -lt "$__abundio_within" ]; then
+    printf '\n\033[2mNothing to resume; starting a new session.\033[0m\n\n'
+    # eval: the fallback is the Agent's launch line from agentCommandFor,
+    # exactly what the user would type, never user data from elsewhere.
+    eval "$__abundio_fb"
+    __abundio_rc=$?
+  fi
+  printf '\033]7770;command_end;%s\007' "$__abundio_rc"
+fi
+unset __abundio_rc __abundio_cmd __abundio_sh __abundio_fb __abundio_within __abundio_t0 __abundio_el
+{reexec}"#
+    )
+}
+
+/// The arguments after the shell's own interactive flags for a task spawn.
+fn task_c_args(shell: &str, reexec: &str, task: &TaskLaunch) -> Vec<String> {
+    let mut args = vec![
+        "-c".to_string(),
+        task_script(reexec),
+        shell.to_string(),
+        task.setup.clone().unwrap_or_default(),
+    ];
+    args.extend(task.argv.iter().cloned());
+    args
+}
+
+/// The task script's last step for zsh: become the wrapper-loaded login
+/// shell again. `ZDOTDIR` must be re-pointed first, because the wrapper .zshrc
+/// sets it back to the user's own folder and it stays exported.
+fn zsh_reexec(zdotdir: &str) -> String {
+    format!(
+        "{ZSH_ENV_RESTORE}\nexport ZDOTDIR={}\nexec \"$0\" -l -i",
+        sh_single_quote(zdotdir)
+    )
+}
+
+/// The task script's last step for bash: the same `--rcfile` spawn.
+fn bash_reexec(rcfile: &str) -> String {
+    format!(
+        "{BASH_ENV_RESTORE}\nexec \"$0\" --rcfile {} -i",
+        sh_single_quote(rcfile)
+    )
+}
+
+// Re-arm the Injected bundle for the re-exec'd shell (ADR-0024 precedence).
+// The first shell's wrapper consumed the `ABUNDIO_ENV__*` shadow copies and
+// the `ABUNDIO_ENV_KEYS` manifest, so without this the re-exec'd shell would
+// re-source the user's rc with nothing to re-apply after it, and an `export`
+// in .zshrc would silently beat the Workspace value. The names arrive as
+// `ABUNDIO_TASK_ENV_KEYS`, which the script takes into a shell variable and
+// unsets before the Agent runs, so the Agent never sees the list. Values are
+// read by name indirection (`${(P)k}` / `${!k}`), never `eval` — names are
+// validated in Rust (`env_crypto::validate_name`), values are user data.
+const ZSH_ENV_RESTORE: &str = r#"if [ -n "$__abundio_keys" ]; then
+  for __abundio_k in ${=__abundio_keys}; do export "ABUNDIO_ENV__${__abundio_k}=${(P)__abundio_k}"; done
+  export ABUNDIO_ENV_KEYS="$__abundio_keys"
+fi"#;
+const BASH_ENV_RESTORE: &str = r#"if [ -n "$__abundio_keys" ]; then
+  for __abundio_k in $__abundio_keys; do export "ABUNDIO_ENV__${__abundio_k}=${!__abundio_k}"; done
+  export ABUNDIO_ENV_KEYS="$__abundio_keys"
+fi"#;
+
+/// Quote `s` for a POSIX shell as one word.
+fn sh_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Shell type detected from the binary name.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ShellType {
+    Zsh,
+    Bash,
+    PowerShell,
+    Other,
+}
+
+fn detect_shell_type(shell: &str) -> ShellType {
+    // Case-insensitive, as the frontend's `shellSupportsTasks` is: Windows
+    // paths often spell Git Bash `BASH.EXE`.
+    let base = std::path::Path::new(shell)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(shell)
+        .to_ascii_lowercase();
+    if base.contains("zsh") {
+        ShellType::Zsh
+    } else if base.contains("bash") {
+        ShellType::Bash
+    } else if base.contains("pwsh") || base.contains("powershell") {
+        ShellType::PowerShell
+    } else {
+        ShellType::Other
+    }
+}
+
+/// Build the environment pairs for a Workspace's injected Bundle, plus the
+/// `ABUNDIO_ENV_KEYS` manifest.
+///
+/// Each variable is emitted TWICE:
+///  - under its own name, so shells with no Abundio wrapper rc (`ShellType::Other`,
+///    and `command`-mode spawns) still receive it, and
+///  - as `ABUNDIO_ENV__<NAME>`, the shadow the wrapper rc re-exports AFTER
+///    sourcing the user's rc — that is what makes a workspace variable win over
+///    an `export` in `.zshrc`.
+///
+/// Variable names are validated as shell identifiers upstream, so they can never
+/// contain whitespace; that is what makes the space-separated manifest
+/// unambiguous, and `ABUNDIO_` is reserved so the shadow prefix cannot collide.
+///
+/// Truncates at `budget_bytes` and reports what was dropped. This is not
+/// cosmetic: on Windows the whole environment block is capped at 32,767
+/// characters and `CreateProcess` FAILS on overflow, which would kill the pane.
+/// `emit_shadow` is false for shells Abundio writes no wrapper rc for
+/// (`ShellType::Other`, and `command`-mode spawns). The shadow exists only so
+/// the wrapper can re-export after the user's rc; with no wrapper it would
+/// never be consumed, and `ABUNDIO_ENV__*` plus `ABUNDIO_ENV_KEYS` would linger
+/// in the environment of that shell and every child — doubling the footprint in
+/// `env` output and crash dumps, and handing a reader the list of managed names.
+pub fn build_env_injection(
+    vars: &[(String, String)],
+    budget_bytes: usize,
+    emit_shadow: bool,
+) -> (Vec<(String, String)>, String, Vec<String>) {
+    let shadow_prefix = crate::env_crypto::SHADOW_PREFIX;
+
+    let mut pairs: Vec<(String, String)> = Vec::with_capacity(vars.len() * 2);
+    let mut names: Vec<String> = Vec::with_capacity(vars.len());
+    let mut skipped: Vec<String> = Vec::new();
+    let mut used = 0usize;
+
+    for (name, value) in vars {
+        let cost = if emit_shadow {
+            crate::env_crypto::injection_cost(name.len(), value.len())
+        } else {
+            name.len() + value.len() + 2
+        };
+        if used + cost > budget_bytes {
+            skipped.push(name.clone());
+            continue;
+        }
+        used += cost;
+        pairs.push((name.clone(), value.clone()));
+        if emit_shadow {
+            pairs.push((format!("{shadow_prefix}{name}"), value.clone()));
+            names.push(name.clone());
+        }
+    }
+
+    (pairs, names.join(" "), skipped)
+}
+
+/// Where a Workspace pane's shell starts (ADR-0053). Never the home folder:
+/// - the Workspace folder is missing → refused (`FolderMissing`), nothing starts;
+/// - the pane's own remembered folder is missing → the Workspace folder;
+/// - otherwise the pane's folder.
+///
+/// `root` is `None` for a spawn with no known Workspace, which keeps the old
+/// behaviour (the spawn itself skips a cwd that is not a directory).
+pub fn resolve_spawn_cwd(
+    cwd: &str,
+    root: Option<&str>,
+    is_dir: impl Fn(&str) -> bool,
+) -> Result<String, AbundioError> {
+    let Some(root) = root else {
+        return Ok(cwd.to_string());
+    };
+    if !is_dir(root) {
+        return Err(AbundioError::FolderMissing(root.to_string()));
+    }
+    #[cfg(target_os = "windows")]
+    let native = msys_to_windows_path(cwd);
+    #[cfg(not(target_os = "windows"))]
+    let native = cwd.to_string();
+    if !cwd.is_empty() && is_dir(&native) {
+        Ok(cwd.to_string())
+    } else {
+        Ok(root.to_string())
+    }
+}
+
+/// Convert a Git Bash / MSYS path to its native Windows form. Pure string
+/// transform; non-MSYS shapes pass through unchanged. Applied only on Windows,
+/// where a leading `/c/` is unambiguously an MSYS drive path (a native path is
+/// `C:\…` / `C:/…`); on Unix `/c/…` is a real path and must not be rewritten.
+///   `/c/Users/x`     -> `c:/Users/x`
+///   `/c`             -> `c:`
+///   `//server/share` -> `\\server\share`   (UNC)
+///   `/usr/bin`       -> `/usr/bin`          (not a single-letter drive segment)
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn msys_to_windows_path(cwd: &str) -> String {
+    if let Some(rest) = cwd.strip_prefix("//") {
+        return format!("\\\\{}", rest.replace('/', "\\"));
+    }
+    let b = cwd.as_bytes();
+    if b.len() >= 2
+        && b[0] == b'/'
+        && b[1].is_ascii_alphabetic()
+        && (cwd.len() == 2 || b[2] == b'/')
+    {
+        // "/c" -> "c:", "/c/x" -> "c:/x"
+        return format!("{}:{}", &cwd[1..2], &cwd[2..]);
+    }
+    cwd.to_string()
+}
+
+/// Returns the directory containing shell integration startup files.
+/// Creates the files on first call per process lifetime. The hooks are loaded
+/// via ZDOTDIR (zsh) or --rcfile (bash) so they never appear in terminal output
+/// or history.
+fn shell_integration_dir() -> PathBuf {
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| {
+        write_shell_integration_files()
+    }).clone()
+}
+
+/// Write the shell-integration scripts (and the `abundio` and `abundio-env`
+/// helpers beside them) now, rather than at the first spawn: the headless
+/// server does at startup, so its data folder is complete before any Client.
+/// Returns their folder.
+pub fn prepare_shell_integration() -> PathBuf {
+    shell_integration_dir()
+}
+
+/// The re-export block shared in spirit by all three wrapper scripts.
+///
+/// PRECEDENCE IS THE WHOLE POINT: this must run AFTER the user's rc has been
+/// sourced. `cmd.env` at spawn happens before the shell starts, so an `export`
+/// in `.zshrc` would otherwise silently win over a Workspace variable. Restoring
+/// from the `ABUNDIO_ENV__` shadows here makes the Workspace value final.
+///
+/// There is deliberately NO `eval` anywhere: values are arbitrary user data
+/// including newlines and quotes, and `eval` would turn a stored certificate
+/// into a code-execution vector. zsh uses `${(P)name}` indirect expansion, bash
+/// uses `${!name}` + `printf -v`, PowerShell uses the Environment API.
+const ZSHRC_BODY: &str = r#"# Abundio shell integration — loaded via ZDOTDIR
+# Source the user's real zsh config
+if [ -n "$ABUNDIO_ORIGINAL_ZDOTDIR" ] && [ -f "$ABUNDIO_ORIGINAL_ZDOTDIR/.zshrc" ]; then
+  ZDOTDIR="$ABUNDIO_ORIGINAL_ZDOTDIR"
+  source "$ABUNDIO_ORIGINAL_ZDOTDIR/.zshrc"
+elif [ -f "$HOME/.zshrc" ]; then
+  ZDOTDIR="$HOME"
+  source "$HOME/.zshrc"
+fi
+# Re-apply this Workspace's environment variables AFTER the user's rc, so a
+# workspace value deterministically beats an `export` in .zshrc. Values never
+# appear in terminal output or shell history — this file is loaded via ZDOTDIR.
+if [ -n "$ABUNDIO_ENV_KEYS" ]; then
+  for __abundio_k in ${=ABUNDIO_ENV_KEYS}; do
+    __abundio_s="ABUNDIO_ENV__${__abundio_k}"
+    export "${__abundio_k}=${(P)__abundio_s}"
+    unset "$__abundio_s"
+  done
+  unset __abundio_k __abundio_s ABUNDIO_ENV_KEYS
+fi
+# Make `abundio-env` reachable for on-demand Bundles. Appended after the user's
+# rc so a PATH rebuild in .zshrc cannot drop it.
+case ":$PATH:" in
+  *":$ABUNDIO_INTEGRATION_DIR:"*) ;;
+  *) [ -n "$ABUNDIO_INTEGRATION_DIR" ] && PATH="$ABUNDIO_INTEGRATION_DIR:$PATH" && export PATH ;;
+esac
+# Hooks
+__abundio_preexec() { printf '\e]7770;command_start;%s\a' "${1//$'\a'/ }" }
+__abundio_precmd() { printf '\e]7770;command_end;%s\a' "$?"; printf '\e]7770;cwd;%s\a' "$PWD" }
+precmd_functions+=(__abundio_precmd)
+preexec_functions+=(__abundio_preexec)
+"#;
+
+/// Bash equivalent of the zsh re-export block. Inserted after `/etc/profile`,
+/// the login-profile chain AND the deduped `~/.bashrc` — anything earlier and a
+/// user rc could still clobber a Workspace variable.
+const BASHRC_ENV_BLOCK: &str = r#"
+# Re-apply this Workspace's environment variables AFTER the user's rc. See the
+# ZSHRC_BODY comment in pty_manager.rs for why precedence matters here.
+if [ -n "$ABUNDIO_ENV_KEYS" ]; then
+  for __abundio_k in $ABUNDIO_ENV_KEYS; do
+    __abundio_s="ABUNDIO_ENV__${__abundio_k}"
+    printf -v "$__abundio_k" '%s' "${!__abundio_s}"
+    export "$__abundio_k"
+    unset "$__abundio_s"
+  done
+  unset __abundio_k __abundio_s ABUNDIO_ENV_KEYS
+fi
+case ":$PATH:" in
+  *":$ABUNDIO_INTEGRATION_DIR:"*) ;;
+  *) [ -n "$ABUNDIO_INTEGRATION_DIR" ] && PATH="$ABUNDIO_INTEGRATION_DIR:$PATH" && export PATH ;;
+esac
+"#;
+
+/// PowerShell equivalent. `-split` + `Where-Object` rather than
+/// `String.Split(char, StringSplitOptions)` for Windows PowerShell 5.1.
+const PS1_ENV_BLOCK: &str = r#"
+# Re-apply this Workspace's environment variables after the user's profile.
+if ($env:ABUNDIO_ENV_KEYS) {
+    foreach ($k in ($env:ABUNDIO_ENV_KEYS -split '\s+' | Where-Object { $_ })) {
+        $shadow = "ABUNDIO_ENV__$k"
+        $val = [Environment]::GetEnvironmentVariable($shadow, 'Process')
+        if ($null -ne $val) {
+            [Environment]::SetEnvironmentVariable($k, $val, 'Process')
+            [Environment]::SetEnvironmentVariable($shadow, $null, 'Process')
+        }
+    }
+    [Environment]::SetEnvironmentVariable('ABUNDIO_ENV_KEYS', $null, 'Process')
+}
+if ($env:ABUNDIO_INTEGRATION_DIR -and ($env:PATH -notlike "*$env:ABUNDIO_INTEGRATION_DIR*")) {
+    $env:PATH = "$env:ABUNDIO_INTEGRATION_DIR" + [IO.Path]::PathSeparator + $env:PATH
+}
+"#;
+
+fn write_shell_integration_files() -> PathBuf {
+    // Epoch-scoped: these files are rewritten unconditionally by whichever
+    // build spawns a terminal first. An older build's wrapper scripts have no
+    // `ABUNDIO_ENV_KEYS` re-export block, so sharing this directory would let it
+    // silently disable this version's environment injection.
+    let dir = crate::app_paths::shell_integration_dir();
+    write_shell_integration_files_into(&dir);
+    dir
+}
+
+/// Split out from `write_shell_integration_files` so tests can assert on the
+/// generated scripts — in particular that the environment re-export lands after
+/// the user's rc — without writing into the real data directory.
+fn write_shell_integration_files_into(dir: &Path) {
+    let _ = fs::create_dir_all(dir);
+
+    // zsh: wrapper .zshrc that sources user config then adds hooks
+    let zshrc = dir.join(".zshrc");
+    let _ = fs::write(&zshrc, ZSHRC_BODY);
+
+    // Also create .zshenv to source the user's .zshenv
+    let zshenv = dir.join(".zshenv");
+    let _ = fs::write(
+        &zshenv,
+        r#"# Abundio: forward to user's real .zshenv
+if [ -n "$ABUNDIO_ORIGINAL_ZDOTDIR" ] && [ -f "$ABUNDIO_ORIGINAL_ZDOTDIR/.zshenv" ]; then
+  source "$ABUNDIO_ORIGINAL_ZDOTDIR/.zshenv"
+elif [ -f "$HOME/.zshenv" ]; then
+  source "$HOME/.zshenv"
+fi
+"#,
+    );
+
+    // bash: wrapper rcfile that sources user config then adds hooks
+    let bashrc = dir.join(".bashrc");
+
+    // The frontend now parks scrollback until after shell startup finishes
+    // (see terminalManager.ts flushStartupBuffer), so reset sequences from
+    // MSYS2 /etc/profile / /etc/bash.bashrc can no longer clobber restored
+    // scrollback. Use a single unified bashrc across all platforms.
+    let bashrc_content = r#"# Abundio shell integration — loaded via --rcfile
+# Reproduce a login + interactive bash startup so panes get both login env
+# (PATH etc.) AND interactive config (PS1, aliases) — but source ~/.bashrc
+# EXACTLY ONCE. A real `bash -l -i` reads /etc/profile then the first of
+# ~/.bash_profile|~/.bash_login|~/.profile; on Debian/Ubuntu those source
+# ~/.bashrc themselves. We also want ~/.bashrc for users whose profile does
+# not. Sourcing it twice breaks re-source-guarded prompt tools: the second
+# pass re-runs ~/.bashrc's own default PS1 line while a guarded tool it loads
+# (e.g. nerdps1's `ps1_loaded`) early-returns, leaving the system default
+# prompt. So we intercept the profile's ~/.bashrc source and dedupe it.
+[ -f /etc/profile ] && source /etc/profile
+# Dedup below is intentionally ~/.bashrc-only. On Debian/Ubuntu /etc/profile
+# itself sources /etc/bash.bashrc (when PS1 is set), so the next line may run
+# it twice — harmless, since ~/.bashrc is sourced last and wins the prompt, and
+# no guarded tool ships in /etc/bash.bashrc. (--rcfile suppresses bash's own
+# automatic /etc/bash.bashrc + ~/.bashrc loading, hence sourcing it here.)
+[ -f /etc/bash.bashrc ] && source /etc/bash.bashrc
+# Wrap source/. only while sourcing the login profile files: this records
+# whether they already loaded ~/.bashrc and forwards every other source
+# untouched (so e.g. .bashrc -> nerdps1 still loads normally).
+__abundio_bashrc_loaded=
+source() {
+  case "$1" in
+    "$HOME/.bashrc"|~/.bashrc|.bashrc|./.bashrc) __abundio_bashrc_loaded=1 ;;
+  esac
+  builtin source "$@"
+}
+.() { source "$@"; }
+if [ -f ~/.bash_profile ]; then
+  source ~/.bash_profile
+elif [ -f ~/.bash_login ]; then
+  source ~/.bash_login
+elif [ -f ~/.profile ]; then
+  source ~/.profile
+fi
+unset -f source .
+# Only source ~/.bashrc ourselves if the profile files did not already do it.
+[ -z "$__abundio_bashrc_loaded" ] && [ -f ~/.bashrc ] && builtin source ~/.bashrc
+unset __abundio_bashrc_loaded
+__ABUNDIO_ENV_BLOCK__
+# Hooks
+# Track whether the DEBUG trap is firing for a genuine interactive command
+# vs. a command run from PROMPT_COMMAND (e.g. a distro's `history -a`) or tab
+# completion. Without this, any pre-existing PROMPT_COMMAND command runs after
+# our command_end and the DEBUG trap emits a spurious command_start, leaving
+# the pane stuck "busy" at an idle prompt. precmd is appended LAST so all
+# other PROMPT_COMMAND commands run before we re-arm the prompt flag.
+__abundio_at_prompt=0
+__abundio_preexec() {
+  [ -n "$COMP_LINE" ] && return
+  [ "$__abundio_at_prompt" = 1 ] || return
+  __abundio_at_prompt=0
+  printf '\e]7770;command_start;%s\a' "$BASH_COMMAND"
+}
+__abundio_precmd() { printf '\e]7770;command_end;%s\a' "$?"; printf '\e]7770;cwd;%s\a' "$PWD"; __abundio_at_prompt=1; }
+trap '__abundio_preexec' DEBUG
+# Append precmd LAST so it runs after every other PROMPT_COMMAND command (re-arming
+# the prompt flag only once they've all run). bash 5.1+ allows PROMPT_COMMAND to be
+# an array — set by GNOME/VTE's /etc/profile.d integration and some prompt tools — and
+# a scalar assignment would only replace element [0], leaving later array entries to
+# run after command_end and re-trigger a spurious command_start (pane stuck "busy").
+# Detect the array form and push onto it instead.
+__abundio_pc="$(declare -p PROMPT_COMMAND 2>/dev/null)"
+__abundio_pc_flags="${__abundio_pc#declare }"; __abundio_pc_flags="${__abundio_pc_flags%% *}"
+if [[ "$__abundio_pc" == *__abundio_precmd* ]]; then
+  :  # already installed (e.g. .bashrc sourced twice) — don't double command_end
+elif [[ "$__abundio_pc_flags" == *r* ]]; then
+  :  # PROMPT_COMMAND is readonly — can't hook it without an error on first prompt
+elif [[ "$__abundio_pc_flags" == *[aA]* ]]; then
+  PROMPT_COMMAND+=(__abundio_precmd)  # array form (bash 5.1+); -A treated like -a
+else
+  PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND$'\n'}__abundio_precmd"
+fi
+unset __abundio_pc __abundio_pc_flags
+"#;
+
+    let _ = fs::write(
+        &bashrc,
+        bashrc_content.replace("__ABUNDIO_ENV_BLOCK__", BASHRC_ENV_BLOCK),
+    );
+
+    // PowerShell: wrapper init script that sources user profile then adds hooks
+    // Uses [char]0x1b (ESC) and [char]0x07 (BEL) for PS 5.1 compatibility
+    // (`e and `a require PS 6+).
+    let ps1 = dir.join("abundio_init.ps1");
+    let ps1_content = r#"# Abundio shell integration for PowerShell — loaded via -NoProfile -File
+# Source the user's profile first
+if (Test-Path $PROFILE) { . $PROFILE }
+__ABUNDIO_ENV_BLOCK__
+
+# ESC and BEL characters for OSC sequences (compatible with PS 5.1+)
+$Global:__AbundioESC = [char]0x1b
+$Global:__AbundioBEL = [char]0x07
+$Global:__AbundioLastHistoryId = -1
+
+# Stash the user's prompt (from profile or default) so we can wrap it
+$Global:__AbundioOriginalPrompt = $function:prompt
+
+function Global:prompt {
+    $lastExit = $LASTEXITCODE
+    if ($null -eq $lastExit) { $lastExit = 0 }
+    $lastEntry = Get-History -Count 1 -ErrorAction SilentlyContinue
+    # Emit command_end for the previous command (if a new command ran)
+    if ($Global:__AbundioLastHistoryId -ne -1 -and $lastEntry -and $lastEntry.Id -ne $Global:__AbundioLastHistoryId) {
+        $Host.UI.Write("$Global:__AbundioESC]7770;command_end;$lastExit$Global:__AbundioBEL")
+    }
+    if ($lastEntry) { $Global:__AbundioLastHistoryId = $lastEntry.Id }
+    # Emit current working directory
+    $Host.UI.Write("$Global:__AbundioESC]7770;cwd;$($executionContext.SessionState.Path.CurrentLocation)$Global:__AbundioBEL")
+    # Call the original prompt function
+    if ($Global:__AbundioOriginalPrompt) {
+        & $Global:__AbundioOriginalPrompt
+    } else {
+        "PS $($executionContext.SessionState.Path.CurrentLocation)> "
+    }
+}
+
+# Hook Enter key via PSReadLine to emit command_start (preexec equivalent)
+if (Get-Module -Name PSReadLine) {
+    Set-PSReadLineKeyHandler -Key Enter -ScriptBlock {
+        $line = $null
+        $cursor = $null
+        [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
+        if ($line.Trim().Length -gt 0) {
+            $escaped = $line -replace [char]0x07, ' '
+            $Host.UI.Write("$Global:__AbundioESC]7770;command_start;$escaped$Global:__AbundioBEL")
+        }
+        [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
+    }
+}
+"#;
+    let _ = fs::write(
+        &ps1,
+        ps1_content.replace("__ABUNDIO_ENV_BLOCK__", PS1_ENV_BLOCK),
+    );
+
+    // The `abundio-env` helper: reads an on-demand Bundle for THIS pane. See
+    // Stage F / hook_server.rs. Written here so it lives next to the wrapper
+    // rc files that put it on PATH.
+    write_abundio_env_helper(dir);
+    // The `abundio` command (Agent control, ADR-0054), on the same PATH.
+    write_abundio_cli(dir);
+}
+
+/// `abundio` — Agent control (ADR-0054). A thin client: it sends its own
+/// arguments, NUL-separated and unparsed, to the hook server's `/control`
+/// route with this pane's `ABUNDIO_AGENT_TOKEN`, and prints the answer. Rust
+/// parses the arguments, writes the help text and formats the JSON, so this
+/// script and its PowerShell twin never need to change when a command does.
+///
+/// Exit codes: 0 success (stdout), 2 usage error, 1 anything else (stderr).
+///
+/// Retries: a connection refused never reached the app, so it is retried as
+/// is. A connection that dropped after the request went out (sleep, the server
+/// rebinding its port) may already have acted, so it is retried with
+/// `X-Abundio-Retry`: Rust then turns `prompt --wait` into a plain wait and
+/// refuses to repeat any other change. No `eval`: the arguments are data.
+pub const ABUNDIO_CLI_SH: &str = r#"#!/usr/bin/env bash
+# Abundio — control the panes and Agents of this Workspace. Run `abundio help`.
+set -uo pipefail
+
+if [ -z "${ABUNDIO_AGENT_TOKEN:-}" ] || [ -z "${ABUNDIO_HOOK_PORT:-}" ]; then
+  echo "abundio: not running inside an Abundio Workspace pane" >&2
+  exit 1
+fi
+
+# Each call carries an id, so an interrupted CLI can cancel the wait it
+# started (a wait must not outlive its call). curl runs in the
+# background and is waited for, because bash runs a trap only between
+# commands, and `wait` is one it can interrupt.
+rid="${RANDOM}${RANDOM}-$$-$(date +%s)"
+out=$(mktemp "${TMPDIR:-/tmp}/abundio.XXXXXX") || exit 1
+child=""
+# The token goes to curl through a pipe, never on its command line: `ps`
+# shows every process's arguments to every local user.
+__abundio_token_header() {
+  printf 'X-Abundio-Agent-Token: %s\n' "$ABUNDIO_AGENT_TOKEN"
+}
+__abundio_cancel() {
+  [ -n "$child" ] && kill "$child" 2>/dev/null
+  curl -s -m 3 -o /dev/null -X POST \
+    -H @<(__abundio_token_header) \
+    -H "X-Abundio-Cancel: ${rid}" \
+    "http://127.0.0.1:${ABUNDIO_HOOK_PORT}/control"
+  rm -f "$out"
+}
+trap '__abundio_cancel; exit 130' INT
+trap '__abundio_cancel; exit 143' TERM
+trap '__abundio_cancel; exit 129' HUP
+
+__abundio_send() {   # $1 = 1 to mark a retry; the rest are the arguments
+  local retry=$1
+  shift
+  local extra=()
+  [ "$retry" = 1 ] && extra=(-H 'X-Abundio-Retry: 1')
+  # No arguments must send an empty body, not one empty argument. The status
+  # comes last, on a line of its own.
+  # (`||`, not `&&`: under pipefail a false test would fail the whole pipe.)
+  # The working folder first, marked (\001cwd:), so a relative path in a
+  # command resolves against it (`file open`).
+  { printf '\001cwd:%s\0' "$PWD"; [ $# -eq 0 ] || printf '%s\0' "$@"; } |
+    curl -s -w '\n%{http_code}' --connect-timeout 5 \
+      -X POST --data-binary @- \
+      -H @<(__abundio_token_header) \
+      -H "X-Abundio-Request-Id: ${rid}" \
+      -H 'Content-Type: application/octet-stream' \
+      ${extra[@]+"${extra[@]}"} \
+      "http://127.0.0.1:${ABUNDIO_HOOK_PORT}/control" >"$out" &
+  child=$!
+  wait "$child"
+  local rc=$?
+  child=""
+  return $rc
+}
+
+retry=0
+reply=""
+rc=1
+for attempt in 1 2 3 4; do
+  __abundio_send "$retry" "$@"
+  rc=$?
+  reply=$(cat "$out")
+  case $rc in
+    0) break ;;
+    # Connection refused: the request never arrived.
+    7) ;;
+    # The connection dropped after the request went out.
+    18|52|55|56) retry=1 ;;
+    *) break ;;
+  esac
+  [ "$attempt" -lt 4 ] && sleep 1
+done
+trap - INT TERM HUP
+rm -f "$out"
+
+status=""
+body=""
+if [ "$rc" = 0 ]; then
+  status=${reply##*$'\n'}
+  body=${reply%$'\n'*}
+  body=${body%$'\n'}
+fi
+case "$status" in
+  200) printf '%s\n' "$body"; exit 0 ;;
+  400) printf '%s\n' "$body" >&2; exit 2 ;;
+  ''|000)
+    echo "abundio: could not reach Abundio (is the app still running?)" >&2
+    exit 1 ;;
+  *) printf '%s\n' "$body" >&2; exit 1 ;;
+esac
+"#;
+
+/// PowerShell twin of [`ABUNDIO_CLI_SH`]; the same protocol, exit codes and
+/// retry rules. PowerShell swallows a bare `--` given to a script, so the
+/// skill teaches `--agent-arg <arg>` (one per argument), which needs no `--`.
+pub const ABUNDIO_CLI_PS1: &str = r#"# Abundio — control the panes and Agents of this Workspace. Run `abundio help`.
+if (-not $env:ABUNDIO_AGENT_TOKEN -or -not $env:ABUNDIO_HOOK_PORT) {
+    [Console]::Error.WriteLine("abundio: not running inside an Abundio Workspace pane"); exit 1
+}
+
+$bytes = New-Object System.Collections.Generic.List[byte]
+# The working folder first, marked (0x01 "cwd:"), so a relative path in a
+# command resolves against it (`file open`).
+$bytes.Add(1)
+$bytes.AddRange([Text.Encoding]::UTF8.GetBytes("cwd:" + (Get-Location).ProviderPath))
+$bytes.Add(0)
+foreach ($a in $args) {
+    $bytes.AddRange([Text.Encoding]::UTF8.GetBytes([string]$a))
+    $bytes.Add(0)
+}
+$body = $bytes.ToArray()
+$uri = "http://127.0.0.1:$($env:ABUNDIO_HOOK_PORT)/control"
+
+Add-Type -AssemblyName System.Net.Http
+$client = New-Object System.Net.Http.HttpClient
+$client.Timeout = [System.Threading.Timeout]::InfiniteTimeSpan
+
+function Test-Refused($err) {
+    $e = $err.Exception
+    while ($e) {
+        if ($e -is [System.Net.Sockets.SocketException] -and
+            $e.SocketErrorCode -eq [System.Net.Sockets.SocketError]::ConnectionRefused) { return $true }
+        $e = $e.InnerException
+    }
+    return $false
+}
+
+# Each call carries an id, so an interrupted CLI can cancel the wait it
+# started. The send is polled rather than awaited in one blocking call,
+# because Ctrl+C reaches a script only between statements; `finally` then
+# sends the cancel.
+$rid = [guid]::NewGuid().ToString()
+$retry = $false
+$response = $null
+try {
+    for ($attempt = 1; $attempt -le 4; $attempt++) {
+        $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Post, $uri)
+        $request.Headers.Add("X-Abundio-Agent-Token", $env:ABUNDIO_AGENT_TOKEN)
+        $request.Headers.Add("X-Abundio-Request-Id", $rid)
+        if ($retry) { $request.Headers.Add("X-Abundio-Retry", "1") }
+        $request.Content = New-Object System.Net.Http.ByteArrayContent(,$body)
+        try {
+            $task = $client.SendAsync($request)
+            while (-not $task.Wait(250)) { }
+            $response = $task.Result
+            break
+        } catch {
+            # Refused: it never arrived. Anything else: it may have, so mark the retry.
+            if (-not (Test-Refused $_)) { $retry = $true }
+            if ($attempt -lt 4) { Start-Sleep -Seconds 1 }
+        }
+    }
+} finally {
+    if (-not $response) {
+        try {
+            $cancel = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Post, $uri)
+            $cancel.Headers.Add("X-Abundio-Agent-Token", $env:ABUNDIO_AGENT_TOKEN)
+            $cancel.Headers.Add("X-Abundio-Cancel", $rid)
+            $quick = New-Object System.Net.Http.HttpClient
+            $quick.Timeout = [TimeSpan]::FromSeconds(3)
+            $null = $quick.SendAsync($cancel).Wait(3000)
+        } catch { }
+    }
+}
+
+if (-not $response) {
+    [Console]::Error.WriteLine("abundio: could not reach Abundio (is the app still running?)"); exit 1
+}
+$text = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+switch ([int]$response.StatusCode) {
+    200 { [Console]::Out.WriteLine($text); exit 0 }
+    400 { [Console]::Error.WriteLine($text); exit 2 }
+    default { [Console]::Error.WriteLine($text); exit 1 }
+}
+"#;
+
+fn write_abundio_cli(dir: &Path) {
+    let sh = dir.join("abundio");
+    if fs::write(&sh, ABUNDIO_CLI_SH).is_ok() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&sh, fs::Permissions::from_mode(0o755));
+        }
+    }
+    let _ = fs::write(dir.join("abundio.ps1"), ABUNDIO_CLI_PS1);
+}
+
+/// `abundio-env` — use an on-demand Environment Bundle in the calling pane.
+///
+/// ```text
+/// abundio-env run production -- docker compose up   # recommended
+/// abundio-env list
+/// abundio-env print production > /tmp/x.env         # explicit, deliberate
+/// ```
+///
+/// `run` applies the Bundle to a child process's environment and execs it. That
+/// is the primary path because it is the only one that touches neither disk nor
+/// the process table:
+///  - No temp file, so nothing for a disk-scraping infostealer to find.
+///  - No `eval`, so a value containing quotes or newlines cannot execute. The
+///    server emits NUL-delimited records and the reader splits on NUL, which is
+///    the one byte an environment variable cannot contain.
+///  - No `env KEY=VALUE cmd`, which would expose the values in `ps` output.
+///
+/// **`--env-file <(abundio-env print …)` does NOT work with Docker Compose.**
+/// Compose requires a regular, seekable file and silently treats a process
+/// substitution as empty — verified against Compose v5.1.3, no error, just blank
+/// values. `run` sidesteps this entirely: Compose reads `${VAR}` interpolation
+/// and `environment: [VAR]` passthrough from the shell environment.
+///
+/// Authentication is the pane's `ABUNDIO_HOOK_TOKEN`, and the Workspace is
+/// resolved server-side from `ABUNDIO_PTY_ID` — a caller can name a bundle but
+/// never a workspace.
+///
+/// Bash rather than `/bin/sh`: `read -r -d ''` is needed for NUL-delimited
+/// records, and it is absent from POSIX sh. The user's interactive shell is
+/// irrelevant — the shebang picks the interpreter.
+const ABUNDIO_ENV_SH: &str = r#"#!/usr/bin/env bash
+# Abundio — use an on-demand Environment Bundle in this terminal.
+#
+#   abundio-env run production -- docker compose up
+#   abundio-env list
+#   abundio-env print production > secrets.env    # writes to DISK, be careful
+#
+# `run` never writes the values to disk and never puts them in `ps` output.
+set -euo pipefail
+
+if [ -z "${ABUNDIO_HOOK_TOKEN:-}" ] || [ -z "${ABUNDIO_PTY_ID:-}" ]; then
+  echo "abundio-env: not running inside an Abundio terminal" >&2
+  exit 1
+fi
+
+# The status of the LAST `__abundio_fetch`. A file rather than a variable
+# because `run` fetches inside a process substitution, whose variables die with
+# the subshell.
+__abundio_codefile=$(mktemp)
+trap 'rm -f "$__abundio_codefile"' EXIT
+
+__abundio_fetch() {   # $1 = route, $2 = bundle (optional)
+  local body
+  if [ -n "${2:-}" ]; then
+    body="{\"ptyId\":\"${ABUNDIO_PTY_ID}\",\"bundle\":\"$2\"}"
+  else
+    body="{\"ptyId\":\"${ABUNDIO_PTY_ID}\"}"
+  fi
+  # `-f` not `-fS`: curl's own "(22) The requested URL returned error: 404" says
+  # nothing about bundles. Every caller routes failure through
+  # `__abundio_explain`, which turns the status into a sentence.
+  #
+  # `%{stderr}` sends the status code to stderr so it cannot be confused with
+  # the body on stdout — the body may be NUL-delimited records or a secret, and
+  # must reach the caller byte-for-byte. Reading the status from THIS request
+  # rather than a second probe matters: /env/raw is the one route that decrypts,
+  # so probing it again would re-enter the credential store and, on a locked
+  # keychain, prompt a second time for one user command.
+  curl -fs -w '%{stderr}%{http_code}' -X POST \
+    "http://127.0.0.1:${ABUNDIO_HOOK_PORT}$1" \
+    -H "X-Abundio-Token: ${ABUNDIO_HOOK_TOKEN}" \
+    -H 'Content-Type: application/json' \
+    -d "$body" 2>"$__abundio_codefile"
+}
+
+__abundio_unknown_pane() {
+  echo "abundio-env: Abundio no longer recognises this terminal." >&2
+  echo "  Open a new pane and try again." >&2
+}
+
+# Turn the last failed fetch into a sentence. Without this the user sees curl's
+# own `curl: (22) The requested URL returned error: 404`, which says nothing
+# about bundles.
+__abundio_explain() {   # $1 = bundle name, empty when the command names none
+  local code names
+  code=$(cat "$__abundio_codefile" 2>/dev/null) || code=""
+  # `%{stderr}` needs curl 7.63+. On anything older the file holds a warning
+  # rather than a number, which must degrade to the generic message instead of
+  # being printed as a status.
+  case "$code" in ''|*[!0-9]*) code="" ;; esac
+
+  case "$code" in
+    404)
+      # The server answers 404 for an unknown pane as well as an unknown
+      # bundle, and `list` names no bundle at all — so only a command that
+      # passed a name can blame the name. Even then, the recovery listing
+      # settles it: if the pane were still known, /env/list would answer.
+      if [ -z "${1:-}" ]; then
+        __abundio_unknown_pane
+      elif names=$(__abundio_fetch /env/list 2>/dev/null); then
+        echo "abundio-env: no bundle named '$1' in this workspace" >&2
+        if [ -n "$names" ]; then
+          echo "  Available bundles: $(echo "$names" | tr '\n' ' ')" >&2
+        else
+          echo "  This workspace has no environment bundles yet." >&2
+        fi
+      else
+        __abundio_unknown_pane
+      fi
+      ;;
+    503)
+      echo "abundio-env: could not unlock the credential store — is the keychain locked?" >&2
+      echo "  Open Abundio's environment settings and retry to re-unlock it." >&2
+      ;;
+    401|403)
+      echo "abundio-env: this terminal is not authorised to read bundles." >&2
+      ;;
+    2*)
+      # `-f` only fails on >= 400, so a 2xx here means the transfer itself
+      # broke — a truncated body, not a rejected request.
+      echo "abundio-env: the connection to Abundio dropped mid-response — please try again." >&2
+      ;;
+    ""|000)
+      echo "abundio-env: could not reach Abundio — is the app still running?" >&2
+      ;;
+    *)
+      echo "abundio-env: could not reach Abundio (HTTP ${code})." >&2
+      ;;
+  esac
+}
+
+__abundio_usage() {
+  cat >&2 <<'USAGE'
+abundio-env — on-demand environment bundles for this workspace
+
+  abundio-env run <bundle> -- <command>   run a command with the bundle applied
+  abundio-env list                        list available bundles
+  abundio-env print <bundle>              print as KEY="value" lines
+
+Note: `docker compose --env-file` needs a real file and will NOT read a process
+substitution. Use `run` instead:
+
+  abundio-env run production -- docker compose up
+USAGE
+}
+
+case "${1:-}" in
+  list)
+    if ! __abundio_list_out=$(__abundio_fetch /env/list); then
+      __abundio_explain ""
+      exit 1
+    fi
+    # Zero bundles is a successful answer to "what bundles exist", not an
+    # error — `ls` on an empty directory exits 0 too, and a caller doing
+    # `bundles=$(abundio-env list)` under `set -e` must not abort.
+    if [ -z "$__abundio_list_out" ]; then
+      echo "abundio-env: this workspace has no environment bundles yet." >&2
+      exit 0
+    fi
+    printf '%s\n' "$__abundio_list_out"
+    ;;
+
+  run)
+    bundle="${2:-}"
+    if [ -z "$bundle" ]; then __abundio_usage; exit 2; fi
+    shift 2
+    [ "${1:-}" = "--" ] && shift
+    if [ $# -eq 0 ]; then __abundio_usage; exit 2; fi
+
+    # NUL-delimited KEY=VALUE records: no escaping rules, no eval, and values
+    # containing newlines (certificates) survive intact.
+    #
+    # A process substitution's exit status is invisible to `set -e`, so the
+    # fetch status is smuggled out through a file. Without this, a locked
+    # keychain or a typo'd bundle name reads zero records and execs the command
+    # with NOTHING applied — the same silent-blank-values failure this helper
+    # exists to avoid.
+    __abundio_status=$(mktemp)
+    while IFS= read -r -d '' __abundio_pair; do
+      export "${__abundio_pair%%=*}=${__abundio_pair#*=}"
+    done < <(__abundio_fetch /env/raw "$bundle"; echo $? >"$__abundio_status")
+    __abundio_rc=$(cat "$__abundio_status")
+    rm -f "$__abundio_status"
+    if [ "$__abundio_rc" != 0 ]; then
+      __abundio_explain "$bundle"
+      echo "abundio-env: refusing to run '$1' without the bundle applied" >&2
+      exit 1
+    fi
+
+    # `exec` replaces the process, so the EXIT trap never fires.
+    rm -f "$__abundio_codefile"
+    exec "$@"
+    ;;
+
+  print)
+    bundle="${2:-}"
+    if [ -z "$bundle" ]; then __abundio_usage; exit 2; fi
+    # Abundio persists scrollback to disk, so dumping secrets to a terminal
+    # would write them straight into a log file — the very thing this feature
+    # exists to avoid. Redirecting or piping is fine.
+    if [ -t 1 ] && [ "${3:-}" != "--force" ]; then
+      echo "abundio-env: refusing to print secrets to a terminal." >&2
+      echo "  Use:  abundio-env run $bundle -- <command>" >&2
+      echo "  Override with --force if you really want them on screen." >&2
+      exit 3
+    fi
+    if ! __abundio_print_out=$(__abundio_fetch /env/print "$bundle"); then
+      __abundio_explain "$bundle"
+      exit 1
+    fi
+    printf '%s\n' "$__abundio_print_out"
+    ;;
+
+  *)
+    __abundio_usage
+    exit 2
+    ;;
+esac
+"#;
+
+/// PowerShell twin. `run` works the same way (set the variables on the current
+/// process, then invoke), so the Windows story is no worse than the Unix one —
+/// which is the opposite of what the `--env-file` approach would have given us.
+const ABUNDIO_ENV_PS1: &str = r#"# Abundio — use an on-demand Environment Bundle in this terminal.
+#   abundio-env run production -- docker compose up
+param([Parameter(Position=0)][string]$Command, [Parameter(Position=1)][string]$Bundle, [switch]$Force, [Parameter(ValueFromRemainingArguments=$true)][string[]]$Rest)
+
+if (-not $env:ABUNDIO_HOOK_TOKEN -or -not $env:ABUNDIO_PTY_ID) {
+    Write-Error "abundio-env: not running inside an Abundio terminal"; exit 1
+}
+
+$headers = @{ "X-Abundio-Token" = $env:ABUNDIO_HOOK_TOKEN }
+$base = "http://127.0.0.1:$env:ABUNDIO_HOOK_PORT"
+
+# Turn a failed request into a sentence, so the user never sees a bare HTTP
+# error for what is almost always a mistyped bundle name. Must classify the same
+# statuses as the bash twin's `__abundio_explain`, or a user's diagnosis depends
+# on their OS.
+#
+# `[Console]::Error.WriteLine` rather than `Write-Host` for the follow-up lines:
+# Write-Host goes to the information stream, so `abundio-env print bad 2>$null`
+# would silence the headline but leave the detail on screen — the opposite of
+# the bash behaviour.
+function Write-AbundioFailure([System.Management.Automation.ErrorRecord]$Err, [string]$BundleName) {
+    $code = 0
+    if ($Err.Exception.Response) { $code = [int]$Err.Exception.Response.StatusCode }
+    switch ($code) {
+        404 {
+            # 404 is also the answer for an unknown pane, and `list` names no
+            # bundle — so only a command that passed a name can blame the name,
+            # and the recovery listing settles which it was.
+            if (-not $BundleName) { Write-AbundioUnknownPane; break }
+            $names = $null
+            try {
+                $body = @{ ptyId = $env:ABUNDIO_PTY_ID } | ConvertTo-Json -Compress
+                $names = Invoke-RestMethod -Uri "$base/env/list" -Method Post -Headers $headers -ContentType 'application/json' -Body $body
+            } catch { Write-AbundioUnknownPane; break }
+            Write-Error "abundio-env: no bundle named '$BundleName' in this workspace"
+            if ($names) { [Console]::Error.WriteLine("  Available bundles: $($names -replace "`n", ' ')") }
+            else { [Console]::Error.WriteLine("  This workspace has no environment bundles yet.") }
+        }
+        401 { Write-Error "abundio-env: this terminal is not authorised to read bundles." }
+        403 { Write-Error "abundio-env: this terminal is not authorised to read bundles." }
+        503 {
+            Write-Error "abundio-env: could not unlock the credential store - is the keychain locked?"
+            [Console]::Error.WriteLine("  Open Abundio's environment settings and retry to re-unlock it.")
+        }
+        0 { Write-Error "abundio-env: could not reach Abundio - is the app still running?" }
+        # Three digits to match curl's `000` in the bash twin.
+        default { Write-Error "abundio-env: could not reach Abundio (HTTP $('{0:000}' -f $code))." }
+    }
+}
+
+function Write-AbundioUnknownPane {
+    Write-Error "abundio-env: Abundio no longer recognises this terminal."
+    [Console]::Error.WriteLine("  Open a new pane and try again.")
+}
+
+switch ($Command) {
+    "list" {
+        $body = @{ ptyId = $env:ABUNDIO_PTY_ID } | ConvertTo-Json -Compress
+        try {
+            $names = Invoke-RestMethod -Uri "$base/env/list" -Method Post -Headers $headers -ContentType 'application/json' -Body $body
+        } catch {
+            Write-AbundioFailure $_ ""
+            exit 1
+        }
+        # Zero bundles is a successful answer, not an error — same contract as
+        # the bash twin, which exits 0 here.
+        if (-not $names) {
+            [Console]::Error.WriteLine("abundio-env: this workspace has no environment bundles yet.")
+            exit 0
+        }
+        $names
+    }
+    "run" {
+        if (-not $Bundle) { Write-Error "abundio-env: usage: abundio-env run <bundle> -- <command>"; exit 2 }
+        $args2 = @($Rest | Where-Object { $_ -ne "--" })
+        if ($args2.Count -eq 0) { Write-Error "abundio-env: usage: abundio-env run <bundle> -- <command>"; exit 2 }
+
+        # NUL-delimited KEY=VALUE records: split on a byte that cannot occur in a
+        # value, so nothing is ever evaluated as code and a value containing
+        # quotes or newlines cannot execute.
+        $body = @{ ptyId = $env:ABUNDIO_PTY_ID; bundle = $Bundle } | ConvertTo-Json -Compress
+        # Invoke-RestMethod's HTTP failure is statement-terminating, not
+        # script-terminating, so without this catch execution falls through and
+        # runs the command with no variables set.
+        try {
+            $raw = Invoke-RestMethod -Uri "$base/env/raw" -Method Post -Headers $headers -ContentType 'application/json' -Body $body
+        } catch {
+            Write-AbundioFailure $_ $Bundle
+            Write-Error "abundio-env: refusing to run '$($args2[0])' without the bundle applied"
+            exit 1
+        }
+        foreach ($record in ($raw -split "`0")) {
+            if (-not $record) { continue }
+            $i = $record.IndexOf('=')
+            if ($i -lt 1) { continue }
+            [Environment]::SetEnvironmentVariable($record.Substring(0, $i), $record.Substring($i + 1), 'Process')
+        }
+        # Skip-based, not range-based: an index range from 1 to the last element
+        # descends when the command has a single token, which would pass the
+        # command name to itself as an argument.
+        $rest = @($args2 | Select-Object -Skip 1)
+        & $args2[0] @rest
+        exit $LASTEXITCODE
+    }
+    "print" {
+        if (-not $Bundle) { Write-Error "abundio-env: usage: abundio-env print <bundle>"; exit 2 }
+        # Scrollback is persisted to disk, so refuse an interactive dump.
+        if (-not $Force -and -not [Console]::IsOutputRedirected) {
+            Write-Error "abundio-env: refusing to print secrets to a terminal. Redirect the output or pass -Force."
+            exit 3
+        }
+        $body = @{ ptyId = $env:ABUNDIO_PTY_ID; bundle = $Bundle } | ConvertTo-Json -Compress
+        try {
+            Invoke-RestMethod -Uri "$base/env/print" -Method Post -Headers $headers -ContentType 'application/json' -Body $body
+        } catch {
+            Write-AbundioFailure $_ $Bundle
+            exit 1
+        }
+    }
+    default { Write-Error "abundio-env: usage: abundio-env {run <bundle> -- <cmd>|list|print <bundle>}"; exit 2 }
+}
+"#;
+
+fn write_abundio_env_helper(dir: &Path) {
+    let sh = dir.join("abundio-env");
+    if fs::write(&sh, ABUNDIO_ENV_SH).is_ok() {
+        // Must be executable to be usable from PATH.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&sh, fs::Permissions::from_mode(0o755));
+        }
+    }
+    let _ = fs::write(dir.join("abundio-env.ps1"), ABUNDIO_ENV_PS1);
+}
+
+/// Tell the listeners what one read of output said: that it came, the
+/// shell's reports, then the titles.
+fn tell_listeners(
+    listeners: &OutputListeners,
+    shell: &mut crate::shell_integration::Parser,
+    pty_id: &str,
+    bytes: &[u8],
+    titles: Vec<String>,
+) {
+    if let Some(listener) = listeners.output.get() {
+        listener(pty_id, bytes);
+    }
+    if let Some(listener) = listeners.shell.get() {
+        let commands = shell.parse(bytes);
+        if !commands.is_empty() {
+            listener(pty_id, commands);
+        }
+    }
+    if let Some(listener) = listeners.title.get() {
+        for title in titles {
+            listener(pty_id, &title);
+        }
+    }
+}
+
+/// Runs on a dedicated OS thread. Owns the master PTY and child process.
+fn pty_thread(
+    pty_id: String,
+    master: Box<dyn portable_pty::MasterPty + Send>,
+    mut child: Box<dyn portable_pty::Child + Send + Sync>,
+    rx: Receiver<PtyCommand>,
+    alive: Arc<AtomicBool>,
+    events: Events,
+    screen: Arc<Mutex<crate::screen::Screen>>,
+    log_file: Option<(File, PathBuf)>,
+    shell_type: ShellType,
+    on_exit: Arc<std::sync::OnceLock<ExitListener>>,
+    on_output: Arc<OutputListeners>,
+) {
+    let exited = |code: Option<u32>| {
+        if let Some(listener) = on_exit.get() {
+            listener(&pty_id, code);
+        }
+    };
+    let mut writer = master.take_writer().unwrap();
+    let mut reader = master.try_clone_reader().unwrap();
+
+    // For ShellType::Other, poll child processes to emit CommandStarted/CommandFinished
+    // (zsh/bash get these via OSC 7770 shell integration hooks instead).
+    let shell_pid = if shell_type == ShellType::Other {
+        let pid = child.process_id();
+        if pid.is_none() {
+            eprintln!("[pty_thread] WARNING: shell process_id() returned None for pty {}", pty_id);
+        }
+        pid
+    } else {
+        None
+    };
+    let mut command_running = false;
+
+    // Spawn a sub-thread for reading PTY output → emitting events
+    let read_pty_id = pty_id.clone();
+    let read_alive = alive.clone();
+    let read_events = events.clone();
+
+    // Output coalescing: a dedicated reader thread sends raw chunks through a
+    // bounded channel.  The coalescing loop drains all immediately-available
+    // chunks before base64-encoding and emitting a single batched event.
+    // During burst output this collapses many small reads into one IPC event;
+    // during interactive use the try_recv drain returns immediately so latency
+    // is unaffected.
+    let read_thread = thread::spawn(move || {
+        let mut log = log_file;
+        let mut shell = crate::shell_integration::Parser::default();
+
+        // Bounded channel: 32 slots × 4 KB = 128 KB max buffered before
+        // back-pressure slows the reader — prevents unbounded memory growth.
+        let (chunk_tx, chunk_rx) = crossbeam_channel::bounded::<Vec<u8>>(32);
+
+        // Inner thread: blocking reads from PTY master fd
+        let inner_alive = read_alive.clone();
+        let inner = thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            loop {
+                if !inner_alive.load(Ordering::Relaxed) {
+                    break;
+                }
+                match reader.read(&mut buf) {
+                    Ok(0) => break, // EOF
+                    Ok(n) => {
+                        if chunk_tx.send(buf[..n].to_vec()).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        const MAX_ACCUM: usize = 16 * 1024; // 16 KB — rAF batching in the frontend handles burst coalescing
+        let mut accum = Vec::with_capacity(MAX_ACCUM);
+
+        loop {
+            if !read_alive.load(Ordering::Relaxed) {
+                break;
+            }
+
+            // Block until at least one chunk arrives (or channel closes)
+            match chunk_rx.recv() {
+                Ok(chunk) => {
+                    append_to_log(&mut log, &chunk);
+                    accum.extend_from_slice(&chunk);
+                }
+                Err(_) => break,
+            }
+
+            // Drain all immediately-available chunks without blocking
+            while accum.len() < MAX_ACCUM {
+                match chunk_rx.try_recv() {
+                    Ok(chunk) => {
+                        append_to_log(&mut log, &chunk);
+                        accum.extend_from_slice(&chunk);
+                    }
+                    Err(_) => break,
+                }
+            }
+
+            // Keep the screen, then emit the coalesced batch as one message,
+            // under the screen's lock: a skip-ahead snapshot (phase 9) is
+            // taken under it too, so it is either before this batch or
+            // after it, never both.
+            let titles = match screen.lock() {
+                Ok(mut s) => {
+                    let titles = s.feed(&accum);
+                    read_events.pty_output(&read_pty_id, &accum);
+                    titles
+                }
+                Err(_) => {
+                    read_events.pty_output(&read_pty_id, &accum);
+                    Vec::new()
+                }
+            };
+            tell_listeners(&on_output, &mut shell, &read_pty_id, &accum, titles);
+            accum.clear();
+        }
+
+        // Flush any remaining data after channel close
+        for chunk in chunk_rx.try_iter() {
+            append_to_log(&mut log, &chunk);
+            accum.extend_from_slice(&chunk);
+        }
+        if !accum.is_empty() {
+            let titles = match screen.lock() {
+                Ok(mut s) => {
+                    let titles = s.feed(&accum);
+                    read_events.pty_output(&read_pty_id, &accum);
+                    titles
+                }
+                Err(_) => {
+                    read_events.pty_output(&read_pty_id, &accum);
+                    Vec::new()
+                }
+            };
+            tell_listeners(&on_output, &mut shell, &read_pty_id, &accum, titles);
+        }
+
+        let _ = inner.join();
+    });
+
+    // Main loop: process commands from the channel
+    let mut last_process_check = Instant::now();
+    let poll_interval = Duration::from_millis(200);
+
+    loop {
+        // Check if child has exited
+        if let Ok(Some(status)) = child.try_wait() {
+            alive.store(false, Ordering::Relaxed);
+            let code = Some(status.exit_code());
+            exited(code);
+            let event_name = format!("pty-status-{}", pty_id);
+            events.broadcast(&event_name, PtyStatus::Exited { code });
+            break;
+        }
+
+        // For ShellType::Other: lightweight child-process polling for
+        // CommandStarted/CommandFinished (no name resolution needed).
+        if let Some(pid) = shell_pid {
+            if last_process_check.elapsed() >= poll_interval {
+                last_process_check = Instant::now();
+                let has_children = process_monitor::has_child_processes(pid);
+                if has_children && !command_running {
+                    command_running = true;
+                    let event_name = format!("pty-activity-{}", pty_id);
+                    events.broadcast(&event_name, PtyActivity::CommandStarted);
+                } else if !has_children && command_running {
+                    command_running = false;
+                    let event_name = format!("pty-activity-{}", pty_id);
+                    events.broadcast(&event_name, PtyActivity::CommandFinished);
+                }
+            }
+        }
+
+        let recv_timeout = if shell_pid.is_some() {
+            poll_interval
+                .checked_sub(last_process_check.elapsed())
+                .unwrap_or(Duration::from_millis(10))
+                .min(Duration::from_millis(100))
+        } else {
+            Duration::from_millis(100)
+        };
+
+        match rx.recv_timeout(recv_timeout) {
+            Ok(PtyCommand::Write(data)) => {
+                let _ = writer.write_all(&data);
+            }
+            Ok(PtyCommand::Resize(cols, rows)) => {
+                let _ = master.resize(PtySize {
+                    rows,
+                    cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                });
+            }
+            Ok(PtyCommand::Redraw) => {
+                // Nothing to redraw once the child is gone — and checking
+                // first means a pgid recycled after exit is never signalled.
+                if !alive.load(Ordering::Relaxed) {
+                    continue;
+                }
+                // The foreground process group of the terminal (tcgetpgrp):
+                // the agent, not the shell that launched it. Positive only:
+                // 0 would mean the caller's own group. An exited group yields
+                // ESRCH, which is ignored.
+                #[cfg(unix)]
+                let signalled = match master.process_group_leader() {
+                    Some(pgid) if pgid > 0 => nix::sys::signal::killpg(
+                        nix::unistd::Pid::from_raw(pgid),
+                        nix::sys::signal::Signal::SIGWINCH,
+                    )
+                    .is_ok(),
+                    _ => false,
+                };
+                #[cfg(not(unix))]
+                let signalled = false;
+                // No group to signal: nudge the size down a row and back.
+                // Each real change raises SIGWINCH, and the program reads the
+                // final size, so it redraws at the size it already had. This
+                // keeps `redraw()`'s `true` honest: the redraw was asked for
+                // either way.
+                if !signalled {
+                    if let Ok(size) = master.get_size() {
+                        if size.rows > 1 {
+                            let _ = master.resize(PtySize {
+                                rows: size.rows - 1,
+                                ..size
+                            });
+                            let _ = master.resize(size);
+                        }
+                    }
+                }
+            }
+            Ok(PtyCommand::Kill) => {
+                alive.store(false, Ordering::Relaxed);
+                let _ = child.kill();
+                exited(None);
+                let event_name = format!("pty-status-{}", pty_id);
+                events.broadcast(&event_name, PtyStatus::Exited { code: None });
+                break;
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                // Continue loop — check child status again
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                // Channel closed, clean up
+                alive.store(false, Ordering::Relaxed);
+                let _ = child.kill();
+                break;
+            }
+        }
+    }
+
+    let _ = read_thread.join();
+}
+
+/// A snapshot plus what the log at `log` gained after `mark` (its length
+/// when the snapshot was taken). A snapshot from before marks existed is
+/// taken as it is unless the log was written well after it (`stale`), when
+/// the log alone is the better restore.
+fn snapshot_with_tail(snapshot: String, log: &Path, mark: Option<u64>, stale: bool) -> Option<String> {
+    let Some(mark) = mark else { return (!stale).then_some(snapshot) };
+    let Ok(bytes) = fs::read(log) else { return Some(snapshot) };
+    let len = bytes.len() as u64;
+    if len < mark {
+        // Cut short (`truncate_log_file`) after the snapshot.
+        return None;
+    }
+    if len == mark {
+        return Some(snapshot);
+    }
+    let mut out = snapshot;
+    out.push_str(&String::from_utf8_lossy(&bytes[mark as usize..]));
+    Some(out)
+}
+
+/// Append raw bytes to the log file and truncate if it exceeds the limit.
+fn append_to_log(log: &mut Option<(File, PathBuf)>, data: &[u8]) {
+    if let Some((ref mut file, ref path)) = log {
+        let _ = file.write_all(data);
+        if let Ok(meta) = file.metadata() {
+            if meta.len() > MAX_LOG_SIZE {
+                truncate_log_file(path, MAX_LOG_SIZE / 2);
+                if let Ok(f) = OpenOptions::new().append(true).open(path) {
+                    *file = f;
+                }
+            }
+        }
+    }
+}
+
+/// Truncate a log file by keeping only the last `keep_bytes` bytes.
+fn truncate_log_file(path: &Path, keep_bytes: u64) {
+    let Ok(data) = fs::read(path) else { return };
+    let len = data.len() as u64;
+    if len <= keep_bytes {
+        return;
+    }
+    let start = (len - keep_bytes) as usize;
+    if let Ok(mut file) = File::create(path) {
+        let _ = file.write_all(&data[start..]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_snapshot_is_restored_with_what_its_pane_logged_after_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("p.log");
+        fs::write(&log, b"old output\r\n").unwrap();
+        let mark = Some(12);
+        // Nothing since: the snapshot alone.
+        assert_eq!(snapshot_with_tail("SNAP".into(), &log, mark, false).as_deref(), Some("SNAP"));
+        // The shell went on after it (the server stopped, not the app).
+        fs::write(&log, b"old output\r\n$ ls\r\nfile\r\n").unwrap();
+        assert_eq!(snapshot_with_tail("SNAP".into(), &log, mark, false).as_deref(), Some("SNAP$ ls\r\nfile\r\n"));
+        // The log was cut short since: the snapshot's place in it is lost.
+        fs::write(&log, b"tail").unwrap();
+        assert_eq!(snapshot_with_tail("SNAP".into(), &log, mark, false), None);
+        // A snapshot from before marks, or with no log.
+        assert_eq!(snapshot_with_tail("SNAP".into(), &log, None, false).as_deref(), Some("SNAP"));
+        assert_eq!(snapshot_with_tail("SNAP".into(), &log, None, true), None);
+        assert_eq!(snapshot_with_tail("SNAP".into(), &dir.path().join("none.log"), mark, false).as_deref(), Some("SNAP"));
+    }
+
+    /// Register a fake PTY owned by `window`; the receiver sees its commands.
+    fn fake_pty(mgr: &PtyManager, id: &str, window: &str) -> Receiver<PtyCommand> {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        mgr.entries.insert(
+            id.to_string(),
+            PtyEntry {
+                tx,
+                alive: Arc::new(AtomicBool::new(true)),
+                screen: Arc::new(Mutex::new(crate::screen::Screen::new(80, 24, 100))),
+            },
+        );
+        mgr.owner_windows.insert(id.to_string(), window.to_string());
+        rx
+    }
+
+    #[test]
+    fn kill_for_window_kills_only_that_windows_ptys() {
+        let mgr = PtyManager::new();
+        let a1 = fake_pty(&mgr, "a1", "window-a");
+        let a2 = fake_pty(&mgr, "a2", "window-a");
+        let b1 = fake_pty(&mgr, "b1", "window-b");
+
+        mgr.kill_for_window("window-a");
+
+        assert!(matches!(a1.try_recv(), Ok(PtyCommand::Kill)));
+        assert!(matches!(a2.try_recv(), Ok(PtyCommand::Kill)));
+        assert!(b1.try_recv().is_err());
+        assert!(!mgr.entries.contains_key("a1"));
+        assert!(!mgr.owner_windows.contains_key("a2"));
+        assert!(mgr.entries.contains_key("b1"));
+        assert!(mgr.owner_windows.contains_key("b1"));
+    }
+
+    #[test]
+    fn redraw_unknown_pty_is_not_found() {
+        let mgr = PtyManager::new();
+        assert!(matches!(
+            mgr.redraw("no-such-pty"),
+            Err(AbundioError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn msys_drive_paths_become_native() {
+        assert_eq!(msys_to_windows_path("/c/Users/x"), "c:/Users/x");
+        assert_eq!(msys_to_windows_path("/d/repos/abundio"), "d:/repos/abundio");
+        assert_eq!(msys_to_windows_path("/c"), "c:");
+        assert_eq!(msys_to_windows_path("/c/"), "c:/");
+    }
+
+    #[test]
+    fn msys_unc_paths_become_native() {
+        assert_eq!(
+            msys_to_windows_path("//server/share/x"),
+            "\\\\server\\share\\x"
+        );
+    }
+
+    #[test]
+    fn non_msys_paths_pass_through() {
+        // Already-native Windows paths.
+        assert_eq!(msys_to_windows_path("C:/already/native"), "C:/already/native");
+        assert_eq!(
+            msys_to_windows_path("C:\\already\\native"),
+            "C:\\already\\native"
+        );
+        // MSYS root paths that aren't a single-letter drive segment.
+        assert_eq!(msys_to_windows_path("/usr/bin"), "/usr/bin");
+        // POSIX absolute (multi-char first segment) and relative paths.
+        assert_eq!(msys_to_windows_path("/Users/emil/dev"), "/Users/emil/dev");
+        assert_eq!(msys_to_windows_path("relative/path"), "relative/path");
+        assert_eq!(msys_to_windows_path(""), "");
+    }
+}
+
+#[cfg(test)]
+mod task_launch_tests {
+    use super::*;
+    use std::process::Command;
+
+    fn task(argv: &[&str], setup: Option<&str>) -> TaskLaunch {
+        TaskLaunch {
+            argv: argv.iter().map(|s| s.to_string()).collect(),
+            setup: setup.map(|s| s.to_string()),
+            fallback: None,
+            fallback_within_secs: None,
+        }
+    }
+
+    /// The script with a resume fallback in its environment, as a spawn
+    /// sets it.
+    fn run_with_fallback(shell: &str, argv: &[&str], fallback: &str, within: u32) -> Option<String> {
+        if !Path::new(shell).exists() {
+            return None;
+        }
+        let script = task_script("echo REEXEC");
+        let mut args = vec!["-c".to_string(), script, shell.to_string(), String::new()];
+        args.extend(argv.iter().map(|s| s.to_string()));
+        let out = Command::new(shell)
+            .args(&args)
+            .env("ABUNDIO_TASK_FALLBACK", fallback)
+            .env("ABUNDIO_TASK_FALLBACK_WITHIN", within.to_string())
+            .output()
+            .ok()?;
+        Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
+    #[test]
+    fn a_resume_that_fails_at_once_starts_fresh_inside_one_command() {
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let Some(out) = run_with_fallback(shell, &["sh", "-c", "echo RESUME; exit 1"], "echo FRESH", 20)
+            else {
+                continue;
+            };
+            let resume = out.find("RESUME").expect("resume ran");
+            let fresh = out.find("FRESH").expect("fallback ran");
+            assert!(resume < fresh, "{shell}: {out}");
+            // One start, one end, and the end is the fallback's exit code.
+            assert_eq!(out.matches("7770;command_start").count(), 1, "{shell}: {out}");
+            assert_eq!(out.matches("7770;command_end").count(), 1, "{shell}: {out}");
+            assert!(out.contains("\x1b]7770;command_end;0\x07"), "{shell}: {out}");
+        }
+    }
+
+    /// A zsh setup that makes SECONDS a float (`typeset -F SECONDS`, as some
+    /// prompt themes do) must not break the window check.
+    #[test]
+    fn the_fallback_works_with_a_float_seconds() {
+        let shell = "/bin/zsh";
+        if !Path::new(shell).exists() {
+            return;
+        }
+        let script = format!("typeset -F SECONDS\n{}", task_script("echo REEXEC"));
+        let out = Command::new(shell)
+            .args(["-c", &script, shell, "", "sh", "-c", "echo RESUME; exit 1"])
+            .env("ABUNDIO_TASK_FALLBACK", "echo FRESH")
+            .env("ABUNDIO_TASK_FALLBACK_WITHIN", "20")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stdout.contains("FRESH"), "{stdout}\n{stderr}");
+        assert!(!stderr.contains("integer expression"), "{stderr}");
+    }
+
+    #[test]
+    fn a_resume_that_works_or_fails_late_is_left_alone() {
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let Some(ok) = run_with_fallback(shell, &["sh", "-c", "echo RESUME"], "echo FRESH", 20) else {
+                continue;
+            };
+            assert!(!ok.contains("FRESH"), "{shell}: {ok}");
+            // A zero window means "late" for every exit.
+            let late = run_with_fallback(shell, &["sh", "-c", "exit 3"], "echo FRESH", 0).unwrap();
+            assert!(!late.contains("FRESH"), "{shell}: {late}");
+            assert!(late.contains("\x1b]7770;command_end;3\x07"), "{shell}: {late}");
+        }
+    }
+
+    /// Ctrl+C or a kill is the user quitting a resumed Agent: no fresh
+    /// session starts, even inside the window.
+    #[test]
+    fn a_quit_never_starts_a_fresh_session() {
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            for rc in ["130", "143"] {
+                let Some(out) = run_with_fallback(shell, &["sh", "-c", &format!("exit {rc}")], "echo FRESH", 20)
+                else {
+                    continue;
+                };
+                assert!(!out.contains("FRESH"), "{shell} {rc}: {out}");
+                assert!(
+                    out.contains(&format!("\x1b]7770;command_end;{rc}\x07")),
+                    "{shell} {rc}: {out}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_agent_never_sees_the_fallback() {
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let Some(out) = run_with_fallback(
+                shell,
+                &["sh", "-c", "echo SAW=${ABUNDIO_TASK_FALLBACK:-none}"],
+                "echo FRESH",
+                20,
+            ) else {
+                continue;
+            };
+            assert!(out.contains("SAW=none"), "{shell}: {out}");
+        }
+    }
+
+    #[test]
+    fn prompt_is_its_own_argument_never_joined() {
+        let prompt = "it's \"$(rm -rf ~)\"\nline two; `x`";
+        let args = task_c_args("/bin/zsh", "exec \"$0\" -l -i", &task(&["claude", prompt], None));
+        assert_eq!(args[0], "-c");
+        assert_eq!(args[2], "/bin/zsh");
+        assert_eq!(args[3], "");
+        assert_eq!(&args[4..], &["claude".to_string(), prompt.to_string()]);
+        assert!(!args[1].contains(prompt));
+    }
+
+    #[test]
+    fn reexec_restores_the_wrapper() {
+        assert!(zsh_reexec("/data/it's")
+            .ends_with("export ZDOTDIR='/data/it'\\''s'\nexec \"$0\" -l -i"));
+        assert!(bash_reexec("/data/.bashrc")
+            .ends_with("exec \"$0\" --rcfile '/data/.bashrc' -i"));
+        assert!(zsh_reexec("/d").starts_with(ZSH_ENV_RESTORE));
+        assert!(bash_reexec("/d").starts_with(BASH_ENV_RESTORE));
+    }
+
+    #[test]
+    fn single_quote_escapes_quotes() {
+        assert_eq!(sh_single_quote("/a b/it's"), "'/a b/it'\\''s'");
+    }
+
+    /// Run the real script under a non-interactive shell, with `exec` swapped
+    /// for `echo` so it returns. Proves the argv survives byte-for-byte, the
+    /// setup runs first, and the 7770 markers bracket the command.
+    fn run_script(shell: &str, t: &TaskLaunch) -> Option<String> {
+        if !Path::new(shell).exists() {
+            return None;
+        }
+        let script = task_script("echo REEXEC \"$0\" -i");
+        let mut args = vec!["-c".to_string(), script, shell.to_string()];
+        args.push(t.setup.clone().unwrap_or_default());
+        args.extend(t.argv.iter().cloned());
+        let out = Command::new(shell).args(&args).output().ok()?;
+        Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
+    #[test]
+    fn script_runs_setup_then_argv_verbatim_in_zsh_and_bash() {
+        let prompt = "it's \"$(echo PWNED)\"\nline two; `echo PWNED`";
+        let t = task(&["printf", "[%s]", prompt], Some("echo SETUP"));
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let Some(out) = run_script(shell, &t) else { continue };
+            assert!(!out.contains("PWNED\n") && !out.contains("[PWNED"), "{shell}: {out}");
+            assert!(out.contains(&format!("[{prompt}]")), "{shell}: {out}");
+            let setup = out.find("SETUP").expect("setup ran");
+            let start = out.find("\x1b]7770;command_start;printf\x07").expect("start");
+            let end = out.find("\x1b]7770;command_end;0\x07").expect("end");
+            assert!(setup < start && start < end, "{shell}: {out}");
+            assert!(out.contains(&format!("REEXEC {shell} -i")), "{shell}: {out}");
+        }
+    }
+
+    /// After the Agent exits, the script must hand the re-exec'd shell a fresh
+    /// shadow copy + manifest of the Injected bundle — and the Agent itself
+    /// must never see the key list.
+    #[test]
+    fn script_rearms_the_injected_bundle_for_the_reexec() {
+        for (shell, restore) in [("/bin/zsh", ZSH_ENV_RESTORE), ("/bin/bash", BASH_ENV_RESTORE)] {
+            if !Path::new(shell).exists() {
+                continue;
+            }
+            let script = task_script(&format!("{restore}\nexec env"));
+            let out = Command::new(shell)
+                .args(["-c", &script, shell, "", "sh", "-c", "echo AGENT_SAW=${ABUNDIO_TASK_ENV_KEYS:-none}"])
+                .env_clear()
+                .env("PATH", "/usr/bin:/bin")
+                .env("ABUNDIO_TASK_ENV_KEYS", "FOO BAR")
+                .env("FOO", "a b $(x) 'q'")
+                .env("BAR", "")
+                .output()
+                .unwrap();
+            let out = String::from_utf8_lossy(&out.stdout);
+            // `env` prints in no fixed order, and its first line follows the
+            // OSC's BEL directly, so split on both rather than expecting "\n".
+            let lines: Vec<&str> = out.split(['\n', '\x07']).collect();
+            assert!(out.contains("AGENT_SAW=none"), "{shell}: {out}");
+            assert!(lines.contains(&"ABUNDIO_ENV__FOO=a b $(x) 'q'"), "{shell}: {out}");
+            assert!(lines.contains(&"ABUNDIO_ENV__BAR="), "{shell}: {out}");
+            assert!(lines.contains(&"ABUNDIO_ENV_KEYS=FOO BAR"), "{shell}: {out}");
+            assert!(!out.contains("ABUNDIO_TASK_ENV_KEYS"), "{shell}: {out}");
+        }
+    }
+
+    #[test]
+    fn detects_shells_case_insensitively() {
+        assert!(matches!(detect_shell_type("C:\\Program Files\\Git\\bin\\BASH.EXE"), ShellType::Bash));
+        assert!(matches!(detect_shell_type("/usr/local/bin/Zsh"), ShellType::Zsh));
+    }
+
+    /// A BEL in the reported command would end the OSC early and leak the
+    /// rest into the terminal, so it is replaced, as the wrapper's preexec does.
+    #[test]
+    fn script_strips_bel_from_the_reported_command() {
+        let t = task(&["ec\u{7}ho", "x"], None);
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let Some(out) = run_script(shell, &t) else { continue };
+            assert!(out.contains("\x1b]7770;command_start;ec ho\x07"), "{shell}: {out:?}");
+        }
+    }
+
+    /// A failing setup line stops the setup and the Agent never starts: no
+    /// `command_start`, one `command_end` with the setup's exit code, and the
+    /// shell is still handed over. Lines run in this shell, so a `cd` carries.
+    #[test]
+    fn script_stops_when_setup_fails() {
+        let t = task(&["echo", "AGENT"], Some("cd /\necho ONE\nsh -c 'exit 4'\necho TWO"));
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let Some(out) = run_script(shell, &t) else { continue };
+            assert!(out.contains("ONE") && !out.contains("TWO"), "{shell}: {out}");
+            assert!(!out.contains("AGENT"), "{shell}: {out}");
+            assert!(!out.contains("command_start"), "{shell}: {out:?}");
+            assert!(out.contains("Setup failed (exit 4) on:"), "{shell}: {out}");
+            assert!(out.contains("sh -c 'exit 4'\n\x1b[31mThe agent was not started"), "{shell}: {out:?}");
+            assert!(out.contains("\x1b]7770;command_end;4\x07"), "{shell}: {out:?}");
+            assert!(out.contains(&format!("REEXEC {shell} -i")), "{shell}: {out}");
+        }
+    }
+
+    /// Multi-line constructs run as one command, as they would typed at a
+    /// prompt: an `if … fi` block and a `\`-continued line.
+    #[test]
+    fn script_runs_multi_line_setup_commands_whole() {
+        let setup = "if true; then\n  echo IN_IF\nfi\necho CONT \\\n  LINE";
+        let t = task(&["echo", "AGENT"], Some(setup));
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let Some(out) = run_script(shell, &t) else { continue };
+            assert!(out.contains("IN_IF"), "{shell}: {out}");
+            assert!(out.contains("CONT LINE"), "{shell}: {out}");
+            assert!(out.contains("AGENT"), "{shell}: {out}");
+            assert!(!out.contains("Setup failed"), "{shell}: {out}");
+        }
+    }
+
+    /// A construct that never completes fails with the shell's own error,
+    /// and the Agent is not started.
+    #[test]
+    fn script_stops_on_an_unfinished_construct() {
+        let t = task(&["echo", "AGENT"], Some("if true; then\n  echo X"));
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let Some(out) = run_script(shell, &t) else { continue };
+            assert!(out.contains("Setup failed"), "{shell}: {out}");
+            assert!(!out.contains("command_start"), "{shell}: {out:?}");
+        }
+    }
+
+    #[test]
+    fn script_carries_setup_state_to_the_agent() {
+        let t = task(&["sh", "-c", "echo AT=$(pwd) V=$ABUNDIO_T"], Some("cd /\nexport ABUNDIO_T=set"));
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let Some(out) = run_script(shell, &t) else { continue };
+            assert!(out.contains("AT=/ V=set"), "{shell}: {out}");
+        }
+    }
+
+    #[test]
+    fn script_reports_the_agent_exit_code() {
+        let t = task(&["sh", "-c", "exit 3"], None);
+        if let Some(out) = run_script("/bin/bash", &t) {
+            assert!(out.contains("\x1b]7770;command_end;3\x07"), "{out}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod env_injection_tests {
+    use super::*;
+
+    fn vars(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn emits_both_the_plain_and_shadow_forms() {
+        let (pairs, keys, skipped) = build_env_injection(&vars(&[("TOKEN", "abc")]), 64 * 1024, true);
+        assert!(pairs.contains(&("TOKEN".into(), "abc".into())));
+        assert!(pairs.contains(&("ABUNDIO_ENV__TOKEN".into(), "abc".into())));
+        assert_eq!(keys, "TOKEN");
+        assert!(skipped.is_empty());
+    }
+
+    #[test]
+    fn manifest_is_space_separated_in_resolution_order() {
+        let (_, keys, _) = build_env_injection(
+            &vars(&[("A", "1"), ("B", "2"), ("C", "3")]),
+            64 * 1024,
+            true,
+        );
+        assert_eq!(keys, "A B C");
+    }
+
+    /// Shells with no wrapper rc never consume the shadow copies, so emitting
+    /// them would leave `ABUNDIO_ENV__*` and the manifest lingering in the
+    /// environment of that shell and every child.
+    #[test]
+    fn no_shadow_copies_for_shells_without_a_wrapper() {
+        let (pairs, keys, _) =
+            build_env_injection(&vars(&[("TOKEN", "abc")]), 64 * 1024, false);
+        assert_eq!(pairs, vec![("TOKEN".to_string(), "abc".to_string())]);
+        assert!(
+            keys.is_empty(),
+            "no manifest without a wrapper to act on it"
+        );
+        assert!(!pairs.iter().any(|(k, _)| k.starts_with("ABUNDIO_ENV__")));
+    }
+
+    /// The wrapper scripts guard on `[ -n "$ABUNDIO_ENV_KEYS" ]`, so with no
+    /// variables the manifest must be empty and the caller must skip setting it
+    /// at all rather than exporting an empty string.
+    #[test]
+    fn empty_input_produces_no_manifest() {
+        let (pairs, keys, skipped) = build_env_injection(&[], 64 * 1024, true);
+        assert!(pairs.is_empty());
+        assert!(keys.is_empty());
+        assert!(skipped.is_empty());
+    }
+
+    #[test]
+    fn values_with_newlines_survive_unchanged() {
+        let pem = "-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----\n";
+        let (pairs, _, _) = build_env_injection(&vars(&[("CERT", pem)]), 64 * 1024, true);
+        assert_eq!(pairs[0].1, pem);
+        assert_eq!(pairs[1].1, pem);
+    }
+
+    /// Exceeding the OS environment-block limit makes `spawn_command` FAIL on
+    /// Windows, which would kill the pane. Oversize variables must be dropped
+    /// and reported, never allowed through.
+    #[test]
+    fn truncates_at_the_budget_and_reports_what_was_dropped() {
+        let big = "x".repeat(500);
+        let (pairs, keys, skipped) =
+            build_env_injection(&vars(&[("SMALL", "1"), ("BIG", &big)]), 200, true);
+        assert!(pairs.iter().any(|(k, _)| k == "SMALL"));
+        assert!(!pairs.iter().any(|(k, _)| k == "BIG"));
+        assert_eq!(keys, "SMALL");
+        assert_eq!(skipped, vec!["BIG".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod wrapper_script_tests {
+    use super::*;
+
+    /// PRECEDENCE GUARD. The re-export block must come AFTER the user's rc is
+    /// sourced, or a plain `export FOO=...` in `.zshrc` silently beats the
+    /// Workspace value. This test exists so that "tidying" the scripts cannot
+    /// quietly reverse that.
+    #[test]
+    fn zsh_reexports_after_sourcing_the_user_rc() {
+        let source_at = ZSHRC_BODY
+            .find("source \"$ABUNDIO_ORIGINAL_ZDOTDIR/.zshrc\"")
+            .expect("zsh wrapper should source the user's rc");
+        let reexport_at = ZSHRC_BODY
+            .find("ABUNDIO_ENV_KEYS")
+            .expect("zsh wrapper should re-export workspace variables");
+        assert!(
+            reexport_at > source_at,
+            "the env re-export must run AFTER the user's rc"
+        );
+    }
+
+    #[test]
+    fn bash_env_block_lands_after_the_user_rc() {
+        let bashrc = written_bashrc();
+        let source_at = bashrc
+            .rfind("builtin source ~/.bashrc")
+            .expect("bash wrapper should source ~/.bashrc");
+        let reexport_at = bashrc
+            .find("ABUNDIO_ENV_KEYS")
+            .expect("bash wrapper should re-export workspace variables");
+        assert!(
+            reexport_at > source_at,
+            "the env re-export must run AFTER ~/.bashrc"
+        );
+    }
+
+    #[test]
+    fn powershell_env_block_lands_after_the_user_profile() {
+        let block_at = PS1_ENV_BLOCK
+            .find("ABUNDIO_ENV_KEYS")
+            .expect("ps1 block should re-export workspace variables");
+        assert!(block_at > 0);
+        // The placeholder sits immediately after `. $PROFILE` in the template.
+        assert!(PS1_ENV_BLOCK.contains("SetEnvironmentVariable"));
+    }
+
+    /// Values are arbitrary user data — certificates, tokens, anything with
+    /// quotes or newlines. `eval` in these scripts would turn a stored value
+    /// into a code-execution vector.
+    #[test]
+    fn wrapper_scripts_never_use_eval() {
+        for (name, body) in [
+            ("zshrc", ZSHRC_BODY),
+            ("bashrc-env", BASHRC_ENV_BLOCK),
+            ("ps1-env", PS1_ENV_BLOCK),
+            ("abundio-env.sh", ABUNDIO_ENV_SH),
+        ] {
+            assert!(!body.contains("eval "), "{name} must not use eval");
+        }
+    }
+
+    #[test]
+    fn wrappers_put_the_integration_dir_on_path() {
+        assert!(ZSHRC_BODY.contains("ABUNDIO_INTEGRATION_DIR"));
+        assert!(BASHRC_ENV_BLOCK.contains("ABUNDIO_INTEGRATION_DIR"));
+        assert!(PS1_ENV_BLOCK.contains("ABUNDIO_INTEGRATION_DIR"));
+    }
+
+    /// Scrollback is persisted to disk, so an interactive dump would write
+    /// every secret into a log file.
+    #[test]
+    fn helper_refuses_to_print_to_a_tty() {
+        assert!(ABUNDIO_ENV_SH.contains("[ -t 1 ]"));
+        assert!(ABUNDIO_ENV_SH.contains("refusing to print secrets"));
+        assert!(ABUNDIO_ENV_PS1.contains("IsOutputRedirected"));
+    }
+
+    /// `run` is the recommended path precisely because it avoids the two
+    /// exposures `print` cannot: a temp file on disk and values in `ps` output.
+    #[test]
+    fn helper_run_execs_without_a_temp_file_or_ps_exposure() {
+        assert!(ABUNDIO_ENV_SH.contains("/env/raw"));
+        assert!(ABUNDIO_ENV_SH.contains("read -r -d ''"));
+        assert!(ABUNDIO_ENV_SH.contains("exec \"$@\""));
+        // `env KEY=VALUE cmd` would put every value into the process table.
+        assert!(
+            !ABUNDIO_ENV_SH.contains("env \""),
+            "must not pass values as argv"
+        );
+        assert!(ABUNDIO_ENV_PS1.contains("/env/raw"));
+        assert!(!ABUNDIO_ENV_PS1.contains("Invoke-Expression"));
+    }
+
+    /// Docker Compose silently ignores a process-substitution `--env-file`
+    /// (verified against Compose v5.1.3: no error, blank values). The helper
+    /// must not suggest it — a silently-empty environment is far worse than a
+    /// missing feature.
+    #[test]
+    fn helper_does_not_recommend_env_file_process_substitution() {
+        assert!(
+            !ABUNDIO_ENV_SH.contains("--env-file <("),
+            "compose cannot read a process substitution"
+        );
+        assert!(ABUNDIO_ENV_SH.contains("abundio-env run production -- docker compose up"));
+    }
+
+    /// A process substitution's exit status is invisible to `set -e`, so
+    /// without an explicit check a failed fetch execs the command with NO
+    /// variables — the exact silent-blank-values failure this helper replaced
+    /// `--env-file` to avoid.
+    #[test]
+    fn helper_run_aborts_when_the_fetch_fails() {
+        assert!(ABUNDIO_ENV_SH.contains("__abundio_rc"));
+        // The exact message, so the ordering assertion below pins a unique
+        // substring rather than the first of several near-matches.
+        const ABORT: &str = "refusing to run '$1' without the bundle applied";
+        assert!(ABUNDIO_ENV_SH.contains(ABORT));
+        // The abort must come BEFORE the exec.
+        let check = ABUNDIO_ENV_SH.find(ABORT).unwrap();
+        let exec = ABUNDIO_ENV_SH.find("exec \"$@\"").unwrap();
+        assert!(check < exec, "the status check must precede exec");
+
+        assert!(ABUNDIO_ENV_PS1.contains("without the bundle applied"));
+        assert!(ABUNDIO_ENV_PS1.contains("} catch {"));
+    }
+
+    /// A mistyped bundle name is the most likely way to hit a failed fetch, and
+    /// it used to surface as curl's own `(22) The requested URL returned error:
+    /// 404` — which says nothing about bundles. Every subcommand must go through
+    /// the explainer instead.
+    #[test]
+    fn helper_explains_an_unknown_bundle_instead_of_leaking_curl() {
+        assert!(ABUNDIO_ENV_SH.contains("no bundle named"));
+        assert!(ABUNDIO_ENV_SH.contains("Available bundles:"));
+        assert!(ABUNDIO_ENV_SH.contains("credential store"));
+
+        // Every route's failure reaches the explainer. Counting call sites
+        // instead would break the moment a fourth route is added, without
+        // saying why.
+        for route in ["/env/list", "/env/raw", "/env/print"] {
+            let at = ABUNDIO_ENV_SH
+                .find(&format!("__abundio_fetch {route}"))
+                .unwrap_or_else(|| panic!("{route} must be fetched"));
+            assert!(
+                ABUNDIO_ENV_SH[at..].contains("__abundio_explain"),
+                "{route}'s failure must reach the explainer"
+            );
+        }
+        assert_eq!(ABUNDIO_ENV_PS1.matches("Write-AbundioFailure $_").count(), 3);
+    }
+
+    /// The two scripts must classify the same statuses, or a user's diagnosis
+    /// depends on their OS — which is how the PowerShell twin first shipped
+    /// without the 401/403 arm that bash had.
+    #[test]
+    fn both_helpers_classify_the_same_statuses() {
+        for code in ["404", "503", "401", "403"] {
+            assert!(
+                ABUNDIO_ENV_SH.contains(code),
+                "sh explainer is missing a {code} arm"
+            );
+            assert!(
+                ABUNDIO_ENV_PS1.contains(code),
+                "ps1 explainer is missing a {code} arm"
+            );
+        }
+        // A 404 means "unknown pane" as well as "unknown bundle"; both scripts
+        // must be able to say so rather than blaming an empty bundle name.
+        for (name, body) in [("sh", ABUNDIO_ENV_SH), ("ps1", ABUNDIO_ENV_PS1)] {
+            assert!(
+                body.contains("no longer recognises this terminal"),
+                "{name} must distinguish an unknown pane from an unknown bundle"
+            );
+            assert!(
+                body.contains("not authorised to read bundles"),
+                "{name} must name an auth failure"
+            );
+        }
+    }
+
+    /// Zero bundles is a successful answer to "what bundles exist" — a caller
+    /// doing `bundles=$(abundio-env list)` under `set -e` must not abort, and
+    /// the two scripts must agree on it.
+    #[test]
+    fn empty_bundle_list_exits_zero_on_both_platforms() {
+        let sh_at = ABUNDIO_ENV_SH
+            .find("abundio-env: this workspace has no environment bundles yet")
+            .expect("sh must report an empty list");
+        assert!(
+            ABUNDIO_ENV_SH[sh_at..].starts_with(
+                "abundio-env: this workspace has no environment bundles yet.\" >&2\n      exit 0"
+            ),
+            "an empty list must exit 0"
+        );
+        let ps_at = ABUNDIO_ENV_PS1
+            .find("abundio-env: this workspace has no environment bundles yet")
+            .expect("ps1 must report an empty list");
+        assert!(
+            ABUNDIO_ENV_PS1[ps_at..].contains("exit 0"),
+            "an empty list must exit 0 on Windows too"
+        );
+    }
+
+    /// `/env/raw` is the one route that decrypts. Probing it a second time
+    /// purely to read a status code would re-enter the credential store and,
+    /// on a locked keychain, prompt twice for a single user command.
+    #[test]
+    fn helper_reads_the_status_from_the_request_it_already_made() {
+        assert!(ABUNDIO_ENV_SH.contains("%{stderr}%{http_code}"));
+        assert!(ABUNDIO_ENV_SH.contains("__abundio_codefile"));
+        // The explainer takes a bundle name, not a route — it cannot re-request.
+        assert!(!ABUNDIO_ENV_SH.contains("__abundio_explain /env/"));
+        // `exec` skips the EXIT trap, so the temp file is removed explicitly.
+        let rm = ABUNDIO_ENV_SH.find("rm -f \"$__abundio_codefile\"\n    exec");
+        assert!(rm.is_some(), "the code file must be cleaned up before exec");
+    }
+
+    /// `Write-Host` goes to the information stream, so a diagnostic written
+    /// with it survives `2>$null` — unlike its bash counterpart on `>&2`.
+    #[test]
+    fn powershell_diagnostics_go_to_stderr() {
+        // The prose above the function may name it; no call site may use it.
+        assert!(!ABUNDIO_ENV_PS1.contains("Write-Host \""));
+        assert!(!ABUNDIO_ENV_PS1.contains("Write-Host $"));
+        assert!(ABUNDIO_ENV_PS1.contains("[Console]::Error.WriteLine"));
+    }
+
+    /// `$args2[1..($args2.Count - 1)]` is a DESCENDING range for a single-token
+    /// command, which passes the command name to itself.
+    #[test]
+    fn powershell_run_handles_a_command_with_no_arguments() {
+        assert!(ABUNDIO_ENV_PS1.contains("Select-Object -Skip 1"));
+        assert!(!ABUNDIO_ENV_PS1.contains("$args2.Count - 1"));
+    }
+
+    #[test]
+    fn helper_requires_the_pane_token() {
+        assert!(ABUNDIO_ENV_SH.contains("ABUNDIO_HOOK_TOKEN"));
+        assert!(ABUNDIO_ENV_SH.contains("not running inside an Abundio terminal"));
+        assert!(ABUNDIO_ENV_PS1.contains("ABUNDIO_HOOK_TOKEN"));
+    }
+
+    /// The placeholder must actually be substituted — a typo would ship a
+    /// wrapper containing the literal `__ABUNDIO_ENV_BLOCK__`.
+    #[test]
+    fn placeholders_are_substituted() {
+        let bashrc = written_bashrc();
+        assert!(!bashrc.contains("__ABUNDIO_ENV_BLOCK__"));
+        assert!(bashrc.contains("printf -v"));
+    }
+
+    /// Mirrors the substitution `write_shell_integration_files` performs,
+    /// without touching the real data directory.
+    ///
+    /// `tempfile::tempdir` rather than a fixed name under `env::temp_dir`: that
+    /// directory is shared between users, so a predictable name is the classic
+    /// insecure-temp-file pattern (flagged by
+    /// `rust.lang.security.temp-dir.temp-dir`). Test-only, but the correct
+    /// spelling costs nothing and `tempfile` is already a dependency.
+    fn written_bashrc() -> String {
+        let dir = tempfile::tempdir().expect("temp dir");
+        write_shell_integration_files_into(dir.path());
+        fs::read_to_string(dir.path().join(".bashrc"))
+            .expect("bashrc should have been written")
+    }
+}
+
+#[cfg(test)]
+mod spawn_cwd_tests {
+    use super::*;
+
+    fn dirs<'a>(present: &'a [&'a str]) -> impl Fn(&str) -> bool + 'a {
+        move |p| present.contains(&p)
+    }
+
+    #[test]
+    fn a_missing_workspace_folder_refuses_the_spawn() {
+        let err = resolve_spawn_cwd("/repo/src", Some("/repo"), dirs(&[])).unwrap_err();
+        assert!(matches!(err, AbundioError::FolderMissing(ref p) if p == "/repo"));
+    }
+
+    #[test]
+    fn a_missing_pane_folder_falls_back_to_the_workspace_folder() {
+        let cwd = resolve_spawn_cwd("/repo/build", Some("/repo"), dirs(&["/repo"])).unwrap();
+        assert_eq!(cwd, "/repo");
+        let cwd = resolve_spawn_cwd("", Some("/repo"), dirs(&["/repo"])).unwrap();
+        assert_eq!(cwd, "/repo");
+    }
+
+    #[test]
+    fn an_existing_pane_folder_is_kept() {
+        let cwd = resolve_spawn_cwd("/repo/src", Some("/repo"), dirs(&["/repo", "/repo/src"])).unwrap();
+        assert_eq!(cwd, "/repo/src");
+    }
+
+    #[test]
+    fn no_workspace_keeps_the_old_behaviour() {
+        assert_eq!(resolve_spawn_cwd("/gone", None, dirs(&[])).unwrap(), "/gone");
+    }
+}
+
+
+#[cfg(all(test, unix))]
+mod abundio_cli_tests {
+    //! Runs the real `abundio` script with a fake `curl` first on PATH. The
+    //! fake records its arguments and stdin, and answers from a script of
+    //! replies, one line per call: `<curl exit code> <http status> <body>`.
+    use super::*;
+    use std::process::Command;
+
+    struct Fixture {
+        dir: tempfile::TempDir,
+    }
+
+    const FAKE_CURL: &str = r#"#!/usr/bin/env bash
+dir="$(dirname "$0")"
+n=$(( $(cat "$dir/calls" 2>/dev/null || echo 0) + 1 ))
+echo "$n" > "$dir/calls"
+printf '%s\n' "$@" > "$dir/argv.$n"
+# The arguments as curl reads them: `@file` header values expanded.
+prev=""
+for a in "$@"; do
+  if [ "$prev" = -H ] && [ "${a#@}" != "$a" ] && [ -r "${a#@}" ]; then
+    cat "${a#@}"
+  else
+    printf '%s\n' "$a"
+  fi
+  prev=$a
+done > "$dir/args.$n"
+cat > "$dir/stdin.$n"
+line=$(sed -n "${n}p" "$dir/replies")
+rc=${line%% *}; rest=${line#* }
+status=${rest%% *}; body=${rest#* }
+# A call that hangs, for interrupting.
+[ "$rc" = sleep ] && { sleep 30; exit 0; }
+# Like `curl -w '\n%{http_code}'`: the body, then the status on its own line.
+[ "$rc" = 0 ] && printf '%b\n%s' "$body" "$status"
+exit "$rc"
+"#;
+
+    impl Fixture {
+        fn new(replies: &[&str]) -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            write_abundio_cli(dir.path());
+            let curl = dir.path().join("curl");
+            fs::write(&curl, FAKE_CURL).unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&curl, fs::Permissions::from_mode(0o755)).unwrap();
+            fs::write(dir.path().join("replies"), replies.join("\n") + "\n").unwrap();
+            Fixture { dir }
+        }
+
+        fn run(&self, args: &[&str]) -> std::process::Output {
+            Command::new("bash")
+                .arg(self.dir.path().join("abundio"))
+                .args(args)
+                .env("PATH", format!("{}:/usr/bin:/bin", self.dir.path().display()))
+                .env("ABUNDIO_AGENT_TOKEN", "tok")
+                .env("ABUNDIO_HOOK_PORT", "4242")
+                .output()
+                .unwrap()
+        }
+
+        fn calls(&self) -> usize {
+            fs::read_to_string(self.dir.path().join("calls"))
+                .map(|s| s.trim().parse().unwrap())
+                .unwrap_or(0)
+        }
+
+        fn stdin(&self, n: usize) -> Vec<u8> {
+            fs::read(self.dir.path().join(format!("stdin.{n}"))).unwrap()
+        }
+
+        fn args(&self, n: usize) -> String {
+            fs::read_to_string(self.dir.path().join(format!("args.{n}"))).unwrap()
+        }
+
+        /// curl's raw command line, as `ps` would show it.
+        fn argv(&self, n: usize) -> String {
+            fs::read_to_string(self.dir.path().join(format!("argv.{n}"))).unwrap()
+        }
+    }
+
+    /// The arguments in a sent body, after the working folder the CLI puts
+    /// first (`\u{1}cwd:<folder>\0`), which must be there.
+    fn sent_args(body: &[u8]) -> Vec<u8> {
+        assert!(body.starts_with(b"\x01cwd:"), "no folder first: {body:?}");
+        let end = body.iter().position(|b| *b == 0).expect("the folder ends");
+        body[end + 1..].to_vec()
+    }
+
+    fn stdout(o: &std::process::Output) -> String {
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    }
+
+    fn stderr(o: &std::process::Output) -> String {
+        String::from_utf8_lossy(&o.stderr).into_owned()
+    }
+
+    #[test]
+    fn sends_its_arguments_nul_separated_with_the_pane_token() {
+        let f = Fixture::new(&[r#"0 200 {"panes":[]}"#]);
+        let out = f.run(&["agent", "prompt", "p2", "two words\nand a line", ""]);
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        assert_eq!(stdout(&out), "{\"panes\":[]}\n");
+        assert_eq!(sent_args(&f.stdin(1)), b"agent\0prompt\0p2\0two words\nand a line\0\0");
+        let args = f.args(1);
+        assert!(args.contains("X-Abundio-Agent-Token: tok"));
+        // The token reaches curl through a pipe, never on its command line.
+        assert!(!f.argv(1).contains("tok\n") && !f.argv(1).contains("Token: tok"));
+        assert!(args.contains("http://127.0.0.1:4242/control"));
+        assert!(!args.contains("X-Abundio-Retry"));
+    }
+
+    #[test]
+    fn no_arguments_send_only_the_folder() {
+        let f = Fixture::new(&["0 200 help text\\n"]);
+        let out = f.run(&[]);
+        assert_eq!(sent_args(&f.stdin(1)), b"");
+        assert_eq!(out.status.code(), Some(0));
+        assert_eq!(stdout(&out), "help text\n");
+    }
+
+    #[test]
+    fn a_usage_error_exits_2_on_stderr() {
+        let f = Fixture::new(&[r#"0 400 {"error":{"code":"usage"}}"#]);
+        let out = f.run(&["pane", "frob"]);
+        assert_eq!(out.status.code(), Some(2));
+        assert!(stderr(&out).contains("\"usage\""));
+        assert!(out.stdout.is_empty());
+    }
+
+    #[test]
+    fn other_errors_exit_1_on_stderr() {
+        let f = Fixture::new(&[r#"0 409 {"error":{"code":"busy"}}"#]);
+        let out = f.run(&["agent", "prompt", "p1", "go"]);
+        assert_eq!(out.status.code(), Some(1));
+        assert!(stderr(&out).contains("\"busy\""));
+    }
+
+    #[test]
+    fn a_refused_connection_is_retried_as_is() {
+        let f = Fixture::new(&["7 000 ", r#"0 200 {"ok":true}"#]);
+        let out = f.run(&["pane", "list"]);
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        assert_eq!(f.calls(), 2);
+        assert!(!f.args(2).contains("X-Abundio-Retry"));
+        assert_eq!(sent_args(&f.stdin(2)), b"pane\0list\0");
+    }
+
+    #[test]
+    fn a_dropped_connection_is_retried_as_a_retry() {
+        let f = Fixture::new(&["52 000 ", r#"0 200 {"state":"ready"}"#]);
+        let out = f.run(&["agent", "prompt", "p1", "go", "--wait"]);
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        assert!(f.args(2).contains("X-Abundio-Retry: 1"));
+        // The same arguments again: Rust decides what a retry means.
+        assert_eq!(f.stdin(2), f.stdin(1));
+    }
+
+    #[test]
+    fn it_gives_up_after_four_attempts() {
+        let f = Fixture::new(&["7 000 ", "7 000 ", "7 000 ", "7 000 ", "0 200 never"]);
+        let out = f.run(&["pane", "list"]);
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(f.calls(), 4);
+        assert!(stderr(&out).contains("could not reach Abundio"));
+    }
+
+    #[test]
+    fn outside_an_abundio_pane_it_refuses_without_calling() {
+        let f = Fixture::new(&["0 200 x"]);
+        let out = Command::new("bash")
+            .arg(f.dir.path().join("abundio"))
+            .args(["pane", "list"])
+            .env("PATH", format!("{}:/usr/bin:/bin", f.dir.path().display()))
+            .env_remove("ABUNDIO_AGENT_TOKEN")
+            .env("ABUNDIO_HOOK_PORT", "4242")
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert!(stderr(&out).contains("not running inside an Abundio"));
+        assert_eq!(f.calls(), 0);
+    }
+
+    #[test]
+    fn an_interrupted_call_is_cancelled_by_its_id() {
+        let f = Fixture::new(&["sleep", "0 200 {}"]);
+        for (signal, code) in [("-INT", 130), ("-TERM", 143)] {
+            let _ = fs::remove_file(f.dir.path().join("calls"));
+            let mut child = Command::new("bash")
+                .arg(f.dir.path().join("abundio"))
+                .args(["agent", "wait", "p1"])
+                .env("PATH", format!("{}:/usr/bin:/bin", f.dir.path().display()))
+                .env("ABUNDIO_AGENT_TOKEN", "tok")
+                .env("ABUNDIO_HOOK_PORT", "4242")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            // Until the call is in flight.
+            for _ in 0..100 {
+                if f.calls() >= 1 {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            Command::new("kill").args([signal, &child.id().to_string()]).status().unwrap();
+            let status = child.wait().unwrap();
+            assert_eq!(status.code(), Some(code), "{signal}");
+            assert_eq!(f.calls(), 2, "{signal}: the call, then its cancel");
+            let id = f
+                .args(1)
+                .lines()
+                .find_map(|l| l.strip_prefix("X-Abundio-Request-Id: ").map(str::to_string))
+                .expect("the call carries an id");
+            assert!(f.args(2).contains(&format!("X-Abundio-Cancel: {id}")), "{signal}");
+            assert!(f.args(2).contains("X-Abundio-Agent-Token: tok"));
+            assert!(!f.argv(2).contains("Token: tok"), "{signal}");
+        }
+    }
+
+    #[test]
+    fn neither_client_evaluates_its_arguments() {
+        assert!(!ABUNDIO_CLI_SH.contains("eval"));
+        assert!(!ABUNDIO_CLI_PS1.contains("Invoke-Expression"));
+        assert!(ABUNDIO_CLI_PS1.contains("X-Abundio-Retry"));
+        assert!(ABUNDIO_CLI_PS1.contains("ConnectionRefused"));
+        assert!(ABUNDIO_CLI_PS1.contains("X-Abundio-Cancel"));
+        assert!(ABUNDIO_CLI_PS1.contains("X-Abundio-Request-Id"));
+    }
+
+    #[test]
+    fn written_executable_next_to_abundio_env() {
+        let dir = tempfile::tempdir().unwrap();
+        write_abundio_cli(dir.path());
+        assert!(dir.path().join("abundio.ps1").is_file());
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(dir.path().join("abundio")).unwrap().permissions().mode();
+        assert_eq!(mode & 0o111, 0o111);
+    }
+}

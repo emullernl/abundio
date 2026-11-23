@@ -6,7 +6,6 @@ import {
 	describePane,
 	type PaneLiveFacts,
 } from "../describe";
-import { type BufferLike, readBuffer, suggestionStart } from "../readBuffer";
 import { resolveTarget, workspacePanes } from "../resolveTarget";
 import { ControlError } from "../types";
 
@@ -196,118 +195,5 @@ describe("controlStatus", () => {
 		expect(controlStatus(facts({ state: "ready", exited: true }))).toBe(
 			"exited",
 		);
-	});
-});
-
-function buffer(
-	rows: { text: string; wrapped?: boolean }[],
-	viewportY = 0,
-): BufferLike {
-	return {
-		length: rows.length,
-		viewportY,
-		getLine: (y) => {
-			const r = rows[y];
-			if (!r) return undefined;
-			return {
-				isWrapped: r.wrapped === true,
-				translateToString: (trim) =>
-					trim ? r.text.replace(/\s+$/, "") : r.text,
-			};
-		},
-	};
-}
-
-describe("readBuffer", () => {
-	const all = { lines: null, visible: false };
-
-	it("joins wrapped rows, keeping spaces inside the joined line", () => {
-		const b = buffer([
-			{ text: "hello wor" },
-			{ text: "ld and   ", wrapped: true },
-			{ text: "more", wrapped: true },
-			{ text: "next   " },
-		]);
-		expect(readBuffer(b, 24, all)).toEqual(["hello world and   more", "next"]);
-	});
-
-	it("drops blank rows at the end", () => {
-		const b = buffer([{ text: "$ ls" }, { text: "   " }, { text: "" }]);
-		expect(readBuffer(b, 24, all)).toEqual(["$ ls"]);
-	});
-
-	it("keeps only the last N joined lines", () => {
-		const b = buffer([{ text: "1" }, { text: "2" }, { text: "3" }]);
-		expect(readBuffer(b, 24, { lines: 2, visible: false })).toEqual(["2", "3"]);
-		expect(readBuffer(b, 24, { lines: 10, visible: false })).toEqual([
-			"1",
-			"2",
-			"3",
-		]);
-	});
-
-	it("reads only the viewport with visible", () => {
-		const b = buffer(
-			[{ text: "old" }, { text: "a" }, { text: "b" }, { text: "c" }],
-			1,
-		);
-		expect(readBuffer(b, 2, { lines: null, visible: true })).toEqual([
-			"a",
-			"b",
-		]);
-	});
-
-	it("starts a new line when the viewport begins mid-wrap", () => {
-		const b = buffer([{ text: "aaa" }, { text: "bbb", wrapped: true }], 1);
-		expect(readBuffer(b, 1, { lines: null, visible: true })).toEqual(["bbb"]);
-	});
-
-	/** A row of cells: `dim` marks the dim columns [from, to). */
-	const row = (text: string, dim: [number, number] | null = null) => ({
-		isWrapped: false,
-		length: text.length,
-		translateToString: (trim?: boolean, from = 0, to = text.length) => {
-			const t = text.slice(from, to);
-			return trim ? t.replace(/\s+$/, "") : t;
-		},
-		getCell: (x: number) => ({
-			getChars: () => text[x] ?? "",
-			isDim: () => (dim && x >= dim[0] && x < dim[1] ? 1 : 0),
-		}),
-	});
-
-	it("leaves out a suggestion: dim text after the cursor on its row", () => {
-		const rows = [
-			row("● Done."),
-			row("> add the confirmation dialog    ", [2, 33]),
-			row("  ? for shortcuts", [2, 17]),
-		];
-		const b: BufferLike = {
-			length: rows.length,
-			viewportY: 0,
-			baseY: 0,
-			cursorX: 2,
-			cursorY: 1,
-			getLine: (y) => rows[y],
-		};
-		// The hint under the box is dim too, but not where the cursor is.
-		expect(readBuffer(b, 24, all)).toEqual([
-			"● Done.",
-			">",
-			"  ? for shortcuts",
-		]);
-	});
-
-	it("keeps what was typed, and a row the cursor is not on", () => {
-		expect(suggestionStart(row("> fix the build"), 2)).toBeNull();
-		// Typed text, then a dim completion: not all dim, so kept whole.
-		expect(suggestionStart(row("> fix the build", [9, 15]), 2)).toBeNull();
-		expect(suggestionStart(row("> fix the build", [2, 15]), 2)).toBe(2);
-		// Only blanks after the cursor: nothing to leave out.
-		expect(suggestionStart(row(">    "), 2)).toBeNull();
-		// No cell access (an older buffer): never cut.
-		expect(
-			suggestionStart({ isWrapped: false, translateToString: () => "" }, 0),
-		).toBeNull();
 	});
 });

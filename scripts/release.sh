@@ -50,18 +50,22 @@ node -e "
   fs.writeFileSync(p, JSON.stringify(conf, null, '\t') + '\n');
 "
 
-# 3. src-tauri/Cargo.toml — replace version only inside the [package] table
-CARGO_TOML="$ROOT/src-tauri/Cargo.toml"
-awk -v ver="$VERSION" '
-  /^\[/ { in_pkg = ($0 == "[package]") }
-  in_pkg && /^version = / { sub(/"[^"]*"/, "\"" ver "\"") }
-  { print }
-' "$CARGO_TOML" > "$CARGO_TOML.tmp" && mv "$CARGO_TOML.tmp" "$CARGO_TOML"
+# 3. The Cargo.toml of the app and of its crates (core, server): replace the
+#    version only inside each [package] table. The server checks that it is the
+#    app's own build (`host_protocol::VERSION`), so all three must agree.
+CARGO_TOMLS="$ROOT/src-tauri/Cargo.toml $ROOT/src-tauri/crates/abundio-core/Cargo.toml $ROOT/src-tauri/crates/abundio-server/Cargo.toml"
+for CARGO_TOML in $CARGO_TOMLS; do
+  awk -v ver="$VERSION" '
+    /^\[/ { in_pkg = ($0 == "[package]") }
+    in_pkg && /^version = / { sub(/"[^"]*"/, "\"" ver "\"") }
+    { print }
+  ' "$CARGO_TOML" > "$CARGO_TOML.tmp" && mv "$CARGO_TOML.tmp" "$CARGO_TOML"
 
-if ! grep -q "^version = \"$VERSION\"$" "$CARGO_TOML"; then
-  echo "Error: failed to update version in $CARGO_TOML"
-  exit 1
-fi
+  if ! grep -q "^version = \"$VERSION\"$" "$CARGO_TOML"; then
+    echo "Error: failed to update version in $CARGO_TOML"
+    exit 1
+  fi
+done
 
 # Update Cargo.lock without re-resolving transitive dependencies
 (cd "$ROOT/src-tauri" && cargo check --quiet) || { echo "Error: cargo check failed — fix build errors before releasing."; exit 1; }
@@ -69,7 +73,7 @@ fi
 echo "Bumped version to $VERSION"
 echo ""
 
-git add "$ROOT/package.json" "$ROOT/src-tauri/tauri.conf.json" "$ROOT/src-tauri/Cargo.toml" "$ROOT/src-tauri/Cargo.lock"
+git add "$ROOT/package.json" "$ROOT/src-tauri/tauri.conf.json" $CARGO_TOMLS "$ROOT/src-tauri/Cargo.lock"
 git commit -m "release: v$VERSION"
 git tag -a "v$VERSION" -m "Release v$VERSION"
 

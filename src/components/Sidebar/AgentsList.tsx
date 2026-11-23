@@ -3,6 +3,7 @@ import { useAgentsListGroups } from "../../hooks/useAgentPanes";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { HostChip } from "../HostChip";
 import { AgentRow } from "./AgentRow";
 
 const HEADER_HEIGHT = 30;
@@ -120,11 +121,13 @@ export function AgentsList() {
 								// A grouped Workspace sits on a darker card, so its Agents read
 								// as one block. Black at partial opacity darkens whatever the
 								// sidebar is in every theme (--bg-primary is lighter than the
-								// sidebar in many themes), and a row's hover still shows on it.
+								// sidebar in many themes), and a row's hover still shows on it;
+								// how much black follows the theme (`sunkenCardBg`).
 								style={
 									grouped
 										? {
-												background: "rgba(0, 0, 0, 0.25)",
+												background:
+													"var(--sunken-card-bg, rgba(0, 0, 0, 0.25))",
 												borderRadius: 6,
 												padding: 2,
 											}
@@ -160,7 +163,7 @@ function GroupLabel({ workspaceId }: { workspaceId: string }) {
 	if (!name) return null;
 	return (
 		<div
-			className="truncate select-none"
+			className="flex items-center gap-1.5 min-w-0 select-none"
 			data-testid="agents-group-label"
 			style={{
 				fontSize: 10.5,
@@ -170,7 +173,8 @@ function GroupLabel({ workspaceId }: { workspaceId: string }) {
 				padding: "3px 10px 1px",
 			}}
 		>
-			{name}
+			<span className="truncate">{name}</span>
+			<HostChip workspaceId={workspaceId} />
 		</div>
 	);
 }

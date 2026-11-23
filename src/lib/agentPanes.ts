@@ -3,6 +3,7 @@
 // stops. One input builder serves the React hook (`useAgentPanes`) and the
 // imperative path, so they always agree on which Agents exist.
 
+import { useJoinedStore } from "../stores/joinedStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
@@ -20,19 +21,27 @@ import { buildWorkspaceRows, flattenRowsToIds } from "./worktreeGrouping";
 export interface AgentPanesSource
 	extends Omit<FleetTilesInput, "sidebarOrder"> {
 	worktreeFacts: Parameters<typeof buildWorkspaceRows>[1];
+	/** The Joined profiles' Hosts in sidebar order. */
+	hostOrder?: readonly string[];
 }
 
 /** The agent-mode panes in **derived order**, from plain store values. */
 export function agentPanesFrom({
 	worktreeFacts,
+	hostOrder,
 	...rest
 }: AgentPanesSource): FleetTile[] {
 	return fleetTiles({
 		...rest,
 		sidebarOrder: flattenRowsToIds(
-			buildWorkspaceRows(rest.workspaces, worktreeFacts),
+			buildWorkspaceRows(rest.workspaces, worktreeFacts, hostOrder),
 		),
 	});
+}
+
+/** The Joined profiles' Hosts in the sidebar's order. */
+export function joinedHostOrder(): string[] {
+	return useJoinedStore.getState().entries.map((e) => e.hostId);
 }
 
 /** The tiles in **Handle order**: the Agents list and the Agent cycle. */
@@ -91,6 +100,7 @@ export function agentsInListOrderNow(): FleetTile[] {
 		openedWorkspaceIds: act.openedWorkspaceIds,
 		activities: act.activities,
 		panePtyMap: act.panePtyMap,
+		hostOrder: joinedHostOrder(),
 	});
 	return inListOrder(
 		tiles,

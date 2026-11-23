@@ -1,10 +1,15 @@
+import { useSettingsHostStore } from "../../stores/settingsHostStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { ScrollbackControl } from "./NumberSteppers";
+import { HostTerminalSettings, PerHostSection } from "./PerHostSection";
 import { SectionLabel, ToggleRow } from "./primitives";
 import { ShellPicker } from "./ShellPicker";
 
 /** Everything that configures a terminal pane and its PTY. */
 export function TerminalSection() {
+	// Scrollback and the default shell are Host settings (ADR-0064): with a
+	// Host picked they are its own; the rest here is this computer's.
+	const hostId = useSettingsHostStore((s) => s.hostId);
 	const gpuAccelerationEnabled = useSettingsStore(
 		(s) => s.gpuAccelerationEnabled,
 	);
@@ -26,6 +31,14 @@ export function TerminalSection() {
 		(s) => s.toggleDebugActivityMeter,
 	);
 
+	// A Host picked: only its part, scrollback and default shell (ADR-0064).
+	if (hostId) {
+		return (
+			<div className="flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
+				<PerHostSection local={null} host={<HostTerminalSettings />} />
+			</div>
+		);
+	}
 	return (
 		<div className="flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
 			<div className="flex-shrink-0">

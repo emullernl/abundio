@@ -1,7 +1,7 @@
-import { open } from "@tauri-apps/plugin-shell";
 import { AnimatePresence, motion } from "framer-motion";
 import { Download, RefreshCw, X } from "lucide-react";
 import { useState } from "react";
+import { openExternal } from "../lib/desktop";
 import { releaseNotesUrl, useUpdateStore } from "../stores/updateStore";
 import { ConfirmDialog } from "./ConfirmDialog";
 
@@ -111,7 +111,9 @@ export function UpdatePrompt() {
 									<button
 										type="button"
 										onClick={() =>
-											open(releaseNotesUrl(info.version)).catch(() => {})
+											openExternal(releaseNotesUrl(info.version)).catch(
+												() => {},
+											)
 										}
 										className="text-left transition-colors"
 										style={{

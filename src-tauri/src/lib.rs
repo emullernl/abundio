@@ -1,50 +1,81 @@
 pub mod agent_control;
-pub mod agent_names;
-pub mod agent_skills;
-pub mod agent_hooks;
+pub mod hosts;
+pub mod host_setup_commands;
+mod joined_commands;
+pub mod server_binary;
+pub mod remote_windows;
+pub use abundio_core::agent_names;
+pub use abundio_core::agent_skills;
+pub mod host_commands;
+pub use abundio_core::agent_hooks;
 pub mod app_badge;
-pub mod app_paths;
-pub mod agent_registry;
+pub use abundio_core::app_paths;
+pub use abundio_core::askpass;
+pub use abundio_core::agent_registry;
 pub mod app_metrics;
 pub mod clipboard_image;
 pub mod commands;
-pub mod config;
+pub use abundio_core::config;
 pub mod db_startup;
 pub mod dev_environments;
-pub mod env_crypto;
-pub mod env_vars;
-pub mod error;
-pub mod events;
-pub mod file_explorer;
-pub mod file_watcher;
+pub use abundio_core::env_crypto;
+pub use abundio_core::env_vars;
+pub use abundio_core::error;
+pub use abundio_core::change_hub;
+pub use abundio_core::event_sink;
+pub use abundio_core::screen;
+pub use abundio_core::status_machine;
+pub use abundio_core::layout_ops;
+pub use abundio_core::layout_store;
+pub use abundio_core::pane_facts;
+pub use abundio_core::control_host;
+pub use abundio_core::control_local;
+pub use abundio_core::control_protocol;
+pub use abundio_core::git_core;
+pub use abundio_core::db_open;
+pub use abundio_core::env_vars_commands;
+pub mod tauri_sink;
+pub use abundio_core::status_store;
+pub use abundio_core::title_status;
+pub use abundio_core::events;
+pub use abundio_core::file_explorer;
+pub use abundio_core::file_watcher;
 pub mod file_windows;
-pub mod gh_commands;
-pub mod git_commands;
-pub mod git_libgit2;
-pub mod git_scheduler;
-pub mod hook_server;
-pub mod migrations;
-pub mod orchestrator;
-pub mod owner_map;
+pub use abundio_core::gh_commands;
+pub use abundio_core::git_commands;
+pub use abundio_core::git_libgit2;
+pub use abundio_core::git_scheduler;
+pub use abundio_core::hook_apply;
+pub use abundio_core::host_api;
+pub use abundio_core::host_router;
+pub use abundio_core::hook_route;
+pub use abundio_core::hook_server;
+pub use abundio_core::migrations;
+pub use abundio_core::orchestrator;
+pub use abundio_core::owner_map;
 pub mod pr_poller;
-pub mod process_monitor;
-pub mod profile_store;
-pub mod prompt_actions;
+pub use abundio_core::process_monitor;
+pub use abundio_core::profile_store;
+pub use abundio_core::prompt_actions;
 pub mod prompt_attachments;
-pub mod pty_manager;
-pub mod search;
+pub use abundio_core::joined_profiles;
+pub use abundio_core::pty_manager;
+pub use abundio_core::search;
 pub mod updater;
 pub mod window_management;
 pub mod window_persistence;
 pub mod window_placement;
 pub mod window_frame;
+pub mod window_background;
+pub mod control_forward;
 pub mod desktop;
 pub mod window_raise;
-pub mod workspace_folders;
-pub mod workspace_store;
-pub mod worktree_commands;
-pub mod worktree_watcher;
-pub mod shell_env;
+pub use abundio_core::workspace_store;
+pub use abundio_core::workspace_folders;
+pub use abundio_core::worktree_commands;
+pub use abundio_core::worktree_watcher;
+pub use abundio_core::shell_env;
+pub use abundio_core::shell_integration;
 pub mod unsaved_edits;
 
 use tauri::menu::{AboutMetadata, CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -333,35 +364,27 @@ pub fn build_menu(
     )?;
 
     // File menu — "New Window with Profile" is first (additive), "Switch
-    // Profile" is second (in-window swap, lossy). See ADR-0007.
-    #[cfg(target_os = "macos")]
-    let file_menu = Submenu::with_items(
-        handle,
-        "File",
-        true,
-        &[
-            &new_window_with_profile_submenu,
-            &switch_profile_submenu,
-            &PredefinedMenuItem::separator(handle)?,
-            &PredefinedMenuItem::close_window(handle, None)?,
-        ],
-    )?;
-
+    // Profile" is second (in-window swap, lossy). See ADR-0007. "Open Remote
+    // Profile…" opens a Host's Profile in a Window of its own (phase 7d).
+    let open_remote_item = MenuItem::with_id(handle, "open-remote-profile", "Open Remote Profile…", true, None::<&str>)?;
+    let file_separator = PredefinedMenuItem::separator(handle)?;
+    let file_separator_2 = PredefinedMenuItem::separator(handle)?;
+    let close_item = PredefinedMenuItem::close_window(handle, None)?;
+    let mut file_items: Vec<&dyn tauri::menu::IsMenuItem<Wry>> = Vec::new();
     #[cfg(not(target_os = "macos"))]
-    let file_menu = Submenu::with_items(
-        handle,
-        "File",
-        true,
-        &[
-            &settings_item,
-            &PredefinedMenuItem::separator(handle)?,
-            &new_window_with_profile_submenu,
-            &switch_profile_submenu,
-            &PredefinedMenuItem::separator(handle)?,
-            &PredefinedMenuItem::close_window(handle, None)?,
-            &quit_item,
-        ],
-    )?;
+    file_items.extend([&settings_item as &dyn tauri::menu::IsMenuItem<Wry>, &file_separator_2]);
+    file_items.extend([
+        &new_window_with_profile_submenu as &dyn tauri::menu::IsMenuItem<Wry>,
+        &switch_profile_submenu,
+        &open_remote_item,
+        &file_separator,
+        &close_item,
+    ]);
+    #[cfg(not(target_os = "macos"))]
+    file_items.push(&quit_item);
+    #[cfg(target_os = "macos")]
+    let _ = &file_separator_2;
+    let file_menu = Submenu::with_items(handle, "File", true, &file_items)?;
 
     let edit_menu = Submenu::with_items(
         handle,
@@ -595,6 +618,17 @@ fn windows_snapshot(
 ) -> Vec<window_persistence::WindowEntry> {
     let tracker = app.try_state::<window_frame::PlacementTracker>();
     let mut entries = window_persistence::snapshot_from_state(state, tracker.as_deref());
+    // Windows on a remote Host come back on it (phase 7d).
+    if let Some(remote) = app.try_state::<remote_windows::RemoteWindows>() {
+        for (label, binding) in remote.snapshot() {
+            entries.push(window_persistence::WindowEntry {
+                placement: tracker.as_deref().and_then(|t| t.get(&label)),
+                profile_id: binding.profile_id.clone(),
+                label,
+                remote: Some(binding),
+            });
+        }
+    }
     if entries.is_empty() {
         if let Some((label, placement)) = tracker.and_then(|t| t.last_closed()) {
             entries.extend(window_persistence::placement_only_entry(&label, Some(placement)));
@@ -800,6 +834,8 @@ fn upgrade_settings_default_size() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // First: every `log::` line from here on reaches the terminal.
+    abundio_core::stderr_log::init();
     // Must happen before the window-state plugin is initialised below. Returns
     // the precomputed plan (rare case) for setup() to reuse.
     let preplan = adopt_survivor_geometry_into_main();
@@ -939,10 +975,84 @@ pub fn run() {
             // Initialize PTY manager
             let pty_mgr = PtyManager::new();
             app.manage(pty_mgr);
+            // Every PTY's status in Rust, the authority (ADR-0063). Its idle
+            // scan starts once the event sink exists, below.
+            let status_store = std::sync::Arc::new(status_store::StatusStore::new());
+            app.manage(status_store.clone());
+            app.manage(pane_facts::PaneFactsStore::new());
+            // Every Tab's layout, the authority (ADR-0063, phase 4).
+            app.manage(std::sync::Arc::new(layout_store::LayoutStore::new()));
 
-            // Initialize file watcher
-            app.manage(file_watcher::FileWatcher::new());
-            app.manage(git_scheduler::GitScheduler::new());
+            // Where core modules send events (docs/plans/remote-hosts.md).
+            let pty_channels = std::sync::Arc::new(tauri_sink::PtyChannels::default());
+            app.manage(pty_channels.clone());
+            // Remote Hosts: one connection each, shared by the Windows on them.
+            app.manage(host_router::HostRouter::new(std::sync::Arc::new(
+                host_commands::RouterWindows(app.handle().clone()),
+            )));
+            app.manage(remote_windows::RemoteWindows::default());
+            // Agent control reaches the Joined profiles' Hosts (ADR-0065).
+            abundio_core::control_host::set_forward(Box::new(control_forward::Forwarder::new(app.handle().clone())));
+            // SSH prompts answered in Abundio's dialog (phase 7d).
+            app.manage(askpass::Askpass::default());
+            if let Some(dir) = remote_windows::askpass_script().parent() {
+                if let Err(e) = askpass::write_script(dir) {
+                    log::warn!("[host] cannot write the SSH prompt helper: {e}");
+                }
+            }
+            app.manage::<event_sink::Events>(tauri_sink::TauriSink::shared(
+                app.handle(),
+                pty_channels,
+            ));
+            // A PTY's exit reaches its status in Rust first (phase 6d): the
+            // owning Window takes it from `status-updates`.
+            {
+                let status = status_store.clone();
+                let events = app.state::<event_sink::Events>().inner().clone();
+                app.state::<PtyManager>().on_exit(std::sync::Arc::new(move |pty, code| {
+                    use event_sink::EventsExt;
+                    let config = status_machine::StatusConfig::default();
+                    for (watcher, update) in status.exit_update(pty, code, &config) {
+                        events.to_client(&watcher, "status-updates", vec![update]);
+                    }
+                }));
+            }
+            // Output and input: the output heuristic for an Agent with no
+            // hooks (phase 6d-5).
+            status_store::listen_activity(
+                &app.state::<PtyManager>(),
+                status_store.clone(),
+                app.state::<event_sink::Events>().inner().clone(),
+            );
+            // And the shell's reports: a command's Working and Error, a typed
+            // Agent entering and leaving agent mode (phase 6d-4).
+            {
+                let agents = std::sync::Arc::new(shell_integration::AgentCommands::default());
+                app.manage(agents.clone());
+                shell_integration::listen(
+                    &app.state::<PtyManager>(),
+                    status_store.clone(),
+                    agents,
+                    app.state::<event_sink::Events>().inner().clone(),
+                );
+            }
+            // Titles too: a Title-status Agent's status is read from the
+            // PTY's own screen (phase 6d-3).
+            title_status::listen(
+                &app.state::<PtyManager>(),
+                status_store.clone(),
+                app.state::<event_sink::Events>().inner().clone(),
+            );
+            status_store::start_ticker(
+                status_store,
+                app.state::<event_sink::Events>().inner().clone(),
+            );
+
+            // Initialize file watcher; it tells the git scheduler of changes
+            // through the hub.
+            let change_hub = std::sync::Arc::new(change_hub::ChangeHub::new());
+            app.manage(file_watcher::FileWatcher::new(change_hub.clone()));
+            app.manage(git_scheduler::GitScheduler::new(change_hub));
             // Per-repo live-sync watcher for git worktree add/remove. See ADR-0017.
             app.manage(worktree_watcher::WorktreeWatcher::new());
 
@@ -973,7 +1083,9 @@ pub fn run() {
 
             // Initialize the agent hook server (loopback HTTP receiver for
             // Agent lifecycle hooks). Non-fatal if it fails to bind.
-            match hook_server::HookServer::start(app.handle().clone()) {
+            match hook_server::HookServer::start(std::sync::Arc::new(
+                agent_control::AppHookHost(app.handle().clone()),
+            )) {
                 Ok(server) => {
                     app.manage(server);
                 }
@@ -1012,6 +1124,11 @@ pub fn run() {
                 all_profiles.iter().map(|p| p.id.as_str()).collect();
 
             let main_label = window_management::MAIN_WINDOW_LABEL;
+            // The conf-spawned main window is still hidden: give it the
+            // theme's background before it shows, as every other window gets.
+            if let Some(w) = app.get_webview_window(main_label) {
+                let _ = w.set_background_color(Some(window_background::current()));
+            }
 
             // Decide which profile the always-present main window adopts and
             // which additional windows to spawn. See plan_restoration — closing
@@ -1047,10 +1164,16 @@ pub fn run() {
 
             // Windows restored now get their desktop back, and so do the File
             // windows each of them reopens first (ADR-0051).
+            // Windows on a remote Host come back on it (phase 7d), apart
+            // from the local Profiles (a Host's Profile ids are its own).
+            let remote_entries: Vec<window_persistence::WindowEntry> = window_persistence::load()
+                .into_iter()
+                .filter(|e| e.remote.is_some())
+                .collect();
             {
                 let launch = app.state::<window_frame::LaunchRestore>();
                 launch.add(main_label);
-                for entry in &plan.additional {
+                for entry in plan.additional.iter().chain(&remote_entries) {
                     launch.add(&entry.label);
                 }
             }
@@ -1090,7 +1213,29 @@ pub fn run() {
                             );
                         }
                     }
+                    // Bound at once, connected in the background: a slow or
+                    // unreachable Host never holds up the other windows.
+                    let mut hosts_to_connect = std::collections::BTreeSet::new();
+                    for entry in remote_entries {
+                        let Some(binding) = entry.remote else { continue };
+                        hosts_to_connect.insert(binding.host_id.clone());
+                        if let Err(e) = remote_windows::open(
+                            &app_handle,
+                            binding,
+                            Some((entry.label.clone(), entry.placement.clone())),
+                        ) {
+                            eprintln!("[abundio] failed to restore a remote window: {e}");
+                        }
+                    }
                     window_frame::show_launch_windows(&app_handle);
+                    for host_id in hosts_to_connect {
+                        let app_handle = app_handle.clone();
+                        std::thread::spawn(move || {
+                            if let Err(e) = remote_windows::connect(&app_handle, &host_id, None) {
+                                log::warn!("[host] could not reconnect to {host_id} at start: {e}");
+                            }
+                        });
+                    }
             });
 
             Ok(())
@@ -1135,6 +1280,12 @@ pub fn run() {
                     return;
                 }
 
+                // A Window on a remote Host: that Host forgets it (its PTYs
+                // keep running there).
+                if app_handle.try_state::<remote_windows::RemoteWindows>().is_some() {
+                    remote_windows::on_destroyed(&app_handle, &label);
+                }
+
                 // The settings window is auxiliary — never claims a profile,
                 // not persisted in windows.json, and doesn't count toward
                 // "last window closing quits the app". Treat its destroy as
@@ -1168,7 +1319,9 @@ pub fn run() {
                 if let Some(ww) =
                     app_handle.try_state::<worktree_watcher::WorktreeWatcher>()
                 {
-                    ww.forget_window(&app_handle, &label);
+                    if let Some(events) = app_handle.try_state::<event_sink::Events>() {
+                        ww.forget_window(events.inner(), &label);
+                    }
                 }
                 // Same for this window's git schedulers and file watchers:
                 // React cleanup never runs when a webview is destroyed, so
@@ -1178,6 +1331,19 @@ pub fn run() {
                 }
                 if let Some(fw) = app_handle.try_state::<file_watcher::FileWatcher>() {
                     fw.release_window(&label);
+                }
+                if let Some(ch) =
+                    app_handle.try_state::<std::sync::Arc<tauri_sink::PtyChannels>>()
+                {
+                    ch.forget(&label);
+                }
+                if let Some(st) =
+                    app_handle.try_state::<std::sync::Arc<status_store::StatusStore>>()
+                {
+                    st.forget_client(&label);
+                }
+                if let Some(pm) = app_handle.try_state::<PtyManager>() {
+                    pm.sizes.forget_client(&label);
                 }
                 // And its PTYs. Snapshots were saved before the window was
                 // destroyed, and the logs stay, so nothing is lost; a Profile
@@ -1256,6 +1422,14 @@ pub fn run() {
         })
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();
+            if id == "open-remote-profile" {
+                let _ = window_management::emit_to_one_profile_window(
+                    app,
+                    "open-remote-profile",
+                    (),
+                );
+                return;
+            }
             if id == "navigator" {
                 // One Window only: a broadcast would open it in every Window.
                 let _ = window_management::emit_to_one_profile_window(
@@ -1487,11 +1661,28 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            commands::pty_spawn,
-            commands::pty_write,
-            commands::pty_resize,
-            commands::pty_redraw,
-            commands::pty_kill,
+            host_commands::host_call,
+            host_commands::host_connect,
+            host_commands::host_bind,
+            hosts::hosts_list,
+            hosts::hosts_add,
+            hosts::hosts_remove,
+            host_setup_commands::host_check,
+            host_setup_commands::host_install,
+            joined_commands::joined_profiles_list,
+            joined_commands::joined_profile_add,
+            joined_commands::joined_profile_remove,
+            joined_commands::joined_profile_seen,
+            joined_commands::host_join,
+            joined_commands::host_attach,
+            host_setup_commands::host_start,
+            host_setup_commands::host_uninstall,
+            remote_windows::remote_profile_for_window,
+            remote_windows::host_connect_saved,
+            remote_windows::host_request,
+            remote_windows::open_remote_profile_window,
+            remote_windows::ssh_prompt_answer,
+            commands::pty_output_subscribe,
             commands::profile_list,
             commands::profile_create,
             commands::profile_update,
@@ -1507,101 +1698,18 @@ pub fn run() {
             commands::open_window_with_profile,
             commands::create_untitled_profile_in_new_window,
             commands::open_settings_window,
+            commands::gh_list_issues,
             commands::focus_window,
-            commands::workspace_create,
-            orchestrator::orchestrator_ensure,
-            workspace_folders::workspace_folder_check,
-            orchestrator::orchestrator_folder_get,
-            orchestrator::orchestrator_folder_set,
-            orchestrator::orchestrator_agent_get,
-            orchestrator::orchestrator_agent_set,
-            orchestrator::orchestrator_tabs_list,
-            orchestrator::orchestrator_tab_add,
-            orchestrator::orchestrator_tab_remove,
-            orchestrator::orchestrator_tab_select,
-            orchestrator::orchestrator_tab_set_view,
-            commands::workspace_list,
-            commands::workspace_update,
-            commands::workspace_delete,
-            commands::workspace_reorder,
-            commands::workspace_restore_set,
-            commands::workspace_missing_folders,
-            commands::workspace_set_restore_opened,
-            agent_control::agent_control_reply,
-            agent_control::agent_control_enabled,
-            agent_control::agent_control_set_enabled,
-            agent_control::agent_control_pane_numbers,
-            agent_control::agent_control_pane_for_number,
-            agent_control::agent_control_pane_closed,
-            agent_names::agent_handle_check,
-            agent_names::agent_handle_default,
-            agent_skills::agent_skill_provision,
-            agent_skills::agent_skill_provision_startup,
-            agent_skills::agent_skill_status,
-            commands::workspace_set_restore_active,
-            commands::pty_read_log,
-            commands::pty_write_snapshot,
-            commands::pty_read_snapshot,
-            commands::pty_delete_log,
-            commands::pty_cleanup_stale_logs,
-            commands::tab_create,
-            commands::tab_list,
-            commands::tab_update,
-            commands::tab_delete,
-            commands::note_get,
-            commands::note_set,
-            commands::telemetry_record_turn,
-            commands::telemetry_buckets,
-            commands::telemetry_totals,
-            commands::telemetry_list_turns,
-            file_explorer::fs_list_dir,
-            file_explorer::fs_list_files,
-            file_explorer::fs_index_workspace_files,
-            file_explorer::fs_read_file,
-            file_explorer::fs_write_file,
-            file_explorer::fs_file_exists,
-            file_explorer::fs_create_file,
-            file_explorer::fs_create_folder,
-            file_explorer::fs_rename,
-            file_explorer::fs_delete,
-            file_explorer::fs_reveal_in_folder,
-            commands::fs_watch_start,
-            commands::fs_watch_stop,
-            commands::git_scheduler_start,
-            commands::git_scheduler_stop,
-            git_commands::git_changed_files,
-            git_commands::git_fetch_bundle,
-            git_commands::git_file_diff,
-            git_commands::git_commit_files,
-            git_commands::git_commit_file_diff,
-            git_commands::git_conflict_file,
-            git_commands::git_stage_path,
-            git_commands::git_branch_info,
-            git_commands::git_list_branches,
-            git_commands::git_status_fingerprint,
-            git_commands::git_workspaces_summary,
-            worktree_commands::list_repo_worktrees,
-            worktree_commands::worktree_add,
-            worktree_commands::worktree_remove,
-            worktree_commands::worktree_dirty,
-            commands::worktree_watch_set,
+            commands::fs_reveal_in_folder,
             pr_poller::pr_poller_set_config,
             pr_poller::pr_poller_refresh,
             pr_poller::pr_poller_snapshot,
             pr_poller::pr_mark_read,
-            gh_commands::gh_list_issues,
-            git_commands::git_repo_slug,
-            git_commands::git_snapshot_worktree,
-            git_commands::git_diff_trees,
             commands::list_system_fonts,
-            commands::list_available_shells,
-            commands::default_shell,
-            search::fs_search,
-            search::fs_search_cancel,
             dev_environments::list_dev_environments,
             dev_environments::launch_dev_environment,
+            window_background::window_background_set,
             prompt_attachments::prompt_attachment_from_clipboard,
-            prompt_actions::prompt_actions_list,
             file_windows::file_window_open,
             file_windows::file_window_info,
             file_windows::file_window_set_view,
@@ -1614,32 +1722,6 @@ pub fn run() {
             file_windows::file_windows_raise,
             file_windows::file_windows_list,
             file_windows::file_window_focus,
-            prompt_actions::prompt_action_create,
-            prompt_actions::prompt_action_update,
-            prompt_actions::prompt_action_delete,
-            prompt_actions::prompt_actions_reorder,
-            env_vars::env_list,
-            env_vars::env_bundle_create,
-            env_vars::env_bundle_rename,
-            env_vars::env_bundle_set_injected,
-            env_vars::env_bundle_clear_injected,
-            env_vars::env_injected_summary,
-            env_vars::env_bundle_delete,
-            env_vars::env_vars_upsert,
-            env_vars::env_vars_upsert_many,
-            env_vars::env_export_to_path,
-            env_vars::env_vars_delete,
-            env_vars::env_vars_reveal,
-            env_vars::env_vars_reorder,
-            env_vars::env_retry_key,
-            agent_registry::list_installed_agent_commands,
-            agent_registry::agents_claim_seeding,
-            agent_registry::agents_path_is_resolved,
-            agent_registry::agents_commit_seeding,
-            commands::agent_hooks_provision,
-            commands::agent_hooks_provision_startup,
-            commands::ensure_agent_hooks,
-            commands::agent_hook_status,
             updater::updater_check,
             updater::updater_download,
             updater::updater_install_now,
@@ -1901,5 +1983,12 @@ mod menu_signature_tests {
     fn unowned_profile_has_no_owner() {
         let i = inputs(&[("a", "Work")], &[("main", "b")]);
         assert_eq!(owner_of(&i.ownership, "a"), None);
+    }
+
+    #[test]
+    fn the_app_and_its_core_are_one_build() {
+        // An Abundio server must be this build (`host_protocol::VERSION`);
+        // the release script bumps every crate.
+        assert_eq!(env!("CARGO_PKG_VERSION"), abundio_core::host_protocol::VERSION);
     }
 }

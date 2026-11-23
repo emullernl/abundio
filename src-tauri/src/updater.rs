@@ -267,7 +267,7 @@ fn parse_releases(json: &str) -> Result<ReleaseNotesPage, AbundioError> {
 ///
 /// `install_default` returns `Err` when a provider is already set, which is a
 /// success for our purposes — any provider will do.
-fn ensure_crypto_provider() {
+pub(crate) fn ensure_crypto_provider() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         let _ = rustls::crypto::ring::default_provider().install_default();

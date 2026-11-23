@@ -41,6 +41,8 @@ interface TelemetryState {
 		fromMs: number,
 		toMs: number,
 		bucket: TelemetryBucket,
+		/** A Joined profile's Host; `null`: the Window's own backend. */
+		hostId?: string | null,
 	) => Promise<void>;
 	clear: () => void;
 }
@@ -58,17 +60,24 @@ export const useTelemetryStore = create<TelemetryState>((set) => ({
 	error: null,
 	data: null,
 
-	load: async (profileId, fromMs, toMs, bucket) => {
+	load: async (profileId, fromMs, toMs, bucket, hostId = null) => {
 		const token = ++loadToken;
 		set({ profileId, fromMs, toMs, bucket, loading: true, error: null });
 		try {
 			const [timeSeries, byAgent, byWorkspace, totals, turns] =
 				await Promise.all([
-					telemetry.buckets(profileId, fromMs, toMs, bucket, "none"),
-					telemetry.buckets(profileId, fromMs, toMs, bucket, "agent"),
-					telemetry.buckets(profileId, fromMs, toMs, bucket, "workspace"),
-					telemetry.totals(profileId, fromMs, toMs),
-					telemetry.listTurns(profileId, fromMs, toMs),
+					telemetry.buckets(profileId, fromMs, toMs, bucket, "none", hostId),
+					telemetry.buckets(profileId, fromMs, toMs, bucket, "agent", hostId),
+					telemetry.buckets(
+						profileId,
+						fromMs,
+						toMs,
+						bucket,
+						"workspace",
+						hostId,
+					),
+					telemetry.totals(profileId, fromMs, toMs, hostId),
+					telemetry.listTurns(profileId, fromMs, toMs, hostId),
 				]);
 			if (token !== loadToken) return; // superseded
 			set({

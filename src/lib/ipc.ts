@@ -1,10 +1,27 @@
-import { invoke as realInvoke } from "@tauri-apps/api/core";
-import { listen as realListen, type UnlistenFn } from "@tauri-apps/api/event";
+import { Channel, invoke as realInvoke } from "@tauri-apps/api/core";
+import {
+	emit as realEmit,
+	listen as realListen,
+	type UnlistenFn,
+} from "@tauri-apps/api/event";
+import { isHostOffline } from "../stores/hostLinkStore";
 import { appWebview } from "./appWindow";
 import { decodeBase64 } from "./base64";
 import { isDemoMode } from "./demo";
 import { mockInvoke } from "./demo/mockInvoke";
 import { mockListen } from "./demo/mockListen";
+import { HOST_API_COMMANDS } from "./hostApiCommands";
+import {
+	mergeAnswers,
+	type RoutedCall,
+	routeCall,
+	sentByOwnerOf,
+	sentByOwnerOfPath,
+} from "./hostRouting";
+import type { HostSettings } from "./hostSettings";
+import type { LayoutOp } from "./layoutOps";
+import type { LayoutState } from "./layoutSync";
+import type { StatusOp, StatusUpdate } from "./statusSync";
 import type {
 	AgentHookEvent,
 	AppMetrics,
@@ -43,7 +60,24 @@ import type {
 // in-memory fixtures so the whole app renders fictional data. Every IPC call
 // in this file funnels through these, so no call site below needs to change.
 function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-	return isDemoMode() ? mockInvoke<T>(cmd, args) : realInvoke<T>(cmd, args);
+	if (isDemoMode()) return mockInvoke<T>(cmd, args);
+	// The host commands run through one handler (`host_api.rs`), the same
+	// code an Abundio server runs for a remote Profile (phase 7b).
+	if (HOST_API_COMMANDS.has(cmd)) {
+		// To the backend of the Workspace it concerns: a Joined profile's
+		// Host, or the Window's own (phase 10, `hostRouting.ts`).
+		const calls = routeCall(cmd, args ?? {});
+		const run = (c: RoutedCall) =>
+			realInvoke<T>(
+				"host_call",
+				c.host
+					? { command: cmd, args: c.args, host: c.host }
+					: { command: cmd, args: c.args },
+			);
+		if (calls.length === 1) return run(calls[0]);
+		return Promise.all(calls.map(run)).then((a) => mergeAnswers(a) as T);
+	}
+	return realInvoke<T>(cmd, args);
 }
 /** Subscribe to a Tauri event — demo-aware, like `invoke` above. Exported for
  *  the few app-level listeners that live outside this file (App/Settings
@@ -58,6 +92,26 @@ export function listen<T>(
 		? mockListen<T>(event, cb)
 		: (realListen<T>(event, cb) as Promise<UnlistenFn>);
 }
+
+/** Broadcast an app event to every Window (the Settings window's store
+ *  sync). A no-op in the browser demo, which has one window only. */
+export function emit(event: string, payload?: unknown): Promise<void> {
+	return isDemoMode() ? Promise.resolve() : realEmit(event, payload);
+}
+
+/** The Settings window: its own OS window, never a modal (CLAUDE.md). */
+export const settingsWindow = {
+	/** Open it, or focus it, optionally at one section. */
+	open: (section?: string): Promise<void> =>
+		invoke<void>(
+			"open_settings_window",
+			section === undefined ? undefined : { section },
+		),
+	/** Settings ▸ Hosts on This computer, checking that Host, so its
+	 *  checklist offers Update. */
+	checkHost: (hostId: string): Promise<void> =>
+		invoke<void>("open_settings_window", { checkHost: hostId }),
+};
 
 /** Subscribe to an event Rust aims at *this* Window with `emit_to(label, …)`.
  *
@@ -105,14 +159,306 @@ export interface PtySpawnOptions {
 	};
 }
 
+/** Read one PTY output message off the Window's channel: a byte with the pty
+ *  id's length, the id (ASCII), then the output. Mirrors Rust's
+ *  `event_sink::frame_pty_output`. `null` for a malformed frame. */
+export function parsePtyOutputFrame(
+	frame: ArrayBuffer | Uint8Array,
+): { ptyId: string; data: Uint8Array } | null {
+	const bytes = frame instanceof Uint8Array ? frame : new Uint8Array(frame);
+	if (bytes.length < 1) return null;
+	const idLen = bytes[0];
+	if (bytes.length < 1 + idLen) return null;
+	let ptyId = "";
+	for (let i = 1; i <= idLen; i++) ptyId += String.fromCharCode(bytes[i]);
+	return { ptyId, data: bytes.subarray(1 + idLen) };
+}
+
+/** The Window's one PTY output channel, opened on first use and shared by
+ *  every listener; each frame goes to the listeners of its pty id. */
+const ptyOutputHub = (() => {
+	const listeners = new Map<string, Set<(data: Uint8Array) => void>>();
+	let opened: Promise<void> | null = null;
+	const open = () => {
+		if (!opened) {
+			const channel = new Channel<ArrayBuffer>();
+			channel.onmessage = (message) => {
+				const frame = parsePtyOutputFrame(message);
+				if (!frame) return;
+				const set = listeners.get(frame.ptyId);
+				if (!set) return;
+				for (const cb of [...set]) cb(frame.data);
+			};
+			opened = invoke<void>("pty_output_subscribe", { channel }).catch((e) => {
+				opened = null;
+				throw e;
+			});
+		}
+		return opened;
+	};
+	return {
+		async listen(
+			ptyId: string,
+			cb: (data: Uint8Array) => void,
+		): Promise<UnlistenFn> {
+			let set = listeners.get(ptyId);
+			if (!set) {
+				set = new Set();
+				listeners.set(ptyId, set);
+			}
+			set.add(cb);
+			try {
+				await open();
+			} catch (e) {
+				set.delete(cb);
+				throw e;
+			}
+			return () => {
+				const current = listeners.get(ptyId);
+				if (!current) return;
+				current.delete(cb);
+				if (current.size === 0) listeners.delete(ptyId);
+			};
+		},
+	};
+})();
+
+/** The Rust status store, the authority for pane status (`lib/statusSync.ts`). */
+export const statusApi = {
+	apply: (ops: StatusOp[]) => invoke<StatusUpdate[]>("status_apply", { ops }),
+	/** The **Activity byte threshold** setting, for Rust's output heuristic. */
+	setByteThreshold: (bytes: number) =>
+		invoke<void>("status_byte_threshold_set", { bytes }),
+};
+
+/** The Agents a command typed at a prompt can start, for Rust's shell
+ *  integration (`lib/agentCommandsSync.ts`). */
+export const agentCommandsApi = {
+	set: (list: { id: string; command: string; enabled: boolean }[]) =>
+		invoke<void>("agent_commands_set", { list }),
+};
+
+/** How the desktop reaches a remote Host (Rust's `host_router::HostTarget`). */
+export type HostTarget =
+	| { kind: "ssh"; destination: string }
+	| { kind: "direct"; server: string; dataDir?: string };
+
+/** Remote Hosts (docs/plans/remote-hosts.md phase 7c): connect once per
+ *  Host, then put this Window on it; its host commands, events and PTY
+ *  output then come from there. */
+/** **Host settings** (ADR-0064) of the Window's own Host. */
+export const hostSettingsApi = {
+	/** `null` before they were ever written (this computer, before 10d-1). */
+	get: () => invoke<HostSettings | null>("host_settings_get"),
+	set: (settings: HostSettings) =>
+		invoke<void>("host_settings_set", { settings }),
+	onChanged: (cb: (settings: HostSettings) => void): Promise<UnlistenFn> =>
+		listen<HostSettings>("host-settings-changed", (e) => cb(e.payload)),
+};
+
+/** A Joined profile as this app keeps it (`joined_profiles.rs`). */
+export interface JoinedProfileRow {
+	hostId: string;
+	remoteProfileId: string;
+	remoteProfileName: string;
+	/** The Workspaces as the Host last listed them. */
+	workspacesJson: string;
+	lastSeenMs: number | null;
+}
+
+/** **Joined profiles** (phase 10): the Remote profiles a local Profile shows. */
+export const joinedApi = {
+	list: (profileId: string) =>
+		invoke<JoinedProfileRow[]>("joined_profiles_list", { profileId }),
+	add: (
+		profileId: string,
+		hostId: string,
+		remoteProfileId: string,
+		remoteProfileName: string,
+	) =>
+		invoke<void>("joined_profile_add", {
+			profileId,
+			hostId,
+			remoteProfileId,
+			remoteProfileName,
+		}),
+	remove: (profileId: string, hostId: string) =>
+		invoke<void>("joined_profile_remove", { profileId, hostId }),
+	seen: (
+		profileId: string,
+		hostId: string,
+		remoteProfileName: string,
+		workspacesJson: string,
+	) =>
+		invoke<void>("joined_profile_seen", {
+			profileId,
+			hostId,
+			remoteProfileName,
+			workspacesJson,
+		}),
+	/** Put this Window on the Host for its joined Profile, connecting first
+	 *  (`ask`: ssh may ask in Abundio's dialog). */
+	join: (hostId: string, remoteProfileId: string, ask: boolean) =>
+		invoke<void>("host_join", { hostId, remoteProfileId, ask }),
+	/** Put this Window (Settings) on a Host without showing one of its
+	 *  Profiles, connecting first (`ask`: ssh may ask in Abundio's dialog). */
+	attach: (hostId: string, ask: boolean) =>
+		invoke<void>("host_attach", { hostId, ask }),
+	/** A host command on a joined Host, before its Workspaces are known to
+	 *  the router (`hostRouting.ts`). */
+	callOn: <T>(
+		hostId: string,
+		command: string,
+		args: Record<string, unknown>,
+	) =>
+		isDemoMode()
+			? Promise.reject(new Error("no Hosts in the demo"))
+			: realInvoke<T>("host_call", { command, args, host: hostId }),
+};
+
+export const hostsApi = {
+	connect: (host: string, target: HostTarget) =>
+		invoke<string>("host_connect", { host, target }),
+	bind: (host: string | null) => invoke<void>("host_bind", { host }),
+	/** The Hosts the user added (Settings ▸ Hosts, phase 7d). */
+	list: () => invoke<HostEntry[]>("hosts_list"),
+	add: (name: string, target: HostTarget) =>
+		invoke<HostEntry>("hosts_add", { name, target }),
+	remove: (id: string) => invoke<void>("hosts_remove", { id }),
+	/** Connect to an added Host; resolves with its server's version. */
+	connectSaved: (hostId: string) =>
+		invoke<string>("host_connect_saved", { hostId }),
+	/** Run a host command on a Host this Window is not on. */
+	request: <T>(
+		hostId: string,
+		command: string,
+		args: Record<string, unknown>,
+	) => invoke<T>("host_request", { hostId, command, args }),
+	/** Open a Remote profile in a Window of its own (or focus the one that
+	 *  shows it). Refused while a Window has it joined. */
+	openRemoteProfile: (hostId: string, profileId: string, profileName: string) =>
+		invoke<string>("open_remote_profile_window", {
+			hostId,
+			profileId,
+			profileName,
+		}),
+	/** What this Window shows when it is on a remote Host. */
+	remoteProfileForWindow: () =>
+		invoke<RemoteBinding | null>("remote_profile_for_window"),
+	/** A remote Window's Profiles, on its Host. */
+	serverProfiles: () => invoke<Profile[]>("server_profile_list"),
+	/** Probe a Host and make its checklist (phase 8). `agents`: the commands
+	 *  of the user's Agents, to look for there. */
+	check: (hostId: string, agents: string[]) =>
+		invoke<HostCheck>("host_check", { hostId, agents }),
+	/** Install this app's server on a Host (phase 8b), for the platform its
+	 *  last Check found; resolves with the new checklist. */
+	/** Install this app's own server there (phase 15: bundled with the
+	 *  app), gzipped unless the Host's last check found no `gzip`. */
+	install: (
+		hostId: string,
+		os: string,
+		arch: string,
+		agents: string[],
+		gzip = true,
+	) => invoke<HostCheck>("host_install", { hostId, os, arch, agents, gzip }),
+	/** Start the installed server on a Host as a service (phase 8c);
+	 *  `restart` stops the running one first. Resolves with the new
+	 *  checklist. */
+	start: (hostId: string, restart: boolean, agents: string[]) =>
+		invoke<HostCheck>("host_start", { hostId, restart, agents }),
+	/** Remove the service Abundio set up there (systemd or a Mac's
+	 *  LaunchAgent); the server runs on detached until the Host reboots. */
+	removeService: (hostId: string, agents: string[]) =>
+		invoke<HostCheck>("host_start", {
+			hostId,
+			restart: true,
+			agents,
+			noService: true,
+		}),
+	/** Stop the server on a Host and delete ~/.abundio-server (phase 8d). */
+	uninstall: (hostId: string) => invoke<void>("host_uninstall", { hostId }),
+	/** The user's answer to an SSH prompt (`null`: cancelled). */
+	answerPrompt: (id: string, answer: string | null) =>
+		invoke<boolean>("ssh_prompt_answer", { id, answer }),
+	/** Tell the Host which of its Profiles this Window shows. */
+	setClientProfile: (profileId: string) =>
+		invoke<void>("client_profile_set", { profileId }),
+};
+
+export interface HostEntry {
+	id: string;
+	name: string;
+	target: HostTarget;
+}
+
+/** One line of a Host's checklist (Rust's `host_setup::CheckItem`). */
+export interface HostCheckItem {
+	id: string;
+	label: string;
+	state: "ok" | "warn" | "error" | "info";
+	fix: string | null;
+	action: "install" | "update" | "start" | "service" | "unservice" | null;
+}
+
+/** What Host setup's probe found, and its checklist. */
+export interface HostCheck {
+	probe: {
+		os: string;
+		arch: string;
+		user: string;
+		current: string | null;
+		installed: string[];
+		running: boolean;
+		/** The panes a running server has. */
+		panes: number | null;
+		agents: string[];
+		/** `gzip` is there, so Install uploads the server gzipped. */
+		gzip?: boolean;
+		/** The Host's home folder. */
+		home?: string;
+		/** `systemd` or `launchd`: the service Abundio set up there. */
+		service?: string | null;
+		/** Linux: whether the user lingers (their services run while logged out). */
+		linger?: boolean | null;
+	};
+	items: HostCheckItem[];
+	appVersion: string;
+}
+
+/** What the user's `ssh` asks while connecting (Rust's `askpass::Prompt`). */
+export interface SshPrompt {
+	id: string;
+	host: string;
+	text: string;
+	kind: "secret" | "confirm" | "info";
+}
+
+export interface RemoteBinding {
+	hostId: string;
+	hostName: string;
+	profileId: string;
+	profileName: string;
+}
+
+export const layoutApi = {
+	/** Apply edits to a Tab's layout in Rust, the authority (`layoutSync.ts`). */
+	apply: (tabId: string, ops: LayoutOp[]) =>
+		invoke<LayoutState>("layout_apply", { tabId, ops }),
+};
+
 export const pty = {
 	/** Spawn a PTY. Takes an options object rather than positional arguments —
 	 *  there are eleven of them and almost all are optional. */
 	spawn: (options: PtySpawnOptions) =>
 		invoke<string>("pty_spawn", { ...options }),
 
+	/** Dropped, never queued, while a remote Window's Host is not connected
+	 *  (its panes are frozen; docs/plans/remote-hosts.md phase 7d). */
 	write: (ptyId: string, data: string) =>
-		invoke<void>("pty_write", { ptyId, data }),
+		isHostOffline()
+			? Promise.resolve()
+			: invoke<void>("pty_write", { ptyId, data }),
 
 	resize: (ptyId: string, cols: number, rows: number) =>
 		invoke<void>("pty_resize", { ptyId, cols, rows }),
@@ -123,23 +469,33 @@ export const pty = {
 	redraw: (ptyId: string) => invoke<boolean>("pty_redraw", { ptyId }),
 
 	kill: (ptyId: string) => invoke<void>("pty_kill", { ptyId }),
+	/** Which of these PTYs still run where the Window's backend is: on a
+	 *  Host, those a Window reattaches to instead of starting afresh. */
+	alive: (ptyIds: string[]) => invoke<string[]>("pty_alive", { ptyIds }),
 
+	/** The PTY's screen as text, from its Rust emulator (ADR-0063): wrapped
+	 *  rows joined, blank rows at the end dropped, a dim suggestion after the
+	 *  cursor left out. `visible` reads only the screen. */
+	readScreen: (ptyId: string, visible: boolean, lines: number | null) =>
+		invoke<string[]>("pty_read_screen", { ptyId, visible, lines }),
+
+	/** Lines of scrollback every PTY's Rust screen keeps (the setting). */
+	setScrollback: (lines: number) =>
+		invoke<void>("pty_set_scrollback", { lines }),
+
+	/** Every chunk of the PTY's output, in order. Resolves once the listener
+	 *  is in place, so a caller that awaits it before spawning misses nothing. */
 	onOutput: (
 		ptyId: string,
 		callback: (data: Uint8Array) => void,
-	): Promise<UnlistenFn> =>
-		listen<{ data: string }>(`pty-output-${ptyId}`, (event) => {
-			callback(decodeBase64(event.payload.data));
-		}),
-
-	/** Like onOutput but passes the raw base64 string (no decode). */
-	onOutputRaw: (
-		ptyId: string,
-		callback: (base64Data: string) => void,
-	): Promise<UnlistenFn> =>
-		listen<{ data: string }>(`pty-output-${ptyId}`, (event) => {
-			callback(event.payload.data);
-		}),
+	): Promise<UnlistenFn> => {
+		if (isDemoMode()) {
+			return mockListen<{ data: string }>(`pty-output-${ptyId}`, (event) => {
+				callback(decodeBase64(event.payload.data));
+			});
+		}
+		return ptyOutputHub.listen(ptyId, callback);
+	},
 
 	onStatus: (
 		ptyId: string,
@@ -158,6 +514,21 @@ export const pty = {
 		),
 
 	/** Agent lifecycle hook events relayed in via the loopback hook server. */
+	/** An Agent's hook, applied in Rust (phase 6d): what this Window keeps
+	 *  besides the status, which follows as `status-updates`. */
+	onHookApplied: (
+		callback: (notice: HookNotice) => void,
+	): Promise<UnlistenFn> =>
+		listenToThisWindow<HookNotice & { fromHost?: string }>(
+			"agent-hook-applied",
+			(event) => {
+				// A Host speaks only for its own panes (ADR-0065).
+				const p = event.payload;
+				if (sentByOwnerOf(p.fromHost, "pty", p.ptyId, { unknownOk: true }))
+					callback(p);
+			},
+		),
+
 	onHook: (
 		ptyId: string,
 		callback: (hookEvent: AgentHookEvent) => void,
@@ -188,8 +559,15 @@ export const pty = {
 export const orchestrator = {
 	/** Creates (first time) and returns the Profile's Orchestrator workspace,
 	 *  rewriting its instruction files. */
-	ensure: (profileId: string) =>
-		invoke<WorkspaceWithTabs>("orchestrator_ensure", { profileId }),
+	ensure: async (profileId: string) => {
+		const ws = await invoke<WorkspaceWithTabs>("orchestrator_ensure", {
+			profileId,
+		});
+		// Its suggested questions on this computer, whatever its Host:
+		// Prompt actions are this computer's (ADR-0064).
+		void invoke<void>("prompt_actions_seed_orchestrator").catch(() => {});
+		return ws;
+	},
 	agent: (profileId: string) =>
 		invoke<string | null>("orchestrator_agent_get", { profileId }),
 	setAgent: (profileId: string, agentId: string | null) =>
@@ -254,8 +632,14 @@ export interface FolderCheck {
 }
 
 export const workspaces = {
-	create: (name: string, rootFolder: string, profileId: string) =>
-		invoke<WorkspaceWithTabs>("workspace_create", {
+	/** `hostId`: in a Joined profile, on its Host. */
+	create: (
+		name: string,
+		rootFolder: string,
+		profileId: string,
+		hostId: string | null = null,
+	) =>
+		onHost<WorkspaceWithTabs>(hostId, "workspace_create", {
 			name,
 			rootFolder,
 			profileId,
@@ -268,8 +652,15 @@ export const workspaces = {
 	 *  of its Workspaces there, an Orchestrator folder (both refused), or
 	 *  other Profiles' Workspaces (allowed). Rust enforces the refusals on
 	 *  create and on a folder change too. */
-	folderCheck: (rootFolder: string, profileId: string) =>
-		invoke<FolderCheck>("workspace_folder_check", { rootFolder, profileId }),
+	folderCheck: (
+		rootFolder: string,
+		profileId: string,
+		hostId: string | null = null,
+	) =>
+		onHost<FolderCheck>(hostId, "workspace_folder_check", {
+			rootFolder,
+			profileId,
+		}),
 
 	update: (id: string, updates: WorkspaceUpdate) =>
 		invoke<void>("workspace_update", { id, updates }),
@@ -668,20 +1059,35 @@ export interface AgentTurnTotals {
 export type TelemetryBucket = "day" | "month" | "year";
 export type TelemetryGroupBy = "none" | "agent" | "workspace";
 
+/** A host command on the Window's own backend, or on `hostId` (a Joined
+ *  profile's Host: a Profile id alone names a Profile only within one
+ *  backend). */
+function onHost<T>(
+	hostId: string | null,
+	command: string,
+	args: Record<string, unknown>,
+): Promise<T> {
+	return hostId
+		? joinedApi.callOn<T>(hostId, command, args)
+		: invoke<T>(command, args);
+}
+
 export const telemetry = {
 	/** Persist a finalized Turn (idempotent by id). */
 	recordTurn: (turn: AgentTurnRecord) =>
 		invoke<void>("telemetry_record_turn", { turn }),
 
-	/** Bucketed rollups for one Profile in the `[fromMs, toMs)` window. */
+	/** Bucketed rollups for one Profile in the `[fromMs, toMs)` window.
+	 *  `hostId`: a Joined profile's, read from its Host. */
 	buckets: (
 		profileId: string,
 		fromMs: number,
 		toMs: number,
 		bucket: TelemetryBucket,
 		groupBy: TelemetryGroupBy,
+		hostId: string | null = null,
 	) =>
-		invoke<AgentTurnBucket[]>("telemetry_buckets", {
+		onHost<AgentTurnBucket[]>(hostId, "telemetry_buckets", {
 			profileId,
 			fromMs,
 			toMs,
@@ -690,12 +1096,26 @@ export const telemetry = {
 		}),
 
 	/** Overall totals for one Profile in the window. */
-	totals: (profileId: string, fromMs: number, toMs: number) =>
-		invoke<AgentTurnTotals>("telemetry_totals", { profileId, fromMs, toMs }),
+	totals: (
+		profileId: string,
+		fromMs: number,
+		toMs: number,
+		hostId: string | null = null,
+	) =>
+		onHost<AgentTurnTotals>(hostId, "telemetry_totals", {
+			profileId,
+			fromMs,
+			toMs,
+		}),
 
 	/** Raw Turn rows (drill-down table), newest first. */
-	listTurns: (profileId: string, fromMs: number, toMs: number) =>
-		invoke<AgentTurnRecord[]>("telemetry_list_turns", {
+	listTurns: (
+		profileId: string,
+		fromMs: number,
+		toMs: number,
+		hostId: string | null = null,
+	) =>
+		onHost<AgentTurnRecord[]>(hostId, "telemetry_list_turns", {
 			profileId,
 			fromMs,
 			toMs,
@@ -727,8 +1147,13 @@ export const worktrees = {
 
 	/** Fires when a watched repo's worktree set changes on disk. */
 	onChanged: (callback: (commonDir: string) => void): Promise<UnlistenFn> =>
-		listen<{ commonDir: string }>("worktrees-changed", (event) =>
-			callback(event.payload.commonDir),
+		listen<{ commonDir: string; fromHost?: string }>(
+			"worktrees-changed",
+			(event) => {
+				// A Host speaks only for its own repositories (ADR-0065).
+				const p = event.payload;
+				if (sentByOwnerOfPath(p.fromHost, p.commonDir)) callback(p.commonDir);
+			},
 		),
 };
 
@@ -744,9 +1169,14 @@ export interface GithubIssue {
 
 export const issues = {
 	/** Open issues of the repository `cwd` belongs to, highest number first,
-	 *  assigned-to-me ones marked. Rejects with a one-line reason (no gh, not signed in, no
-	 *  GitHub remote) that the dialog shows as-is. */
-	list: (cwd: string) => invoke<GithubIssue[]>("gh_list_issues", { cwd }),
+	 *  assigned-to-me ones marked. git names the repository where the folder
+	 *  is (on its Host); this computer's gh lists them, whatever the Host.
+	 *  Rejects with a one-line reason the dialog shows as-is. */
+	list: async (cwd: string) => {
+		const repo = await git.repoSlug(cwd);
+		if (!repo) throw new Error("This folder has no GitHub remote.");
+		return invoke<GithubIssue[]>("gh_list_issues", { repo });
+	},
 };
 
 // The native application menu.
@@ -801,6 +1231,8 @@ export const pr = {
 
 export const fs = {
 	listDir: (path: string) => invoke<DirEntry[]>("fs_list_dir", { path }),
+	/** The home folder where the Window's backend runs (a Host's, remotely). */
+	homeDir: () => invoke<string>("fs_home_dir"),
 
 	listFiles: (rootPath: string, maxFiles?: number) =>
 		invoke<FileEntry[]>("fs_list_files", { rootPath, maxFiles }),
@@ -833,8 +1265,12 @@ export const fs = {
 			paths: string[];
 			changedFiles: string[];
 			removedFiles: string[];
+			fromHost?: string;
 		}>("fs-change", (event) => {
-			if (event.payload.root === rootPath) {
+			if (
+				event.payload.root === rootPath &&
+				sentByOwnerOfPath(event.payload.fromHost, rootPath)
+			) {
 				callback({
 					paths: event.payload.paths,
 					changedFiles: event.payload.changedFiles,
@@ -844,8 +1280,11 @@ export const fs = {
 		}),
 
 	onGitChange: (rootPath: string, callback: () => void): Promise<UnlistenFn> =>
-		listen<{ root: string }>("git-change", (event) => {
-			if (event.payload.root === rootPath) {
+		listen<{ root: string; fromHost?: string }>("git-change", (event) => {
+			if (
+				event.payload.root === rootPath &&
+				sentByOwnerOfPath(event.payload.fromHost, rootPath)
+			) {
 				callback();
 			}
 		}),
@@ -1114,14 +1553,26 @@ export const clipboardImage = {
 		invoke<void>("set_clipboard_image_from_path", { path }),
 };
 
+/** The background new windows show before their page paints (the theme's). */
+export const windowBackground = {
+	set: (color: string) => invoke<void>("window_background_set", { color }),
+};
+
 export const devEnvironments = {
 	list: () => invoke<DetectedDevEnvironment[]>("list_dev_environments"),
 
-	launch: (id: string, workspaceFolder: string, file: LaunchFile | null) =>
+	/** `hostId`: the folder is on that Host, opened over SSH (phase 10f). */
+	launch: (
+		id: string,
+		workspaceFolder: string,
+		file: LaunchFile | null,
+		hostId: string | null = null,
+	) =>
 		invoke<void>("launch_dev_environment", {
 			id,
 			workspaceFolder,
 			file,
+			hostId,
 		}),
 };
 
@@ -1430,11 +1881,55 @@ export interface AgentControlRequestEvent {
 	 *  with `--workspace`), and whether this Window must open it first. */
 	target?: { workspaceId: string; open: boolean };
 	request: unknown;
+	/** The Host that sent it; none: this Window's own backend. */
+	fromHost?: string;
 }
 
 export type AgentControlReply =
 	| { result: unknown }
 	| { error: { code: string; message: string } };
+
+export type AgentControlEffect =
+	| {
+			type: "begin";
+			id: string;
+			callerPaneId: string;
+			targetPaneId: string;
+			by: string;
+			kind: "read" | "act";
+	  }
+	| { type: "end"; id: string }
+	/** Bytes Rust typed into a pane (`agent prompt`): keep them as the
+	 *  keystrokes they stand for. */
+	| { type: "input"; paneId: string; data: string };
+
+/** What the Window knows about one pane that Rust does not see yet. */
+export interface PaneFacts {
+	title: string | null;
+	cwd: string | null;
+	command: string | null;
+	detectedAgentId: string | null;
+	progress: string | null;
+	shellIntegrationSeen: boolean;
+}
+
+export interface PaneFactsReport {
+	paneId: string;
+	facts: PaneFacts | null;
+}
+
+/** What a hook Rust applied leaves for the Window (`hook_apply::HookNotice`). */
+export interface HookNotice {
+	ptyId: string;
+	agent: string;
+	/** An Agent runs in the pane: record which, and stamp it (and its
+	 *  session id) on the pane. */
+	adopted: boolean;
+	/** A Session end: Turn telemetry closes the open Turn as one. */
+	sessionEnd: boolean;
+	sessionId: string | null;
+	dropped: string | null;
+}
 
 export const agentControl = {
 	reply: (id: string, reply: AgentControlReply) =>
@@ -1478,11 +1973,44 @@ export const agentControl = {
 
 	/** A pane closed in some Window (a broadcast, heard by every Window). */
 	onPaneClosed: (cb: (paneId: string) => void) =>
-		listen<{ paneId: string }>("agent-control-pane-closed", (e) =>
-			cb(e.payload.paneId),
+		listen<{ paneId: string; fromHost?: string }>(
+			"agent-control-pane-closed",
+			(e) => {
+				if (
+					sentByOwnerOf(e.payload.fromHost, "pane", e.payload.paneId, {
+						unknownOk: true,
+					})
+				)
+					cb(e.payload.paneId);
+			},
 		),
 
 	/** Rust stopped waiting for this request (timeout): drop it. */
+	/** What the user sees of a call Rust answers itself: the target's
+	 *  Control badge and the Orchestrator graph's line, begun and ended. */
+	onEffect: (cb: (e: AgentControlEffect) => void) =>
+		listenToThisWindow<AgentControlEffect & { fromHost?: string }>(
+			"agent-control-effect",
+			(e) => {
+				const p = e.payload;
+				// An end only stops what a begin started; a begin or input
+				// must name a pane of the sender's own (ADR-0065).
+				const pane =
+					p.type === "begin"
+						? p.targetPaneId
+						: p.type === "input"
+							? p.paneId
+							: null;
+				if (
+					pane === null ||
+					sentByOwnerOf(p.fromHost, "pane", pane, { unknownOk: true })
+				)
+					cb(p);
+			},
+		),
+	/** Tell Rust what the Window knows about its panes (`pane_facts.rs`). */
+	reportPaneFacts: (reports: PaneFactsReport[]) =>
+		invoke<void>("pane_facts_report", { reports }),
 	onCancel: (cb: (id: string) => void) =>
 		listenToThisWindow<{ id: string }>("agent-control-cancel", (e) =>
 			cb(e.payload.id),

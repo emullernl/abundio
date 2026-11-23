@@ -41,6 +41,24 @@ function manualScheduler() {
 const bytes = (...xs: number[]) => new Uint8Array(xs);
 
 describe("createWriteBatcher", () => {
+	it("drops what is queued, unwritten, on discard (a skip-ahead snapshot replaces it)", () => {
+		const m = manualScheduler();
+		const written: string[] = [];
+		const b = createWriteBatcher(
+			(d) => written.push(new TextDecoder().decode(d)),
+			m.scheduler,
+		);
+		b.push(new TextEncoder().encode("old 1 "));
+		b.push(new TextEncoder().encode("old 2 "));
+		b.discard();
+		expect(b.isEmpty()).toBe(true);
+		expect(m.frames.size + m.timers.size).toBe(0);
+		b.push(new TextEncoder().encode("snapshot"));
+		b.push(new TextEncoder().encode(" live"));
+		m.runFrames();
+		expect(written).toEqual(["snapshot live"]);
+	});
+
 	it("merges chunks queued before a frame into one write", () => {
 		const s = manualScheduler();
 		const writes: Uint8Array[] = [];

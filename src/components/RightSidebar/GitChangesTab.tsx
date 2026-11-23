@@ -3,6 +3,7 @@ import { writeClipboardText } from "../../lib/clipboard";
 import { gitFolderMenuEntries } from "../../lib/gitFolderMenu";
 import { gitRowMenuEntries } from "../../lib/gitRowMenu";
 import { fs as fsApi, type GitOperation, git } from "../../lib/ipc";
+import { withoutLocalOnly } from "../../lib/localOnlyEntries";
 import {
 	openFileWindow,
 	openFileWindowForPath,
@@ -11,6 +12,7 @@ import { resolveWorkspacePath } from "../../lib/resolveWorkspacePath";
 import type { GitChangedFile } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
+import { useHostOfWorkspace } from "../../stores/hostAgentsStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -79,6 +81,8 @@ export function GitChangesTab() {
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
 	const activeWorkspace = workspaces.find((s) => s.id === activeWorkspaceId);
+	// A Host's files cannot be revealed in this computer's file manager.
+	const onHost = useHostOfWorkspace(activeWorkspaceId) !== null;
 	const cwd = activeWorkspace?.rootFolder ?? null;
 	const workspaceBaseBranch = activeWorkspace?.baseBranch ?? null;
 	const isGitRepo = useWorkspaceGitStore((s) =>
@@ -136,7 +140,10 @@ export function GitChangesTab() {
 				writeClipboardText(absolutePath).catch(console.error);
 			},
 		};
-		return gitFolderMenuEntries(folderMenu.existsOnDisk).map((entry) =>
+		return withoutLocalOnly(
+			gitFolderMenuEntries(folderMenu.existsOnDisk),
+			onHost,
+		).map((entry) =>
 			"separator" in entry
 				? { separator: true as const }
 				: {
@@ -241,7 +248,7 @@ export function GitChangesTab() {
 			},
 		};
 
-		return gitRowMenuEntries(file).map((entry) =>
+		return withoutLocalOnly(gitRowMenuEntries(file), onHost).map((entry) =>
 			"separator" in entry
 				? { separator: true as const }
 				: {

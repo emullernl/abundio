@@ -1,5 +1,5 @@
 {
-	"_comment": "Agent handle grammar (ADR-0055), shared by src-tauri/src/agent_control.rs and src/lib/agentHandle.ts tests so the two cannot drift. valid: [input, normalized, key].",
+	"_comment": "Agent handle grammar (ADR-0055), shared by src-tauri/crates/abundio-core/src/control_protocol.rs and src/lib/agentHandle.ts tests so the two cannot drift. valid: [input, normalized, key].",
 	"valid": [
 		["reviewer", "reviewer", "reviewer"],
 		["Reviewer", "Reviewer", "reviewer"],

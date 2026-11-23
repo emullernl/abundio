@@ -1,6 +1,12 @@
 import { create } from "zustand";
 import { appWindow } from "../lib/appWindow";
-import { profiles as profilesApi, windowSession } from "../lib/ipc";
+import { setOwnHost } from "../lib/hostRouting";
+import {
+	hostsApi,
+	profiles as profilesApi,
+	type RemoteBinding,
+	windowSession,
+} from "../lib/ipc";
 import type { Profile } from "../lib/types";
 import { DEFAULT_PROFILE_ID } from "../lib/types";
 // Static cycle with workspaceStore / ptyActivityStore: both import
@@ -20,7 +26,11 @@ import { useWorkspaceStore } from "./workspaceStore";
  *  `currentNotificationTitle`) so the OS-level identification of any Abundio
  *  notification carries the same profile context as the window it came from. */
 export function profileQualifiedTitle(profileName: string): string {
-	return `Abundio - ${profileName} profile`;
+	const remote = useProfileStore.getState().remote;
+	// A Remote profile names its Host (`remote_windows::title_for`).
+	return remote
+		? `Abundio - ${profileName} profile ☁ ${remote.hostName}`
+		: `Abundio - ${profileName} profile`;
 }
 
 function applyWindowTitle(profileName: string | null): void {
@@ -52,6 +62,12 @@ interface ProfileState {
 	 *  this map (mapped to its own label). Refreshed on the
 	 *  `profile-ownership-changed` Tauri event. */
 	ownershipMap: Record<string, string>;
+	/** Set when this Window shows a **Remote profile** (phase 7d): its Host,
+	 *  and the Profile there. Its Profiles are the Host's, never claimed in
+	 *  the local Window ↔ Profile map. */
+	remote: RemoteBinding | null;
+	/** Why the Host's Profiles could not be read (not connected yet). */
+	remoteError: string | null;
 
 	loadProfiles: () => Promise<void>;
 	/** Pulls the latest profile list from Rust and re-applies this window's
@@ -88,8 +104,15 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 	activeProfileId: null,
 	profilesLoaded: false,
 	ownershipMap: {},
+	remote: null,
+	remoteError: null,
 
 	loadProfiles: async () => {
+		const remote = await hostsApi.remoteProfileForWindow().catch(() => null);
+		if (remote) {
+			await loadRemote(remote);
+			return;
+		}
 		const list = await profilesApi.list();
 		set({ profiles: list, profilesLoaded: true });
 
@@ -137,7 +160,10 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 	},
 
 	refreshProfiles: async () => {
-		const list = await profilesApi.list().catch(() => null);
+		const list = await (get().remote
+			? hostsApi.serverProfiles()
+			: profilesApi.list()
+		).catch(() => null);
 		if (!list) return;
 		set({ profiles: list });
 		const activeId = get().activeProfileId;
@@ -190,7 +216,16 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 
 	switchProfile: async (id: string) => {
 		const { activeProfileId } = get();
-		if (id === activeProfileId) return;
+		if (id === activeProfileId && !get().remote) return;
+		// A Remote profile's Window stays on its Host: a local Profile opens
+		// in its own Window (or the one showing it comes forward).
+		if (get().remote) {
+			await get().refreshOwnershipMap();
+			const owner = get().ownershipMap[id];
+			if (owner) await windowSession.focus(owner).catch(() => {});
+			else await profilesApi.openWindowWithProfile(id).catch(() => {});
+			return;
+		}
 
 		// Claim the profile in Rust *before* closing anything. Rust refuses it
 		// when another Window already owns it (e.g. that Window switched first
@@ -218,6 +253,10 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 		);
 		const wsStore = useWorkspaceStore.getState();
 		for (const wid of openedIds) {
+			// A Joined profile's Workspace is not closed: its Agents keep
+			// working on its Host, and the joins reload below only stop
+			// showing it (phase 10).
+			if (wsStore.workspaces.find((w) => w.id === wid)?.joined) continue;
 			// Kept on the old Profile's restore list: it reopens when that
 			// Profile is opened again (ADR-0052).
 			await wsStore.closeWorkspace(wid, { forget: false }).catch(() => {});
@@ -225,6 +264,10 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 
 		set({ activeProfileId: id });
 		await useWorkspaceStore.getState().loadWorkspaces();
+		// And the new Profile's Joined profiles (phase 10).
+		void import("./joinedStore").then((m) =>
+			m.useJoinedStore.getState().loadJoined(),
+		);
 
 		// Re-sync the window title to the new active profile.
 		const newActive = get().profiles.find((p) => p.id === id);
@@ -237,9 +280,41 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 	},
 }));
 
+/** Load this remote Window's Profiles from its Host. Until the Host is
+ *  connected (at app start it connects in the background) the Window shows
+ *  its Remote profile with no Workspaces and loads again once it is. */
+async function loadRemote(remote: RemoteBinding): Promise<void> {
+	useProfileStore.setState({ remote, activeProfileId: remote.profileId });
+	try {
+		const list = await hostsApi.serverProfiles();
+		useProfileStore.setState({
+			profiles: list,
+			profilesLoaded: true,
+			remoteError: null,
+		});
+		await hostsApi.setClientProfile(remote.profileId).catch(() => {});
+		const name = list.find((p) => p.id === remote.profileId)?.name;
+		applyWindowTitle(name ?? remote.profileName);
+	} catch (e) {
+		useProfileStore.setState({
+			profiles: [],
+			profilesLoaded: true,
+			remoteError: String(e),
+		});
+		applyWindowTitle(remote.profileName);
+		// Loaded again once the Host connects (`RemoteHostBanner`).
+	}
+}
+
 /** Initial fallback profile id used before profilesLoaded — kept for tests
  *  and the brief window-startup gap where workspaceStore may need *some*
  *  profile_id. In production, profileStore.loadProfiles() resolves first. */
 export function fallbackProfileId(): string {
 	return useProfileStore.getState().activeProfileId ?? DEFAULT_PROFILE_ID;
 }
+
+// Which backend this Window's own is, for checking where events come from
+// (ADR-0065).
+useProfileStore.subscribe((s, prev) => {
+	if (s.remote !== prev.remote) setOwnHost(s.remote?.hostId ?? null);
+});

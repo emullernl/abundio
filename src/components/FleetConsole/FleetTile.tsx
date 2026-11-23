@@ -8,7 +8,9 @@ import {
 	usePtyActivityStore,
 } from "../../stores/ptyActivityStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { DOT_STATUS_COLOR } from "../AgentStatusIcon";
+import { useJoinedHostName } from "../HostChip";
 import { FocusSweep } from "../Terminal/FocusSweep";
 import { TerminalSlot } from "../Terminal/TerminalSlot";
 
@@ -92,14 +94,20 @@ export const FleetTile = memo(function FleetTile({
 		() => useWindowUiStore.getState().setFocusedTile(paneId),
 		[paneId],
 	);
+	// A Joined profile's tile says which Host it is on (phase 10).
+	const ownerId = useWorkspaceStore((s) => s.findWorkspaceForPane(paneId)?.id);
+	const hostName = useJoinedHostName(ownerId);
+	const shownName = hostName
+		? `☁ ${hostName} · ${workspaceName}`
+		: workspaceName;
 	const onClose = useCallback(
-		() => requestPaneClose(paneId, `${workspaceName} · ${tabName}`),
-		[paneId, workspaceName, tabName],
+		() => requestPaneClose(paneId, `${shownName} · ${tabName}`),
+		[paneId, shownName, tabName],
 	);
 	const spotlighted = placement === "spotlight";
 	const fleet = useMemo(
 		() => ({
-			workspaceName,
+			workspaceName: shownName,
 			branch,
 			tabName,
 			onSwitchTo: () => switchToPane(paneId),
@@ -110,7 +118,7 @@ export const FleetTile = memo(function FleetTile({
 				ui.setFocusedTile(paneId);
 			},
 		}),
-		[workspaceName, branch, tabName, paneId, spotlighted],
+		[shownName, branch, tabName, paneId, spotlighted],
 	);
 
 	return (

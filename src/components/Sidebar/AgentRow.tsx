@@ -4,12 +4,14 @@ import { usePaneStatus } from "../../hooks/usePaneStatus";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
 import { agentRowTitle } from "../../lib/agentRowTitle";
 import type { FleetTile } from "../../lib/fleetConsole";
+import { clashingJoinedPanesCached } from "../../lib/handleClash";
 import { switchToPane } from "../../lib/paneLocation";
 import { useAgentSignalsStore } from "../../stores/agentSignalsStore";
+import { useAgentsForWorkspace } from "../../stores/hostAgentsStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
-import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { AgentStatusIcon } from "../AgentStatusIcon";
+import { HostChip, useJoinedHostName } from "../HostChip";
 import { useAgentMenu } from "./useAgentMenu";
 
 /**
@@ -32,11 +34,21 @@ export function AgentRow({
 	const { paneId, ptyId, workspaceId, tabName } = tile;
 	const status = usePaneStatus(paneId);
 	const xtermTitle = usePtyActivityStore((s) => s.titles[paneId] ?? "");
-	const handle = useAgentHandle(paneId);
-	const agentId = usePtyActivityStore((s) => s.detectedAgentIds[ptyId]);
-	const agentName = useSettingsStore((s) =>
-		agentId ? (s.agents.find((a) => a.id === agentId)?.name ?? "") : "",
+	const ownHandle = useAgentHandle(paneId);
+	// A Joined profile's Agent whose handle one of another backend shares
+	// reads `Agent Two @ build-box` (phase 10).
+	const hostName = useJoinedHostName(workspaceId);
+	const clash = useWorkspaceStore((s) =>
+		clashingJoinedPanesCached(s.workspaces).has(paneId),
 	);
+	const handle =
+		ownHandle && clash && hostName ? `${ownHandle} @ ${hostName}` : ownHandle;
+	const agentId = usePtyActivityStore((s) => s.detectedAgentIds[ptyId]);
+	// Named by its own Host's Agent list (ADR-0064).
+	const hostAgents = useAgentsForWorkspace(workspaceId);
+	const agentName = agentId
+		? (hostAgents.find((a) => a.id === agentId)?.name ?? "")
+		: "";
 	const workspaceName = useWorkspaceStore(
 		(s) => s.workspaces.find((w) => w.id === workspaceId)?.name ?? "",
 	);
@@ -128,6 +140,7 @@ export function AgentRow({
 						>
 							{title}
 						</span>
+						<HostChip workspaceId={workspaceId} />
 						{flag && (
 							<span
 								className="flex-shrink-0 flex items-center"

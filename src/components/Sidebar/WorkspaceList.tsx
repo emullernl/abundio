@@ -1,3 +1,4 @@
+import { Cloud, Monitor } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConfirmCloseWorkspace } from "../../hooks/useConfirmCloseWorkspace";
 import {
@@ -18,6 +19,7 @@ import {
 	type WorkspaceRow,
 } from "../../lib/worktreeGrouping";
 import { confirmFileWindowsClean } from "../../stores/fileWindowCloseConfirmStore";
+import { useProfileStore } from "../../stores/profileStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
@@ -36,7 +38,12 @@ import {
 import { WorkspaceSettingsDialog } from "../WorkspaceSettingsDialog";
 import { WorktreeProgressDialog } from "../WorktreeProgressDialog";
 import { CollapsedStrip } from "./CollapsedStrip";
+import { JoinedSections } from "./JoinedSections";
 import { WorkspaceItem } from "./WorkspaceItem";
+import {
+	useSectionFolded,
+	WorkspaceSectionHeader,
+} from "./WorkspaceSectionHeader";
 
 const NO_HIDDEN_MEMBERS: WorkspaceWithTabs[] = [];
 
@@ -106,10 +113,17 @@ export function WorkspaceList({
 	const [lastCreatePayload, setLastCreatePayload] =
 		useState<AddWorktreePayload | null>(null);
 
+	const ownFolded = useSectionFolded("local");
+	// This Window's own Profile's Workspaces; a Joined profile's are drawn
+	// in their own section below (phase 10, `JoinedSections`).
+	const ownWorkspaces = useMemo(
+		() => workspaces.filter((w) => !w.joined),
+		[workspaces],
+	);
 	// Derived grouping into render blocks (sets + standalones).
 	const rows = useMemo(
-		() => buildWorkspaceRows(workspaces, worktreeFacts),
-		[workspaces, worktreeFacts],
+		() => buildWorkspaceRows(ownWorkspaces, worktreeFacts),
+		[ownWorkspaces, worktreeFacts],
 	);
 
 	// workspaceId → worktree role, for the context menu.
@@ -375,6 +389,8 @@ export function WorkspaceList({
 							onClick: () => beginWorkspaceSwitch(workspaceId),
 						},
 			];
+			// A Joined profile's Workspace is only shown here (phase 10).
+			if (ws?.joined) return items;
 			const setRow = rows.find(
 				(r): r is SetRow => r.kind === "set" && r.primary.id === workspaceId,
 			);
@@ -580,7 +596,9 @@ export function WorkspaceList({
 
 	return (
 		<div className="flex flex-col" ref={containerRef}>
-			{workspaces.length === 0 && !collapsed && (
+			{!collapsed && <OwnSectionHeader workspaces={ownWorkspaces} />}
+
+			{ownWorkspaces.length === 0 && !collapsed && !ownFolded && (
 				<div
 					className="px-3 py-4 text-center text-xs"
 					style={{ color: "var(--fg-secondary)" }}
@@ -593,7 +611,9 @@ export function WorkspaceList({
 				? // Collapsed strips in grouped display order; Linked worktrees keep
 					// the same indentation + rail as the expanded sidebar. Folding is
 					// honoured here too — one fold state, both sidebar widths — with
-					// the hidden members' status surviving as a badge dot.
+					// the hidden members' status surviving as a badge dot. A folded
+					// section shows no strips either.
+					!ownFolded &&
 					rows.map((row) =>
 						row.kind === "set" ? (
 							<CollapsedSetBlock
@@ -606,7 +626,8 @@ export function WorkspaceList({
 							renderCollapsedStrip(row.workspace, 0)
 						),
 					)
-				: rows.map((row, i) => {
+				: !ownFolded &&
+					rows.map((row, i) => {
 						const id = rowId(row);
 						return (
 							<div
@@ -638,6 +659,53 @@ export function WorkspaceList({
 					})}
 
 			{!collapsed && nearestSlot === rows.length && <DropIndicator />}
+
+			{collapsed && (
+				<JoinedSections
+					collapsed
+					ownShows={!ownFolded && rows.length > 0}
+					renderRows={() => null}
+					renderCollapsed={(list) =>
+						buildWorkspaceRows(list, worktreeFacts).map((row) =>
+							row.kind === "set" ? (
+								<CollapsedSetBlock
+									key={rowId(row)}
+									row={row}
+									folded={foldedKeys.has(row.groupKey)}
+									renderStrip={renderCollapsedStrip}
+								/>
+							) : (
+								renderCollapsedStrip(row.workspace, 0)
+							),
+						)
+					}
+				/>
+			)}
+
+			{!collapsed && (
+				<JoinedSections
+					renderRows={(list) =>
+						buildWorkspaceRows(list, worktreeFacts).map((row) => (
+							<WorkspaceRowView
+								key={rowId(row)}
+								row={row}
+								isDragging={false}
+								// A Joined profile's rows are never dragged.
+								itemHandlers={(w, id) => ({
+									...itemHandlers(w, id),
+									onMouseDown: () => {},
+								})}
+								folded={row.kind === "set" && foldedKeys.has(row.groupKey)}
+								onToggleFold={
+									row.kind === "set"
+										? () => toggleSetFolded(row.groupKey)
+										: undefined
+								}
+							/>
+						))
+					}
+				/>
+			)}
 
 			{!collapsed && draggedRow && (
 				<DragGhost row={draggedRow} mousePos={mousePos} width={ghostWidth} />
@@ -927,5 +995,26 @@ function DragGhost({
 				</div>
 			)}
 		</div>
+	);
+}
+
+/** The header of this Window's own Profile's section: its name, on this
+ *  computer, or `host · Profile` in a remote Window (phase 10). */
+function OwnSectionHeader({ workspaces }: { workspaces: WorkspaceWithTabs[] }) {
+	const remote = useProfileStore((s) => s.remote);
+	const name = useProfileStore(
+		(s) => s.profiles.find((p) => p.id === s.activeProfileId)?.name ?? "",
+	);
+	return (
+		<WorkspaceSectionHeader
+			sectionKey="local"
+			icon={remote ? <Cloud size={12} /> : <Monitor size={12} />}
+			label={
+				remote
+					? `${remote.hostName} · ${remote.profileName}`
+					: `${name} · this computer`
+			}
+			workspaces={workspaces}
+		/>
 	);
 }

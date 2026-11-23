@@ -4,6 +4,7 @@ import { copyPathEntries } from "../../lib/copyPathEntries";
 import { fileTreeMenu } from "../../lib/fileTreeMenu";
 import { fileWindowKindFor } from "../../lib/fileWindowKind";
 import { fs as fsApi } from "../../lib/ipc";
+import { withoutLocalOnly } from "../../lib/localOnlyEntries";
 import {
 	clickOpensFileWindow,
 	openFileWindowForPath,
@@ -11,6 +12,7 @@ import {
 import { revealLabel } from "../../lib/platform";
 import type { DirEntry } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
+import { useHostOfWorkspace } from "../../stores/hostAgentsStore";
 import { ConfirmDialog } from "../ConfirmDialog";
 import type { ContextMenuItem } from "../Terminal/PaneContextMenu";
 import { PaneContextMenu } from "../Terminal/PaneContextMenu";
@@ -123,6 +125,8 @@ export function FileTree({
 	const openFileAsDiff = useExplorerStore((s) => s.openFileAsDiff);
 	const storeEdit = useExplorerStore((s) => s.pendingEdit);
 	const pendingEdit = readOnly ? null : storeEdit;
+	// A Host's files cannot be revealed in this computer's file manager.
+	const onHost = useHostOfWorkspace(workspaceId) !== null;
 	const openPath = (filePath: string) => {
 		if (onOpenFile) onOpenFile(filePath);
 		else void useExplorerStore.getState().openFile(workspaceId, filePath);
@@ -174,11 +178,15 @@ export function FileTree({
 			setMenu(null);
 			run();
 		};
-		const ids = fileTreeMenu({
-			entry,
-			hasFileWindow: !!entry && !entry.isDir && !!fileWindowKindFor(entry.name),
-			readOnly,
-		});
+		const ids = withoutLocalOnly(
+			fileTreeMenu({
+				entry,
+				hasFileWindow:
+					!!entry && !entry.isDir && !!fileWindowKindFor(entry.name),
+				readOnly,
+			}),
+			onHost,
+		);
 		return ids.flatMap((id): ContextMenuItem[] => {
 			switch (id) {
 				case "separator":

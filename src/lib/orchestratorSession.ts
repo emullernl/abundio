@@ -8,8 +8,9 @@
  * Active before Active again.
  */
 
+import { agentsForWorkspace, hostOfWorkspace } from "../stores/hostAgentsStore";
 import { useOrchestratorStore } from "../stores/orchestratorStore";
-import { fallbackProfileId } from "../stores/profileStore";
+import { fallbackProfileId, useProfileStore } from "../stores/profileStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useWindowUiStore } from "../stores/windowUiStore";
@@ -82,7 +83,10 @@ async function startAgentIn(
 	mode: StartMode,
 ): Promise<void> {
 	const settings = useSettingsStore.getState();
-	if (!settings.agents.some((a) => a.id === agentId)) {
+	// Its Host's Agents: a remote Window's Orchestrator runs on its Host
+	// (ADR-0064).
+	const agents = agentsForWorkspace(ws.id);
+	if (!agents.some((a) => a.id === agentId)) {
 		throw new Error("That agent is not available any more.");
 	}
 	let target = startPane(ws.tabs);
@@ -121,9 +125,11 @@ async function startAgentIn(
 	const sessionId =
 		(node?.type === "terminal" ? node.agentSessionId : undefined) ??
 		(last?.agentId === agentId ? last.sessionId : undefined);
-	const shell = settings.shellPath || (await shells.default().catch(() => ""));
+	// This computer's shell setting is this computer's; on a Host, its own.
+	const ownShell = hostOfWorkspace(ws.id) === null ? settings.shellPath : null;
+	const shell = ownShell || (await shells.default().catch(() => ""));
 	const start = orchestratorStart({
-		agents: settings.agents,
+		agents,
 		agentId,
 		sessionId,
 		mode: mode === "fresh" || ranOtherAgent ? "fresh" : "resume",
@@ -332,9 +338,16 @@ export function installOrchestratorSession(): () => void {
 	const stopExit = watchForExit();
 	let stopFolder: (() => void) | null = null;
 	let gone = false;
-	void listen<{ profileId: string }>("orchestrator-folder-changed", (e) => {
-		void orchestratorFolderChanged(e.payload.profileId);
-	}).then((un) => {
+	void listen<{ profileId: string; fromHost?: string }>(
+		"orchestrator-folder-changed",
+		(e) => {
+			// Only this Window's own backend's: a joined Host's Profile may
+			// have the same id (every database seeds the same Default id).
+			const own = useProfileStore.getState().remote?.hostId ?? null;
+			if ((e.payload.fromHost ?? null) !== own) return;
+			void orchestratorFolderChanged(e.payload.profileId);
+		},
+	).then((un) => {
 		if (gone) un();
 		else stopFolder = un;
 	});

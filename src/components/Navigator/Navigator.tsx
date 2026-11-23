@@ -51,16 +51,17 @@ import { isMac } from "../../lib/platform";
 import { getTerminal } from "../../lib/terminalManager";
 import type { Tab, WorkspaceWithTabs } from "../../lib/types";
 import { buildWorkspaceRows } from "../../lib/worktreeGrouping";
+import { useAllAgents } from "../../stores/hostAgentsStore";
 import {
 	computePtyDotStatus,
 	type DotStatus,
 	usePtyActivityStore,
 } from "../../stores/ptyActivityStore";
-import { useSettingsStore } from "../../stores/settingsStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { AgentStatusIcon } from "../AgentStatusIcon";
+import { HostChip } from "../HostChip";
 import { StatusComposite } from "../StatusComposite";
 
 const STATUS_CHIPS: Record<NavStatus, { label: string; icon: DotStatus }> = {
@@ -148,7 +149,7 @@ function NavigatorDialog({ onClose }: { onClose: () => void }) {
 	const titles = usePtyActivityStore((s) => s.titles);
 	const cwds = usePtyActivityStore((s) => s.cwds);
 	const detectedAgentIds = usePtyActivityStore((s) => s.detectedAgentIds);
-	const agents = useSettingsStore((s) => s.agents);
+	const agents = useAllAgents();
 
 	// File windows live in Rust; read them when the dialog opens and when the
 	// Opened set changes. One can still be closed with the mouse while the
@@ -679,6 +680,7 @@ function WorkspaceLine({
 			>
 				{row.name}
 			</span>
+			<HostChip workspaceId={workspace?.id} />
 			{row.branch && (
 				<span
 					className="flex items-center gap-1 truncate"

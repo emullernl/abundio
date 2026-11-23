@@ -173,6 +173,29 @@ pub fn open_or_focus_settings_window(
     app: &AppHandle<Wry>,
     initial_section: Option<&str>,
 ) -> Result<(), AbundioError> {
+    open_settings(app, initial_section, None)
+}
+
+/// Settings ▸ Hosts on This computer, checking `host_id` there, so its
+/// checklist offers Update (a Window whose Host runs another server
+/// version). An id that is not shaped like one is refused.
+pub fn open_settings_to_check_host(app: &AppHandle<Wry>, host_id: &str) -> Result<(), AbundioError> {
+    if !is_host_id(host_id) {
+        return Err(AbundioError::InvalidOperation("not a Host id".into()));
+    }
+    open_settings(app, Some("hosts"), Some(host_id))
+}
+
+/// Shaped like a Host id: safe in a URL query and an event payload.
+fn is_host_id(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 64 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+fn open_settings(
+    app: &AppHandle<Wry>,
+    initial_section: Option<&str>,
+    check_host: Option<&str>,
+) -> Result<(), AbundioError> {
     use tauri::Emitter;
 
     // `open_settings_window` is invoke-able with an arbitrary `Option<String>`,
@@ -182,9 +205,14 @@ pub fn open_or_focus_settings_window(
     // The JS side rejects unknown ids anyway; this keeps the boundary honest
     // rather than relying on the far side to clean up.
     let initial_section = initial_section.filter(|s| is_section_id(s));
+    // The Host the opening Window is on (Host settings, ADR-0064): Settings
+    // edits that Host's per-Host sections first. `local` for this computer.
+    // Hosts is a section of This computer: checking one opens there.
+    let host = if check_host.is_some() { "local".to_string() } else { opener_host(app) };
 
     if let Some(existing) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
         let _ = existing.set_focus();
+        let _ = app.emit_to(SETTINGS_WINDOW_LABEL, "settings-set-host", host.clone());
         if let Some(section) = initial_section {
             let _ = app.emit_to(
                 SETTINGS_WINDOW_LABEL,
@@ -192,15 +220,22 @@ pub fn open_or_focus_settings_window(
                 section.to_string(),
             );
         }
+        if let Some(id) = check_host {
+            let _ = app.emit_to(SETTINGS_WINDOW_LABEL, "settings-check-host", id.to_string());
+        }
         return Ok(());
     }
 
     // Put the initial section in the URL so the settings window can read it
     // during its own startup (before any IPC roundtrip would resolve).
-    let url_path = match initial_section {
+    let mut url_path = match initial_section {
         Some(section) => format!("index.html?settings&section={}", section),
         None => "index.html?settings".to_string(),
     };
+    url_path.push_str(&format!("&host={host}"));
+    if let Some(id) = check_host {
+        url_path.push_str(&format!("&check={id}"));
+    }
 
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut builder = WebviewWindowBuilder::new(
@@ -209,6 +244,7 @@ pub fn open_or_focus_settings_window(
         WebviewUrl::App(url_path.into()),
     )
     .title("Settings")
+    .background_color(crate::window_background::current())
     .inner_size(SETTINGS_DEFAULT_SIZE.0, SETTINGS_DEFAULT_SIZE.1)
     .min_inner_size(600.0, 400.0)
     // Where it opens with no saved position; a saved one wins.
@@ -337,46 +373,10 @@ pub fn open_window_with_profile_and_label(
         )));
     }
 
-    // Match the main window's chrome on macOS: native title bar is overlaid
-    // by transparent drag region, traffic lights float on top of content, no
-    // OS-drawn title (the React Titlebar component renders it itself). The
-    // tauri.macos.conf.json applies these settings to the conf-spawned main
-    // window — we replicate them here for every additional window.
-    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
-    let mut builder =
-        WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
-            .title(&window_title_for(&profile_name))
-            .inner_size(1200.0, 800.0)
-            .min_inner_size(600.0, 400.0)
-            // Hidden until placed, so it never shows at the default spot first.
-            .visible(false)
-            // A restored window shows without focus, which Windows and Linux
-            // only do for a window built unfocused (window_raise.rs).
-            .focused(desired_label.is_none());
-    #[cfg(target_os = "macos")]
-    {
-        builder = builder
-            .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .hidden_title(true);
-    }
-    let result = builder.build();
+    let result = build_profile_window(app, &label, &window_title_for(&profile_name), desired_label.is_some(), placement);
 
     match result {
-        Ok(window) => {
-            // Only the restore at app start asks for a label. Those windows
-            // get their desktop back and show together at the end of the
-            // restore (`window_frame::show_launch_windows`); a new window
-            // shows now, focused.
-            if desired_label.is_some() {
-                let desktop = crate::window_frame::place(&window, placement, true);
-                if let Some(launch) = app.try_state::<crate::window_frame::LaunchRestore>() {
-                    launch.defer_show(&label, desktop);
-                } else {
-                    crate::window_frame::show_placed(&window, None, false);
-                }
-            } else {
-                crate::window_frame::place_and_show(&window, placement, true, false);
-            }
+        Ok(_window) => {
             // Tell other windows their menus need to refresh ("open elsewhere"
             // dimming for the now-owned profile).
             let _ = app.emit("profile-ownership-changed", ());
@@ -392,6 +392,60 @@ pub fn open_window_with_profile_and_label(
             )))
         }
     }
+}
+
+/// Build a Profile window hidden, place it, and show it: now and focused for
+/// a new window, or with the other restored windows (`restoring`, ADR-0051).
+/// Shared by local and remote Profile windows (phase 7d).
+pub fn build_profile_window(
+    app: &AppHandle<Wry>,
+    label: &str,
+    title: &str,
+    restoring: bool,
+    placement: Option<crate::window_placement::Remembered>,
+) -> Result<tauri::WebviewWindow<Wry>, tauri::Error> {
+    let desired_label: Option<&str> = restoring.then_some(label);
+    // Match the main window's chrome on macOS: native title bar is overlaid
+    // by transparent drag region, traffic lights float on top of content, no
+    // OS-drawn title (the React Titlebar component renders it itself). The
+    // tauri.macos.conf.json applies these settings to the conf-spawned main
+    // window — we replicate them here for every additional window.
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    let mut builder =
+        WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
+            .title(title)
+            .background_color(crate::window_background::current())
+            .inner_size(1200.0, 800.0)
+            .min_inner_size(600.0, 400.0)
+            // Hidden until placed, so it never shows at the default spot first.
+            .visible(false)
+            // A restored window shows without focus, which Windows and Linux
+            // only do for a window built unfocused (window_raise.rs).
+            .focused(desired_label.is_none());
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true);
+    }
+    let result = builder.build();
+
+    let window = result?;
+    // Only the restore at app start asks for a label. Those windows
+    // get their desktop back and show together at the end of the
+    // restore (`window_frame::show_launch_windows`); a new window
+    // shows now, focused.
+    if desired_label.is_some() {
+        let desktop = crate::window_frame::place(&window, placement, true);
+        if let Some(launch) = app.try_state::<crate::window_frame::LaunchRestore>() {
+            launch.defer_show(label, desktop);
+        } else {
+            crate::window_frame::show_placed(&window, None, false);
+        }
+    } else {
+        crate::window_frame::place_and_show(&window, placement, true, false);
+    }
+    Ok(window)
 }
 
 /// Creates a new Profile auto-named "Untitled" (or "Untitled N" on collision)
@@ -435,6 +489,14 @@ pub fn next_untitled_name(existing: &[crate::profile_store::Profile]) -> String 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_host_id_shaped_value_reaches_the_settings_url() {
+        assert!(is_host_id("host-3f2a_b"));
+        for bad in ["", "a&section=x", "a#b", "a b", &"x".repeat(65)] {
+            assert!(!is_host_id(bad), "{bad}");
+        }
+    }
     use crate::profile_store::Profile;
 
     fn p(name: &str) -> Profile {
@@ -610,4 +672,17 @@ mod tests {
         }
         assert!(!is_section_id(&"a".repeat(33)), "accepted an overlong id");
     }
+}
+
+/// The Host of the Profile window that has focus as Settings opens (the
+/// opener: a menu, a shortcut or a button in it), `local` for this computer.
+/// A Host id is only letters, digits and dashes, so it is safe in a URL.
+fn opener_host(app: &AppHandle<Wry>) -> String {
+    let remote = app.try_state::<crate::remote_windows::RemoteWindows>();
+    app.webview_windows()
+        .into_iter()
+        .filter(|(label, w)| is_profile_window_label(label) && w.is_focused().unwrap_or(false))
+        .find_map(|(label, _)| remote.as_ref().and_then(|r| r.get(&label)).map(|b| b.host_id))
+        .filter(|h| h.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+        .unwrap_or_else(|| "local".to_string())
 }

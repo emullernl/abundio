@@ -25,6 +25,8 @@ use uuid::Uuid;
 use crate::error::AbundioError;
 use crate::window_frame::PlacementTracker;
 use crate::window_placement::Remembered;
+pub use crate::workspace_store::MarkdownView;
+
 
 /// Every File window label starts with this: `md-<uuid>`. The prefix dates
 /// from when these were Markdown windows. It is kept on purpose (ADR-0049):
@@ -78,32 +80,6 @@ impl FileWindowKind {
 
     fn is_diff(&self) -> bool {
         matches!(self, FileWindowKind::Diff | FileWindowKind::CommitDiff)
-    }
-}
-
-/// Which of its two views a markdown File window shows. Other kinds ignore it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum MarkdownView {
-    Rendered,
-    Source,
-}
-
-impl MarkdownView {
-    pub(crate) fn as_str(&self) -> &'static str {
-        match self {
-            MarkdownView::Rendered => "rendered",
-            MarkdownView::Source => "source",
-        }
-    }
-
-    /// Unknown values read as `Rendered`: a row written by a newer build should
-    /// still open, in the safe read-only view.
-    pub(crate) fn from_str(s: &str) -> Self {
-        match s {
-            "source" => MarkdownView::Source,
-            _ => MarkdownView::Rendered,
-        }
     }
 }
 
@@ -559,6 +535,7 @@ fn build_window(
         WebviewUrl::App("index.html?file-window".into()),
     )
     .title(window_title(row, &meta.name))
+    .background_color(crate::window_background::current())
     .inner_size(880.0, 760.0)
     .min_inner_size(420.0, 320.0)
     .resizable(true)

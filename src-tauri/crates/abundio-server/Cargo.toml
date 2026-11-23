@@ -1,0 +1,31 @@
+[package]
+name = "abundio-server"
+version = "3.1.0"
+description = "Abundio on a Host with no window: Workspaces, PTYs and Agents a desktop Client connects to over SSH"
+authors = ["Emil Müller"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[[bin]]
+name = "abundio-server"
+path = "src/main.rs"
+
+[dependencies]
+abundio-core = { path = "../abundio-core" }
+log = "0.4"
+serde_json = "1"
+crossbeam-channel = "0.5"
+# The same versions as abundio-core, so one copy of each is built.
+rusqlite = { version = "0.31", features = ["bundled", "backup"] }
+tiny_http = "0.12"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30", default-features = false, features = ["signal"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[target.'cfg(unix)'.dev-dependencies]
+nix = { version = "0.30", default-features = false, features = ["signal"] }

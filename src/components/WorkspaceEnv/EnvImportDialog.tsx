@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { FolderOpen } from "lucide-react";
 import { useMemo, useState } from "react";
+import { openDialog } from "../../lib/desktop";
 import { type ParsedEnvEntry, parseDotenv } from "../../lib/dotenvParse";
 import { fs } from "../../lib/ipc";
 
@@ -34,7 +35,6 @@ export function EnvImportDialog({
 	const [readError, setReadError] = useState<string | null>(null);
 
 	const pickFile = async () => {
-		const { open: openDialog } = await import("@tauri-apps/plugin-dialog");
 		// No extension filter: `.env` has no extension at all as far as the OS is
 		// concerned, and `.env.production` would filter as "production" — any
 		// filter here would hide the very files people are looking for.

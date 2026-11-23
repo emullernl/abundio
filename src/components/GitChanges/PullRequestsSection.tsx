@@ -1,7 +1,12 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { pr } from "../../lib/ipc";
+import { pr, settingsWindow } from "../../lib/ipc";
+import {
+	type PrHostFacts,
+	prHostNote,
+	prViewLabel,
+} from "../../lib/prHostScope";
 import type { GhStatus } from "../../lib/types";
+import { useProfileStore } from "../../stores/profileStore";
 import {
 	MY_PRS_VIEWS,
 	type MyPrsView,
@@ -20,6 +25,7 @@ import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { useJoinedHostName } from "../HostChip";
 import { ChevronDown, GitPullRequest, RefreshCw } from "../Icons";
 import { PullRequestItem } from "./PullRequestItem";
 
@@ -56,6 +62,22 @@ export function PullRequestsSection() {
 		(s) => s.openedWorkspaceIds.size === 0,
 	);
 	const hasRepo = !!activeRepoSlug;
+	// Workspaces on a Host are not tracked here (prHostScope.ts).
+	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+	const joinedHostName = useJoinedHostName(activeWorkspaceId);
+	const remoteHostName = useProfileStore((s) => s.remote?.hostName ?? null);
+	const profileHasHostWorkspaces = useWorkspaceStore((s) =>
+		s.workspaces.some((w) => !!w.joined),
+	);
+	const profileName = useProfileStore(
+		(s) => s.profiles.find((p) => p.id === s.activeProfileId)?.name ?? null,
+	);
+	const hostFacts: PrHostFacts = {
+		activeHostName: joinedHostName ?? remoteHostName,
+		remoteHostName,
+		profileHasHostWorkspaces,
+		profileName,
+	};
 	const effReviewView: ReviewView =
 		noWorkspace && reviewView === "review-repo" ? "review-profile" : reviewView;
 	const effMyPrsView: MyPrsView =
@@ -177,6 +199,7 @@ export function PullRequestsSection() {
 				ghStatus={ghStatus}
 				hasRepo={hasRepo}
 				hasProfileRepos={profileRepoSlugs.size > 0}
+				hostFacts={hostFacts}
 				repoSlugsResolved={repoSlugsResolved}
 				pollEnabled={prPollEnabled}
 				onRefresh={handleRefresh}
@@ -197,6 +220,7 @@ export function PullRequestsSection() {
 				ghStatus={ghStatus}
 				hasRepo={hasRepo}
 				hasProfileRepos={profileRepoSlugs.size > 0}
+				hostFacts={hostFacts}
 				repoSlugsResolved={repoSlugsResolved}
 				pollEnabled={prPollEnabled}
 				onRefresh={handleRefresh}
@@ -224,7 +248,7 @@ export function PullRequestsSection() {
 }
 
 function openGithubSettings() {
-	invoke("open_settings_window", { section: "github" }).catch(() => {});
+	settingsWindow.open("github").catch(() => {});
 }
 
 interface PrSubPanelProps<V extends PrView> {
@@ -244,6 +268,8 @@ interface PrSubPanelProps<V extends PrView> {
 	repoSlugsResolved: boolean;
 	/** Whether automatic PR polling is enabled (Settings → GitHub). */
 	pollEnabled: boolean;
+	/** Where the Workspaces are: a Host's are not tracked. */
+	hostFacts: PrHostFacts;
 	onRefresh: () => void;
 	/** Manual refresh in flight — spins the refresh icon. */
 	refreshing?: boolean;
@@ -262,11 +288,20 @@ function PrSubPanel<V extends PrView>({
 	hasProfileRepos,
 	repoSlugsResolved,
 	pollEnabled,
+	hostFacts,
 	onRefresh,
 	refreshing,
 	showRefresh,
 	showPrStatus,
 }: PrSubPanelProps<V>) {
+	const hostNote = prHostNote(scope, hostFacts);
+	const viewLabel = (v: V) =>
+		prViewLabel(
+			PR_VIEW_LABELS[v],
+			scopeOf(v),
+			hostFacts.profileName ?? null,
+			hostFacts.profileHasHostWorkspaces,
+		);
 	const [dropdownOpen, setDropdownOpen] = useState(false);
 	const unread = unreadCount(section.prs);
 	const dropdownRef = useRef<HTMLDivElement>(null);
@@ -326,8 +361,12 @@ function PrSubPanel<V extends PrView>({
 							e.currentTarget.style.borderColor = "transparent";
 						}}
 					>
-						<span className="truncate" style={{ maxWidth: 160 }}>
-							{PR_VIEW_LABELS[activeView]}
+						<span
+							className="truncate"
+							style={{ maxWidth: 160 }}
+							title={viewLabel(activeView)}
+						>
+							{viewLabel(activeView)}
 						</span>
 						<ChevronDown size={10} />
 					</button>
@@ -376,7 +415,7 @@ function PrSubPanel<V extends PrView>({
 											e.currentTarget.style.backgroundColor = "transparent";
 									}}
 								>
-									{PR_VIEW_LABELS[view]}
+									{viewLabel(view)}
 								</button>
 							))}
 						</div>
@@ -502,6 +541,8 @@ function PrSubPanel<V extends PrView>({
 							gh auth login
 						</span>
 					</StatusMessage>
+				) : hostNote.block ? (
+					<StatusMessage>{hostNote.block}</StatusMessage>
 				) : scope === "repo" && !hasRepo ? (
 					<StatusMessage>No GitHub remote found</StatusMessage>
 				) : scope === "profile" && !repoSlugsResolved ? (

@@ -1,4 +1,3 @@
-import { open } from "@tauri-apps/plugin-shell";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CodeEditor } from "./components/FileViewer/CodeEditor";
 import { FileChangeBanner } from "./components/FileViewer/FileChangeBanner";
@@ -10,6 +9,7 @@ import { DiffViewer } from "./components/GitChanges/DiffViewer";
 import { SaveConfirmDialog } from "./components/SaveConfirmDialog";
 import { useShortcutLabel } from "./hooks/useShortcutLabel";
 import { appWindow } from "./lib/appWindow";
+import { openExternal } from "./lib/desktop";
 import {
 	diskChanged,
 	diskRemoved,
@@ -306,7 +306,7 @@ function TextWindow({ info }: { info: FileWindowInfo }) {
 				if (contentRef.current) scrollToFragment(contentRef.current, action.id);
 				return;
 			case "external":
-				open(action.url).catch(() => {});
+				openExternal(action.url).catch(() => {});
 				return;
 			case "workspace-markdown":
 				fileWindows

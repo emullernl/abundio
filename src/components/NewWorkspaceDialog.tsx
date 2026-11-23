@@ -6,14 +6,21 @@ import {
 	getAgentIconComponent,
 	TerminalBrandIcon,
 } from "../lib/agentIcons";
+import { openDialog } from "../lib/desktop";
 import { type FolderCheck, workspaces as workspacesApi } from "../lib/ipc";
 import type { CodingAgent } from "../lib/types";
 import { folderVerdict } from "../lib/workspaceFolder";
-import { fallbackProfileId } from "../stores/profileStore";
-import { useSettingsStore } from "../stores/settingsStore";
+import {
+	useAgentsForHost,
+	useAgentsForWorkspace,
+} from "../stores/hostAgentsStore";
+import { useJoinedStore } from "../stores/joinedStore";
+import { fallbackProfileId, useProfileStore } from "../stores/profileStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import type { LaunchChoice } from "./LaunchPicker";
 import { secondaryButtonClass } from "./PromptActions/fieldStyles";
+import { Select } from "./PromptActions/Select";
+import { RemoteFolderPicker } from "./RemoteFolderPicker";
 
 interface NewWorkspaceDialogProps {
 	isOpen: boolean;
@@ -22,6 +29,9 @@ interface NewWorkspaceDialogProps {
 		name: string;
 		folderPath: string;
 		choice: LaunchChoice;
+		/** A Joined profile to make it in, on its Host; `null`: this Window's
+		 *  own Profile (phase 10e). */
+		location: { hostId: string; profileId: string } | null;
 	}) => void;
 }
 
@@ -41,7 +51,19 @@ export function NewWorkspaceDialog({
 	onClose,
 	onSubmit,
 }: NewWorkspaceDialogProps) {
-	const agents = useSettingsStore((s) => s.agents);
+	// Where it goes (phase 10e): this Window's own Profile, or a Joined
+	// profile whose Host is connected. "" is the Window's own.
+	const joinedEntries = useJoinedStore((s) => s.entries);
+	const joinedLinks = useJoinedStore((s) => s.links);
+	const locations = joinedEntries.filter(
+		(e) => joinedLinks[e.hostId]?.state === "online",
+	);
+	const [locationHost, setLocationHost] = useState("");
+	const location = locations.find((e) => e.hostId === locationHost) ?? null;
+	// The Agents of where it goes: the Window's own, or that Host's.
+	const ownAgents = useAgentsForWorkspace(null);
+	const locationAgents = useAgentsForHost(location?.hostId ?? null);
+	const agents = location ? locationAgents : ownAgents;
 	const containerRef = useRef<HTMLDivElement>(null);
 	const nameInputRef = useRef<HTMLInputElement>(null);
 
@@ -56,13 +78,17 @@ export function NewWorkspaceDialog({
 		if (!folderPath) return;
 		let live = true;
 		workspacesApi
-			.folderCheck(folderPath, fallbackProfileId())
+			.folderCheck(
+				folderPath,
+				location?.remoteProfileId ?? fallbackProfileId(),
+				location?.hostId ?? null,
+			)
 			.then((c) => live && setCheck(c))
 			.catch(() => {});
 		return () => {
 			live = false;
 		};
-	}, [folderPath]);
+	}, [folderPath, location?.remoteProfileId, location?.hostId]);
 	const [selectedIndex, setSelectedIndex] = useState(0);
 	const nameDirtyRef = useRef(false);
 
@@ -111,16 +137,31 @@ export function NewWorkspaceDialog({
 			name: name.trim(),
 			folderPath,
 			choice: opt.choice,
+			location: location
+				? { hostId: location.hostId, profileId: location.remoteProfileId }
+				: null,
 		});
 		onClose();
 	};
 
+	/** A remote Window picks on its Host: the native picker only sees this
+	 *  computer. */
+	const remote = useProfileStore((s) => s.remote);
+	const [remotePicking, setRemotePicking] = useState(false);
+
 	const pickFolder = async () => {
-		const { open: openDialog } = await import("@tauri-apps/plugin-dialog");
+		if (remote || location) {
+			setRemotePicking(true);
+			return;
+		}
 		const folder = await openDialog({ directory: true, multiple: false });
 		if (!folder) return;
 		const path = typeof folder === "string" ? folder : folder[0];
 		if (!path) return;
+		takeFolder(path);
+	};
+
+	const takeFolder = (path: string) => {
 		setFolderPath(path);
 		if (!nameDirtyRef.current && name.trim().length === 0) {
 			const derived = basename(path);
@@ -152,6 +193,18 @@ export function NewWorkspaceDialog({
 
 	return (
 		<AnimatePresence>
+			{isOpen && remotePicking && (remote || location) && (
+				<RemoteFolderPicker
+					key="remote-folder-picker"
+					hostName={location?.hostName ?? remote?.hostName ?? ""}
+					hostId={location?.hostId}
+					onPick={(path) => {
+						setRemotePicking(false);
+						takeFolder(path);
+					}}
+					onCancel={() => setRemotePicking(false)}
+				/>
+			)}
 			{isOpen && (
 				<motion.div
 					role="presentation"
@@ -245,6 +298,28 @@ export function NewWorkspaceDialog({
 									style={inputStyle}
 								/>
 							</div>
+
+							{/* Location: only with Joined profiles to choose from */}
+							{locations.length > 0 && !remote && (
+								<div className="flex flex-col" style={{ gap: 6 }}>
+									<span style={fieldLabelStyle}>Location</span>
+									<Select
+										value={locationHost}
+										options={[
+											{ value: "", label: "This computer" },
+											...locations.map((e) => ({
+												value: e.hostId,
+												label: `☁ ${e.hostName} · ${e.remoteProfileName}`,
+											})),
+										]}
+										onChange={(v) => {
+											setLocationHost(v);
+											// A folder of one machine means nothing on another.
+											setFolderPath("");
+										}}
+									/>
+								</div>
+							)}
 
 							{/* Folder */}
 							<div className="flex flex-col" style={{ gap: 6 }}>

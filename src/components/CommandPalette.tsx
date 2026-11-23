@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	shortcutLabelFor,
@@ -9,6 +8,7 @@ import { useWorkWorkspaces } from "../hooks/useWorkWorkspaces";
 import { isAgentPane } from "../lib/firePromptAction";
 import { toggleFleetSpotlight, useTargetPaneId } from "../lib/fleetFocus";
 import { fuzzyMatch } from "../lib/fuzzyMatch";
+import { settingsWindow } from "../lib/ipc";
 import { type KeyAction, triggerAction } from "../lib/keybindings";
 import { fileWindowTargetForPane } from "../lib/openFileWindow";
 import { isOrchestratorPane } from "../lib/orchestrator";
@@ -19,6 +19,7 @@ import { themeList } from "../lib/themes";
 import { typedLaunch } from "../lib/typedLaunch";
 import { addWorktreeTargetId } from "../lib/worktreeGrouping";
 import { useExplorerStore } from "../stores/explorerStore";
+import { useAgentsForWorkspace } from "../stores/hostAgentsStore";
 import { useProfileStore } from "../stores/profileStore";
 import { requestSwitchProfile } from "../stores/profileSwitchConfirmStore";
 import { usePromptActionStore } from "../stores/promptActionStore";
@@ -67,8 +68,12 @@ export function CommandPalette({
 	const spotlightTileId = useWindowUiStore((s) => s.spotlightTileId);
 	const profilesList = useProfileStore((s) => s.profiles);
 	const activeProfileId = useProfileStore((s) => s.activeProfileId);
-	const { setTheme, debugActivityMeter, toggleDebugActivityMeter, agents } =
+	const { setTheme, debugActivityMeter, toggleDebugActivityMeter } =
 		useSettingsStore();
+	// Launches into the Active workspace: its Host's Agents (ADR-0064).
+	const agents = useAgentsForWorkspace(
+		useWorkspaceStore((s) => s.activeWorkspaceId),
+	);
 	const worktreeFacts = useWorkspaceGitStore((s) => s.worktreeFacts);
 	const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 	const addWorktreeTarget = useMemo(
@@ -119,7 +124,7 @@ export function CommandPalette({
 			category: "Profiles",
 			action: () => {
 				// Open the singleton Settings window deep-linked to Profiles.
-				invoke("open_settings_window", { section: "profiles" }).catch(() => {});
+				settingsWindow.open("profiles").catch(() => {});
 			},
 		});
 

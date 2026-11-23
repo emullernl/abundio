@@ -21,6 +21,9 @@ export interface WriteBatcher {
 	push(chunk: Uint8Array): void;
 	/** Write everything queued now and cancel the pending drain. */
 	flush(): void;
+	/** Drop everything queued, unwritten (a skip-ahead snapshot replaces
+	 *  it), and cancel the pending drain. */
+	discard(): void;
 	isEmpty(): boolean;
 }
 
@@ -88,6 +91,11 @@ export function createWriteBatcher(
 			if (timerId === null) timerId = scheduler.setTimer(flush, fallbackMs);
 		},
 		flush,
+		discard() {
+			cancelDrain();
+			chunks = [];
+			bytes = 0;
+		},
 		isEmpty: () => chunks.length === 0,
 	};
 }

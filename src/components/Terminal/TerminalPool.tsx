@@ -3,6 +3,10 @@ import { isWatchedAgent, sizeForHiddenPane } from "../../lib/hiddenAgentStart";
 import { collectTerminals, parseTabLayout } from "../../lib/paneTree";
 import { hasPendingAgent } from "../../lib/pendingAgentRegistry";
 import { shownGrid, startPtyUnlessShown } from "../../lib/terminalManager";
+import {
+	hostOfWorkspace,
+	useHostAgentsStore,
+} from "../../stores/hostAgentsStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -63,7 +67,9 @@ export function TerminalPool() {
 	// list at once. A pane that is shown within moments starts the usual way;
 	// the rest start hidden, at a size worked out from the layout. Plain
 	// shells keep waiting for their Tab.
+	// Re-checked when any Agent list changes; each pane asks its own Host's.
 	const agents = useSettingsStore((s) => s.agents);
+	const hostAgents = useHostAgentsStore((s) => s.byHost);
 	const hiddenStarts = useRef(new Map<string, () => void>());
 	useEffect(() => {
 		const starts = hiddenStarts.current;
@@ -76,7 +82,12 @@ export function TerminalPool() {
 		for (const t of terminals) {
 			if (starts.has(t.paneId)) continue;
 			if (!hasPendingAgent(t.paneId)) continue;
-			if (!isWatchedAgent(agents, t.agentId)) continue;
+			// Each pane asks its own Host's list (ADR-0064).
+			const host = hostOfWorkspace(
+				useWorkspaceStore.getState().findWorkspaceForPane?.(t.paneId)?.id,
+			);
+			const list = host ? (hostAgents[host] ?? []) : agents;
+			if (!isWatchedAgent(list, t.agentId)) continue;
 			// Agent control's `agent start` in a hidden Tab also seeds a pending
 			// Agent and calls `startPtyUnlessShown` itself, so a pane can have two
 			// waits. That is harmless: both check `started()`, so the PTY spawns
@@ -94,7 +105,7 @@ export function TerminalPool() {
 				}),
 			);
 		}
-	}, [terminals, agents]);
+	}, [terminals, agents, hostAgents]);
 	useEffect(() => {
 		const starts = hiddenStarts.current;
 		return () => {

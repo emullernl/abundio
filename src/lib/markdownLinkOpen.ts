@@ -1,5 +1,5 @@
-import { open } from "@tauri-apps/plugin-shell";
 import { useExplorerStore } from "../stores/explorerStore";
+import { openExternal } from "./desktop";
 import { classifyMarkdownLink, scrollToFragment } from "./markdownLinks";
 import { type LinkModifiers, markdownLinkTarget } from "./markdownView";
 import { openFileWindow } from "./openFileWindow";
@@ -28,7 +28,7 @@ export function followRenderedLink(o: {
 			if (o.scrollEl) scrollToFragment(o.scrollEl, action.id);
 			return;
 		case "external":
-			open(action.url).catch(() => {});
+			openExternal(action.url).catch(() => {});
 			return;
 		case "workspace-markdown":
 			if (markdownLinkTarget(o.modifiers) === "window") {

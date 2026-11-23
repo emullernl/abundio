@@ -22,6 +22,7 @@ export const SETTINGS_SECTIONS = [
 	"tasks",
 	"keyboard",
 	"profiles",
+	"hosts",
 	"github",
 	"updates",
 ] as const;
@@ -63,6 +64,7 @@ export const SETTINGS_NAV: ReadonlyArray<{
 			{ id: "tasks", label: "Tasks" },
 			{ id: "keyboard", label: "Keyboard" },
 			{ id: "profiles", label: "Profiles" },
+			{ id: "hosts", label: "Hosts" },
 			{ id: "github", label: "GitHub" },
 			{ id: "updates", label: "Updates" },
 		],
@@ -106,4 +108,21 @@ export function initialSection(search: string): SettingsSection {
 	} catch {
 		return DEFAULT_SECTION;
 	}
+}
+
+/** The sections that hold **Host settings** (ADR-0064): with a Host picked,
+ *  Settings shows only these, a filter on that Host. */
+export const HOST_SECTIONS: ReadonlySet<SettingsSection> = new Set([
+	"agents",
+	"profiles",
+	"terminal",
+]);
+
+/** The navigation with a Host picked: only its sections, empty groups gone. */
+export function settingsNavFor(hostPicked: boolean): typeof SETTINGS_NAV {
+	if (!hostPicked) return SETTINGS_NAV;
+	return SETTINGS_NAV.map((g) => ({
+		...g,
+		items: g.items.filter((i) => HOST_SECTIONS.has(i.id)),
+	})).filter((g) => g.items.length > 0);
 }

@@ -1,0 +1,196 @@
+//! The git worktree host commands (`host_api`). All git work delegates to
+//! `git_libgit2`; the desktop runs them off its async runtime
+//! (`host_api::may_block`). See ADR-0017.
+
+
+use crate::error::AbundioError;
+use crate::git_libgit2;
+pub use crate::git_libgit2::WorktreeEntry;
+
+
+/// List every worktree of the repository that `cwd` belongs to (primary first).
+pub fn list_repo_worktrees(cwd: String) -> Result<Vec<WorktreeEntry>, AbundioError> {
+    git_libgit2::list_repo_worktrees(&cwd)
+}
+
+/// Create a new worktree of the primary's repository, checking out `branch`
+/// (created from the primary's HEAD if it doesn't exist) at the absolute `path`.
+pub fn worktree_add(
+    primary_cwd: String,
+    branch: String,
+    path: String,
+) -> Result<WorktreeEntry, AbundioError> {
+    git_libgit2::add_worktree(&primary_cwd, &branch, &path)
+}
+
+/// Remove the worktree whose folder is `worktree_path` (deletes the folder,
+/// prunes git's admin link, keeps the branch).
+pub fn worktree_remove(
+    primary_cwd: String,
+    worktree_path: String,
+) -> Result<(), AbundioError> {
+    {
+        git_libgit2::remove_worktree(&primary_cwd, &worktree_path)
+    }
+}
+
+/// True if the worktree at `cwd` has uncommitted or untracked changes — drives
+/// the dirty-aware Remove confirmation.
+pub fn worktree_dirty(cwd: String) -> Result<bool, AbundioError> {
+    Ok(git_libgit2::worktree_is_dirty(&cwd))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::git_libgit2;
+    use std::process::Command;
+
+    fn run_git(cwd: &std::path::Path, args: &[&str]) {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .expect("git spawn");
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn setup_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        run_git(p, &["init", "-b", "main"]);
+        run_git(p, &["config", "user.email", "t@t.com"]);
+        run_git(p, &["config", "user.name", "T"]);
+        std::fs::write(p.join("a.txt"), "hello\n").unwrap();
+        run_git(p, &["add", "."]);
+        run_git(p, &["commit", "-m", "init"]);
+        dir
+    }
+
+    #[test]
+    fn main_worktree_is_primary_and_grouped() {
+        let dir = setup_repo();
+        let cwd = dir.path().to_str().unwrap();
+        let bits = git_libgit2::worktree_summary_bits(cwd);
+        assert!(bits.is_main_worktree);
+        assert!(bits.group_key.is_some());
+    }
+
+    #[test]
+    fn add_then_list_then_remove_worktree() {
+        let dir = setup_repo();
+        let primary = dir.path().to_str().unwrap().to_string();
+        let wt_path = dir.path().parent().unwrap().join("wt-feature");
+        let wt_path_str = wt_path.to_str().unwrap().to_string();
+
+        // New branch + worktree.
+        let entry =
+            git_libgit2::add_worktree(&primary, "feature", &wt_path_str).expect("add worktree");
+        assert!(!entry.is_primary);
+        assert_eq!(entry.branch.as_deref(), Some("feature"));
+        assert!(wt_path.exists());
+
+        // Both worktrees share a group key; primary detected.
+        let list = git_libgit2::list_repo_worktrees(&primary).expect("list");
+        assert_eq!(list.len(), 2);
+        assert!(list.iter().any(|e| e.is_primary));
+        assert!(list.iter().any(|e| !e.is_primary && e.branch.as_deref() == Some("feature")));
+
+        let primary_key = git_libgit2::worktree_summary_bits(&primary).group_key;
+        let linked_key = git_libgit2::worktree_summary_bits(&wt_path_str).group_key;
+        assert_eq!(primary_key, linked_key);
+        assert!(!git_libgit2::worktree_summary_bits(&wt_path_str).is_main_worktree);
+
+        // Remove deletes the folder but keeps the branch.
+        git_libgit2::remove_worktree(&primary, &wt_path_str).expect("remove");
+        assert!(!wt_path.exists());
+        let after = git_libgit2::list_repo_worktrees(&primary).expect("list after");
+        assert_eq!(after.len(), 1);
+
+        // Branch survives removal.
+        let out = Command::new("git")
+            .args(["branch", "--list", "feature"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&out.stdout).contains("feature"));
+    }
+
+    #[test]
+    fn add_worktree_rejects_existing_folder() {
+        let dir = setup_repo();
+        let primary = dir.path().to_str().unwrap().to_string();
+        let existing = dir.path().parent().unwrap().join("already-here");
+        std::fs::create_dir_all(&existing).unwrap();
+        let res = git_libgit2::add_worktree(&primary, "x", existing.to_str().unwrap());
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn add_worktree_on_commitless_repo_gives_actionable_error() {
+        // A freshly `git init`'d repo has an unborn HEAD — git can't base a
+        // worktree on a non-existent commit. The error must explain that
+        // (mention commits) rather than leak the raw libgit2 reference error.
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-b", "main"]);
+        let primary = dir.path().to_str().unwrap().to_string();
+        let wt_path = dir.path().parent().unwrap().join("wt-empty");
+        let res = git_libgit2::add_worktree(&primary, "feature", wt_path.to_str().unwrap());
+        let err = res.expect_err("worktree add on a commitless repo must fail");
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("commit"),
+            "error should mention commits, got: {msg}"
+        );
+        // The half-created target folder must not be left behind.
+        assert!(!wt_path.exists());
+    }
+
+    #[test]
+    fn group_key_matches_for_separate_gitdir_worktree() {
+        // A repo created with --separate-git-dir has `<work>/.git` as a *file*
+        // pointing at the real gitdir. Exercises the `commondir`-file path in
+        // common_git_dir (is_worktree branch) for the linked worktree.
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path().join("work");
+        let gitdir = dir.path().join("gd");
+        std::fs::create_dir_all(&work).unwrap();
+        run_git(
+            &work,
+            &["init", "--separate-git-dir", gitdir.to_str().unwrap(), "-b", "main"],
+        );
+        run_git(&work, &["config", "user.email", "t@t.com"]);
+        run_git(&work, &["config", "user.name", "T"]);
+        std::fs::write(work.join("a.txt"), "x\n").unwrap();
+        run_git(&work, &["add", "."]);
+        run_git(&work, &["commit", "-m", "init"]);
+        let wt = dir.path().join("wt");
+        run_git(
+            &work,
+            &["worktree", "add", "-b", "feature", wt.to_str().unwrap()],
+        );
+
+        let main_key =
+            git_libgit2::worktree_summary_bits(work.to_str().unwrap()).group_key;
+        let linked_key =
+            git_libgit2::worktree_summary_bits(wt.to_str().unwrap()).group_key;
+        assert!(main_key.is_some());
+        assert_eq!(
+            main_key, linked_key,
+            "separate-git-dir worktrees must share a group key"
+        );
+    }
+
+    #[test]
+    fn worktree_dirty_detects_untracked() {
+        let dir = setup_repo();
+        let cwd = dir.path().to_str().unwrap();
+        assert!(!git_libgit2::worktree_is_dirty(cwd));
+        std::fs::write(dir.path().join("new.txt"), "x\n").unwrap();
+        assert!(git_libgit2::worktree_is_dirty(cwd));
+    }
+}

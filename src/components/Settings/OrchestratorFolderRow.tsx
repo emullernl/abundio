@@ -1,5 +1,5 @@
-import { homeDir } from "@tauri-apps/api/path";
 import { useEffect, useState } from "react";
+import { homeDir, openDialog } from "../../lib/desktop";
 import {
 	fs as fsApi,
 	type OrchestratorFolder,
@@ -39,8 +39,7 @@ export function OrchestratorFolderRow({ profileId }: { profileId: string }) {
 
 	async function choose() {
 		setError(null);
-		const { open } = await import("@tauri-apps/plugin-dialog");
-		const picked = await open({
+		const picked = await openDialog({
 			directory: true,
 			multiple: false,
 			defaultPath: folder?.path,

@@ -1,0 +1,190 @@
+{
+	"_comment": "Cases for reading a pane's text from its Rust screen (src-tauri/crates/abundio-core/src/screen.rs, alacritty_terminal). Once shared with the xterm.js reader, retired in phase 5 (docs/plans/remote-hosts.md).",
+	"cases": [
+		{
+			"name": "plain lines",
+			"cols": 20,
+			"rows": 5,
+			"input": "hello\r\nworld\r\n",
+			"expected": ["hello", "world"],
+			"visible": false,
+			"lines": null,
+			"scrollback": 100
+		},
+		{
+			"name": "trailing spaces trimmed",
+			"cols": 20,
+			"rows": 3,
+			"input": "a   \r\nb",
+			"expected": ["a", "b"],
+			"visible": false,
+			"lines": null,
+			"scrollback": 100
+		},
+		{
+			"name": "wrapped line joined",
+			"cols": 5,
+			"rows": 5,
+			"input": "abcdefghij-k\r\nnext",
+			"expected": ["abcdefghij-k", "next"],
+			"visible": false,
+			"lines": null,
+			"scrollback": 100
+		},
+		{
+			"name": "spaces inside a wrapped line kept",
+			"cols": 5,
+			"rows": 3,
+			"input": "abc  de",
+			"expected": ["abc  de"],
+			"visible": false,
+			"lines": null,
+			"scrollback": 100
+		},
+		{
+			"name": "colours do not show",
+			"cols": 30,
+			"rows": 3,
+			"input": "\u001b[31mred\u001b[0m and \u001b[1;32mgreen\u001b[0m",
+			"expected": ["red and green"],
+			"visible": false,
+			"lines": null,
+			"scrollback": 100
+		},
+		{
+			"name": "last n lines",
+			"cols": 10,
+			"rows": 6,
+			"input": "1\r\n2\r\n3\r\n4",
+			"lines": 2,
+			"expected": ["3", "4"],
+			"visible": false,
+			"scrollback": 100
+		},
+		{
+			"name": "visible is the screen",
+			"cols": 10,
+			"rows": 2,
+			"input": "1\r\n2\r\n3\r\n4",
+			"visible": true,
+			"expected": ["3", "4"],
+			"lines": null,
+			"scrollback": 100
+		},
+		{
+			"name": "all includes scrollback",
+			"cols": 10,
+			"rows": 2,
+			"input": "1\r\n2\r\n3\r\n4",
+			"expected": ["1", "2", "3", "4"],
+			"visible": false,
+			"lines": null,
+			"scrollback": 100
+		},
+		{
+			"name": "dim suggestion after cursor left out",
+			"cols": 30,
+			"rows": 3,
+			"input": "> \u001b[2mfix the tests\u001b[0m\u001b[13D",
+			"expected": [">"],
+			"visible": false,
+			"lines": null,
+			"scrollback": 100
+		},
+		{
+			"name": "zsh autosuggestion (dim) left out",
+			"cols": 40,
+			"rows": 3,
+			"input": "~/code ❯ git st\u001b[2matus --short\u001b[0m\u001b[12D",
+			"expected": ["~/code ❯ git st"],
+			"visible": false,
+			"lines": null,
+			"scrollback": 100
+		},
+		{
+			"name": "normal text after cursor kept",
+			"cols": 30,
+			"rows": 3,
+			"input": "> hello world\u001b[5D",
+			"expected": ["> hello world"],
+			"visible": false,
+			"lines": null,
+			"scrollback": 100
+		},
+		{
+			"name": "dim text on another row kept",
+			"cols": 30,
+			"rows": 3,
+			"input": "\u001b[2mdim\u001b[0m\r\n> ",
+			"expected": ["dim", ">"],
+			"visible": false,
+			"lines": null,
+			"scrollback": 100
+		},
+		{
+			"name": "wide characters read once",
+			"cols": 10,
+			"rows": 2,
+			"input": "a中b",
+			"expected": ["a中b"],
+			"visible": false,
+			"lines": null,
+			"scrollback": 100
+		},
+		{
+			"name": "alternate screen",
+			"cols": 10,
+			"rows": 3,
+			"input": "shell\r\n\u001b[?1049h\u001b[Htui",
+			"expected": ["tui"],
+			"visible": false,
+			"lines": null,
+			"scrollback": 100
+		},
+		{
+			"name": "line erased and rewritten",
+			"cols": 20,
+			"rows": 3,
+			"input": "progress 10%\r\u001b[2Kprogress 100%",
+			"expected": ["progress 100%"],
+			"visible": false,
+			"lines": null,
+			"scrollback": 100
+		},
+		{
+			"name": "cursor positioning",
+			"cols": 20,
+			"rows": 4,
+			"input": "\u001b[2J\u001b[1;1Htop\u001b[3;5Hmiddle",
+			"expected": ["top", "", "    middle"],
+			"visible": true,
+			"lines": null,
+			"scrollback": 100
+		},
+		{
+			"name": "agent box drawing",
+			"cols": 24,
+			"rows": 6,
+			"input": "╭──────────────────╮\r\n│ > write a test   │\r\n╰──────────────────╯\r\n  ? for shortcuts",
+			"expected": [
+				"╭──────────────────╮",
+				"│ > write a test   │",
+				"╰──────────────────╯",
+				"  ? for shortcuts"
+			],
+			"visible": false,
+			"lines": null,
+			"scrollback": 100
+		},
+		{
+			"name": "clear screen then home",
+			"cols": 10,
+			"rows": 3,
+			"input": "old\r\nlines\u001b[2J\u001b[Hnew",
+			"visible": true,
+			"expected": ["new"],
+			"lines": null,
+			"scrollback": 100
+		}
+	]
+}

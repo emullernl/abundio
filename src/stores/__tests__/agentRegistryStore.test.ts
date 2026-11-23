@@ -7,7 +7,11 @@ vi.mock("../../lib/ipc", () => ({
 }));
 
 import { agentRegistry as agentRegistryApi } from "../../lib/ipc";
-import { useAgentRegistryStore } from "../agentRegistryStore";
+import {
+	RESCAN_AFTER_MS,
+	rescanIfStale,
+	useAgentRegistryStore,
+} from "../agentRegistryStore";
 
 const mockApi = vi.mocked(agentRegistryApi);
 
@@ -124,5 +128,21 @@ describe("agentRegistryStore", () => {
 		const state = useAgentRegistryStore.getState();
 		expect(state.loaded).toBe(true);
 		expect(state.installedCommands.size).toBe(0);
+	});
+
+	it("scans again when the Window comes to the front after a while, not sooner", async () => {
+		mockApi.listInstalled.mockResolvedValue(["claude"]);
+		await useAgentRegistryStore.getState().load(["claude", "opencode"]);
+		expect(mockApi.listInstalled).toHaveBeenCalledTimes(1);
+		rescanIfStale(["claude", "opencode"], Date.now() + 1000);
+		expect(mockApi.listInstalled).toHaveBeenCalledTimes(1);
+		// Installed meanwhile: found at the next look.
+		mockApi.listInstalled.mockResolvedValue(["claude", "opencode"]);
+		rescanIfStale(["claude", "opencode"], Date.now() + RESCAN_AFTER_MS + 1);
+		await vi.waitFor(() =>
+			expect(
+				useAgentRegistryStore.getState().installedCommands.has("opencode"),
+			).toBe(true),
+		);
 	});
 });

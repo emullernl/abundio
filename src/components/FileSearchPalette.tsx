@@ -3,6 +3,7 @@ import { fuzzyMatchFile } from "../lib/fuzzyMatch";
 import { fs as fsApi } from "../lib/ipc";
 import type { FileEntry } from "../lib/types";
 import { useExplorerStore } from "../stores/explorerStore";
+import { useJoinedStore } from "../stores/joinedStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
 const MAX_VISIBLE_RESULTS = 200;
@@ -83,8 +84,17 @@ export function FileSearchPalette({ open: isOpen, onClose, scope }: Props) {
 		}
 
 		let cancelled = false;
+		// A Joined profile's files say which Host they are on (phase 10).
+		const nameOf = (w: (typeof targets)[number]) => {
+			const hostId = w.joined?.hostId;
+			const host = hostId
+				? (useJoinedStore.getState().entries.find((e) => e.hostId === hostId)
+						?.hostName ?? hostId)
+				: null;
+			return host ? `☁ ${host} · ${w.name}` : w.name;
+		};
 		const tag = (w: (typeof targets)[number], list: FileEntry[]): Found[] =>
-			list.map((f) => ({ ...f, workspaceId: w.id, workspaceName: w.name }));
+			list.map((f) => ({ ...f, workspaceId: w.id, workspaceName: nameOf(w) }));
 		const cachedAll = targets.every((w) => fileCache.has(w.id));
 		if (cachedAll) {
 			setFiles(targets.flatMap((w) => tag(w, fileCache.get(w.id) ?? [])));

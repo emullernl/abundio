@@ -5,6 +5,7 @@ import {
 	inHandleOrder,
 } from "../lib/agentPanes";
 import type { FleetTile } from "../lib/fleetConsole";
+import { useJoinedStore } from "../stores/joinedStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useWindowUiStore } from "../stores/windowUiStore";
@@ -56,6 +57,8 @@ export function useAgentPanes({
 	const worktreeFacts = useWorkspaceGitStore((s) => s.worktreeFacts);
 	const openedWorkspaceIds = usePtyActivityStore((s) => s.openedWorkspaceIds);
 	const panePtyMap = usePtyActivityStore((s) => s.panePtyMap);
+	// The Joined profiles' order, so their groups follow the sidebar's.
+	const joinedEntries = useJoinedStore((s) => s.entries);
 	// Membership only changes with detection mode, so select a stable key of
 	// the agent-mode ptyIds rather than the whole (hot) activities map.
 	const agentKey = usePtyActivityStore((s) => agentModeKey(s.activities));
@@ -71,8 +74,10 @@ export function useAgentPanes({
 			openedWorkspaceIds,
 			activities: usePtyActivityStore.getState().activities,
 			panePtyMap,
+			hostOrder: joinedEntries.map((e) => e.hostId),
 		});
 	}, [
+		joinedEntries,
 		workspaces,
 		worktreeFacts,
 		openedWorkspaceIds,

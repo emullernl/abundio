@@ -1,6 +1,5 @@
-import { getVersion } from "@tauri-apps/api/app";
 import { useEffect, useState } from "react";
-import { updates as updatesIpc } from "../../lib/ipc";
+import { updates, updates as updatesIpc } from "../../lib/ipc";
 import { useSettingsStore } from "../../stores/settingsStore";
 import {
 	isDownloadingElsewhere,
@@ -34,7 +33,8 @@ export function UpdatesSection() {
 
 	const [currentVersion, setCurrentVersion] = useState<string>("");
 	useEffect(() => {
-		getVersion()
+		updates
+			.appVersion()
 			.then(setCurrentVersion)
 			.catch(() => setCurrentVersion(""));
 	}, []);

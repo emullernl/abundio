@@ -1,145 +1,38 @@
 use tauri::{AppHandle, Emitter, Manager, State, Window};
 
 use crate::error::AbundioError;
-use crate::file_watcher::FileWatcher;
-use crate::git_scheduler::GitScheduler;
 use crate::profile_store::{
     ActiveProfileState, BusyCounts, BusyCountsState, Profile, ProfileStore, ProfileUpdate,
 };
-use crate::pty_manager::PtyManager;
 use crate::workspace_store::{
-    AgentTurnBucket, AgentTurnRecord, AgentTurnTotals, Bucket, GroupBy, Tab, TabUpdate,
-    WorkspaceStore, WorkspaceUpdate, WorkspaceWithTabs,
+    WorkspaceStore,
 };
-use crate::worktree_watcher::WorktreeWatcher;
-use crate::shell_env;
 
 // ── PTY commands ──
 
+
+/// Give this Window's channel for every PTY's output (raw bytes, framed by
+/// `event_sink::frame_pty_output`). Replaces an earlier one from the same
+/// Window (a reload).
 #[tauri::command]
-pub async fn pty_spawn(
-    app: AppHandle,
+pub fn pty_output_subscribe(
     window: Window,
-    pty_mgr: State<'_, PtyManager>,
-    cwd: String,
-    cols: u16,
-    rows: u16,
-    command: Option<String>,
-    shell: Option<String>,
-    log_id: Option<String>,
-    pty_id: Option<String>,
-    workspace_name: Option<String>,
-    window_label: Option<String>,
-    // `workspace_id` selects whose injected Environment Bundle lands in the
-    // child's environment. `inherit_from_workspace_id` is the main-worktree
-    // Workspace, resolved by the frontend (`inheritSourceWorkspaceId`) —
-    // worktree grouping is not recomputed in Rust.
-    workspace_id: Option<String>,
-    inherit_from_workspace_id: Option<String>,
-    // A **New task** launch (ADR-0042): the shell runs the Agent with the
-    // Task prompt as a positional argument instead of a typed command.
-    task: Option<crate::pty_manager::TaskLaunch>,
-    store: State<'_, WorkspaceStore>,
-) -> Result<String, AbundioError> {
-    // Never start a Workspace pane in the wrong folder (ADR-0053): refuse a
-    // Missing folder, and start in the Workspace folder when only the pane's
-    // own remembered folder is gone. The lookup releases the store lock
-    // before the disk is touched.
-    let root = match workspace_id.as_deref() {
-        Some(id) => store.root_folder(id)?,
-        None => None,
-    };
-    // Off the async runtime: a `stat` on a hung mount can block for long.
-    let cwd = tauri::async_runtime::spawn_blocking(move || {
-        crate::pty_manager::resolve_spawn_cwd(&cwd, root.as_deref(), |p| {
-            std::path::Path::new(p).is_dir()
-        })
-    })
-    .await
-    .map_err(|e| AbundioError::InvalidOperation(format!("folder check failed: {e}")))??;
-    let pty_id = pty_mgr.spawn(
-        app.clone(),
-        window.label(),
-        &cwd,
-        command.as_deref(),
-        shell.as_deref(),
-        cols,
-        rows,
-        log_id.as_deref(),
-        pty_id.as_deref(),
-        workspace_name.as_deref(),
-        window_label.as_deref(),
-        workspace_id.as_deref(),
-        inherit_from_workspace_id.as_deref(),
-        task.as_ref(),
-    )?;
-    // A spawn the Window sent just before it closed can land after its
-    // `Destroyed` handler killed its PTYs. Kill it too if the Window is gone.
-    //
-    // This closes the gap only because Tauri drops the Window from its list
-    // *before* running our `Destroyed` handler: tauri-runtime-wry 2.11.2 calls
-    // the run-loop callback (whose `on_event_loop_event` runs
-    // `manager.on_window_close`) and only then the per-window listeners that
-    // `Builder::on_window_event` registers. So a spawn either inserts its owner
-    // before `kill_for_window` sweeps, or sees the Window gone here. Re-check
-    // this ordering when upgrading Tauri.
-    if app.get_webview_window(window.label()).is_none() {
-        let _ = pty_mgr.kill(&pty_id);
-    }
-    Ok(pty_id)
+    channels: State<'_, std::sync::Arc<crate::tauri_sink::PtyChannels>>,
+    channel: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
+) {
+    channels.set(window.label(), channel);
 }
 
-#[tauri::command]
-pub async fn list_available_shells() -> Result<Vec<shell_env::AvailableShell>, AbundioError> {
-    Ok(shell_env::list_available_shells())
-}
 
-/// The shell a PTY spawns with when the user hasn't picked one (`shellPath`
-/// null). The resolution lives in Rust (on Windows it prefers Git Bash, else
-/// cmd.exe), so the frontend can't derive it — it calls this to learn what the
-/// "System Default" resolves to (used by file-drop to pick the right path style).
-#[tauri::command]
-pub async fn default_shell() -> Result<String, AbundioError> {
-    Ok(shell_env::default_shell())
-}
 
-#[tauri::command]
-pub async fn pty_write(
-    pty_mgr: State<'_, PtyManager>,
-    pty_id: String,
-    data: String,
-) -> Result<(), AbundioError> {
-    // data comes as a UTF-8 string from xterm.js onData
-    pty_mgr.write(&pty_id, data.into_bytes())
-}
 
-#[tauri::command]
-pub async fn pty_resize(
-    pty_mgr: State<'_, PtyManager>,
-    pty_id: String,
-    cols: u16,
-    rows: u16,
-) -> Result<(), AbundioError> {
-    pty_mgr.resize(&pty_id, cols, rows)
-}
 
-/// Ask the program in a PTY to redraw at its current size (SIGWINCH to the
-/// foreground process group). `false` where unsupported (Windows).
-#[tauri::command]
-pub async fn pty_redraw(
-    pty_mgr: State<'_, PtyManager>,
-    pty_id: String,
-) -> Result<bool, AbundioError> {
-    pty_mgr.redraw(&pty_id)
-}
 
-#[tauri::command]
-pub async fn pty_kill(
-    pty_mgr: State<'_, PtyManager>,
-    pty_id: String,
-) -> Result<(), AbundioError> {
-    pty_mgr.kill(&pty_id)
-}
+
+
+
+
+
 
 // ── Menu ──
 
@@ -350,8 +243,12 @@ pub async fn open_window_with_profile(
 pub async fn open_settings_window(
     app: AppHandle,
     section: Option<String>,
+    check_host: Option<String>,
 ) -> Result<(), AbundioError> {
-    crate::window_management::open_or_focus_settings_window(&app, section.as_deref())
+    match check_host {
+        Some(host) => crate::window_management::open_settings_to_check_host(&app, &host),
+        None => crate::window_management::open_or_focus_settings_window(&app, section.as_deref()),
+    }
 }
 
 /// Focus the window identified by `label`. Used by the frontend's
@@ -378,165 +275,28 @@ pub async fn create_untitled_profile_in_new_window(
 
 // ── Workspace commands ──
 
-#[tauri::command]
-pub async fn workspace_create(
-    store: State<'_, WorkspaceStore>,
-    name: String,
-    root_folder: String,
-    profile_id: String,
-) -> Result<WorkspaceWithTabs, AbundioError> {
-    // One folder per Profile, never an Orchestrator folder (GLOSSARY.md).
-    crate::workspace_folders::enforce(&crate::workspace_folders::check(
-        &store,
-        &crate::app_paths::shared_root(),
-        &root_folder,
-        &profile_id,
-        None,
-    )?)?;
-    store.create(&name, &root_folder, &profile_id)
-}
 
-#[tauri::command]
-pub async fn workspace_list(
-    store: State<'_, WorkspaceStore>,
-    profile_id: String,
-) -> Result<Vec<WorkspaceWithTabs>, AbundioError> {
-    store.list(&profile_id)
-}
 
-#[tauri::command]
-pub async fn workspace_update(
-    store: State<'_, WorkspaceStore>,
-    id: String,
-    updates: WorkspaceUpdate,
-) -> Result<(), AbundioError> {
-    if let Some(folder) = &updates.root_folder {
-        if let Some(profile_id) = store.profile_of(&id)? {
-            crate::workspace_folders::enforce(&crate::workspace_folders::check(
-                &store,
-                &crate::app_paths::shared_root(),
-                folder,
-                &profile_id,
-                Some(&id),
-            )?)?;
-        }
-    }
-    store.update(&id, updates)
-}
 
-#[tauri::command]
-pub async fn workspace_delete(
-    store: State<'_, WorkspaceStore>,
-    id: String,
-) -> Result<(), AbundioError> {
-    store.delete(&id)
-}
 
-/// Ids of the Profile's Workspaces whose folder is missing (ADR-0053).
-#[tauri::command]
-pub async fn workspace_missing_folders(
-    store: State<'_, WorkspaceStore>,
-    profile_id: String,
-) -> Result<Vec<String>, AbundioError> {
-    let rows = store.folder_rows(&profile_id)?;
-    // `stat` on a hung network mount can block for tens of seconds; keep it
-    // off the async runtime's worker threads. Runs on every Window focus.
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::workspace_store::missing_ids(rows, |p| std::path::Path::new(p).is_dir())
-    })
-    .await
-    .map_err(|e| AbundioError::InvalidOperation(format!("folder check failed: {e}")))
-}
 
-/// A Profile's **Workspace restore** list (ADR-0052).
-#[tauri::command]
-pub async fn workspace_restore_set(
-    store: State<'_, WorkspaceStore>,
-    profile_id: String,
-) -> Result<crate::workspace_store::RestoreSet, AbundioError> {
-    store.restore_set(&profile_id)
-}
 
-#[tauri::command]
-pub async fn workspace_set_restore_opened(
-    store: State<'_, WorkspaceStore>,
-    id: String,
-    opened: bool,
-) -> Result<(), AbundioError> {
-    store.set_restore_opened(&id, opened)
-}
 
-#[tauri::command]
-pub async fn workspace_set_restore_active(
-    store: State<'_, WorkspaceStore>,
-    profile_id: String,
-    id: Option<String>,
-) -> Result<(), AbundioError> {
-    store.set_restore_active(&profile_id, id.as_deref())
-}
 
-#[tauri::command]
-pub async fn workspace_reorder(
-    store: State<'_, WorkspaceStore>,
-    ids: Vec<String>,
-) -> Result<(), AbundioError> {
-    store.reorder_workspaces(&ids)
-}
 
 // ── Tab commands ──
 
-#[tauri::command]
-pub async fn tab_create(
-    store: State<'_, WorkspaceStore>,
-    workspace_id: String,
-    name: String,
-) -> Result<Tab, AbundioError> {
-    store.create_tab(&workspace_id, &name)
-}
 
-#[tauri::command]
-pub async fn tab_list(
-    store: State<'_, WorkspaceStore>,
-    workspace_id: String,
-) -> Result<Vec<Tab>, AbundioError> {
-    store.list_tabs(&workspace_id)
-}
 
-#[tauri::command]
-pub async fn tab_update(
-    store: State<'_, WorkspaceStore>,
-    id: String,
-    updates: TabUpdate,
-) -> Result<(), AbundioError> {
-    store.update_tab(&id, updates)
-}
 
-#[tauri::command]
-pub async fn tab_delete(
-    store: State<'_, WorkspaceStore>,
-    id: String,
-) -> Result<(), AbundioError> {
-    store.delete_tab(&id)
-}
+
+
+
+
 
 // ── Note commands ──
 
-#[tauri::command]
-pub async fn note_get(
-    store: State<'_, WorkspaceStore>,
-    workspace_id: String,
-) -> Result<String, AbundioError> {
-    store.get_note(&workspace_id)
-}
 
-#[tauri::command]
-pub async fn note_set(
-    store: State<'_, WorkspaceStore>,
-    workspace_id: String,
-    content: String,
-) -> Result<(), AbundioError> {
-    store.set_note(&workspace_id, &content)
-}
 
 // ── Agent telemetry commands ──
 //
@@ -544,125 +304,23 @@ pub async fn note_set(
 // Statistics overlay queries Profile-scoped rollups. See
 // docs/plans/agent-turn-telemetry-and-statistics-overlay.md and ADR-0018.
 
-#[tauri::command]
-pub async fn telemetry_record_turn(
-    store: State<'_, WorkspaceStore>,
-    turn: AgentTurnRecord,
-) -> Result<(), AbundioError> {
-    store.record_agent_turn(&turn)
-}
 
-#[tauri::command]
-pub async fn telemetry_buckets(
-    store: State<'_, WorkspaceStore>,
-    profile_id: String,
-    from_ms: i64,
-    to_ms: i64,
-    bucket: String,
-    group_by: String,
-) -> Result<Vec<AgentTurnBucket>, AbundioError> {
-    store.agent_turn_buckets(
-        &profile_id,
-        from_ms,
-        to_ms,
-        Bucket::parse(&bucket)?,
-        GroupBy::parse(&group_by)?,
-    )
-}
 
-#[tauri::command]
-pub async fn telemetry_totals(
-    store: State<'_, WorkspaceStore>,
-    profile_id: String,
-    from_ms: i64,
-    to_ms: i64,
-) -> Result<AgentTurnTotals, AbundioError> {
-    store.agent_turn_totals(&profile_id, from_ms, to_ms)
-}
 
-#[tauri::command]
-pub async fn telemetry_list_turns(
-    store: State<'_, WorkspaceStore>,
-    profile_id: String,
-    from_ms: i64,
-    to_ms: i64,
-) -> Result<Vec<AgentTurnRecord>, AbundioError> {
-    store.list_agent_turns(&profile_id, from_ms, to_ms)
-}
 
 // ── PTY log commands ──
 
-#[tauri::command]
-pub async fn pty_read_log(log_id: String) -> Result<Option<String>, AbundioError> {
-    PtyManager::read_log(&log_id)
-}
 
-#[tauri::command]
-pub async fn pty_write_snapshot(pane_id: String, data: String) -> Result<(), AbundioError> {
-    PtyManager::write_snapshot(&pane_id, &data)
-}
 
-#[tauri::command]
-pub async fn pty_read_snapshot(pane_id: String) -> Result<Option<String>, AbundioError> {
-    PtyManager::read_snapshot(&pane_id)
-}
 
-#[tauri::command]
-pub async fn pty_delete_log(log_id: String) -> Result<(), AbundioError> {
-    PtyManager::delete_log(&log_id)
-}
 
-#[tauri::command]
-pub async fn pty_cleanup_stale_logs(pane_ids: Vec<String>) -> Result<(), AbundioError> {
-    PtyManager::cleanup_stale_logs(&pane_ids)
-}
 
 // ── File watcher commands ──
 
-#[tauri::command]
-pub async fn fs_watch_start(
-    app: AppHandle,
-    window: Window,
-    watcher: State<'_, FileWatcher>,
-    root_path: String,
-) -> Result<(), AbundioError> {
-    watcher.start_watching(app.clone(), window.label(), &root_path)?;
-    // A start the Window sent just before it closed can land after its
-    // `Destroyed` handler released its holds, and would claim under a label
-    // nothing releases again. Let go if the Window is already gone.
-    if app.get_webview_window(window.label()).is_none() {
-        watcher.stop_watching(window.label(), &root_path);
-    }
-    Ok(())
-}
 
-#[tauri::command]
-pub async fn fs_watch_stop(
-    window: Window,
-    watcher: State<'_, FileWatcher>,
-    root_path: String,
-) -> Result<(), AbundioError> {
-    watcher.stop_watching(window.label(), &root_path);
-    Ok(())
-}
 
 // ── Worktree live-sync watcher ──
 
-/// Set the calling Window's desired set of watched repository common dirs.
-/// The Rust watcher reconciles the union across Windows and emits
-/// `worktrees-changed` when a `git worktree add/remove` touches one. The
-/// frontend recomputes `common_dirs` from its workspace git summaries whenever
-/// the workspace list or grouping changes. See ADR-0017.
-#[tauri::command]
-pub async fn worktree_watch_set(
-    app: AppHandle,
-    window: Window,
-    watcher: State<'_, WorktreeWatcher>,
-    common_dirs: Vec<String>,
-) -> Result<(), AbundioError> {
-    watcher.set_watched(&app, window.label(), common_dirs);
-    Ok(())
-}
 
 // ── Git scheduler commands ──
 //
@@ -672,38 +330,7 @@ pub async fn worktree_watch_set(
 // meaningful change. This replaces the JS-side `fetchChanges`-on-every-event
 // pattern that froze the main thread during `git stash` (see git_scheduler.rs).
 
-#[tauri::command]
-pub async fn git_scheduler_start(
-    app: AppHandle,
-    window: Window,
-    scheduler: State<'_, GitScheduler>,
-    workspace_id: String,
-    root_path: String,
-    base_branch: Option<String>,
-) -> Result<(), AbundioError> {
-    scheduler.start(
-        app.clone(),
-        window.label(),
-        workspace_id.clone(),
-        root_path,
-        base_branch,
-    );
-    // See `fs_watch_start`: undo a claim that landed after the Window closed.
-    if app.get_webview_window(window.label()).is_none() {
-        scheduler.stop(window.label(), &workspace_id);
-    }
-    Ok(())
-}
 
-#[tauri::command]
-pub async fn git_scheduler_stop(
-    window: Window,
-    scheduler: State<'_, GitScheduler>,
-    workspace_id: String,
-) -> Result<(), AbundioError> {
-    scheduler.stop(window.label(), &workspace_id);
-    Ok(())
-}
 
 // ── Font commands ──
 
@@ -721,72 +348,40 @@ pub async fn list_system_fonts() -> Result<Vec<String>, AbundioError> {
 
 // ── Agent hooks ──
 
-/// Enable or disable Agent status hooks by (un)provisioning hook configs in
-/// each installed Agent's global config directory. `enabled_agents` are the
-/// agent ids whose per-agent toggle is on — only those are provisioned; the
-/// rest are stripped (so toggling one agent off removes just its hooks).
-#[tauri::command]
-pub async fn agent_hooks_provision(
-    enabled: bool,
-    enabled_agents: Vec<String>,
-) -> Result<(), AbundioError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::agent_hooks::provision(enabled, &enabled_agents)
-    })
-    .await
-    .map_err(|e| AbundioError::Io(std::io::Error::other(e.to_string())))?
-}
 
-/// Provision hooks at app startup, exactly once per process. Every Window's
-/// settings rehydrate calls this with the persisted enabled flag and the set of
-/// per-agent-enabled ids; the guard makes only the first call do the work, so N
-/// Windows don't each rewrite the same global config files. See ADR-0003
-/// (Revisited).
+
+
+
+/// Show a file in the desktop's file manager: always this computer's
+/// (a remote Workspace hides it).
 #[tauri::command]
-pub async fn agent_hooks_provision_startup(
-    enabled: bool,
-    enabled_agents: Vec<String>,
-    guard: State<'_, crate::agent_hooks::StartupProvisionGuard>,
-) -> Result<(), AbundioError> {
-    if !guard.claim() {
-        return Ok(());
+pub async fn fs_reveal_in_folder(path: String) -> Result<(), AbundioError> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open").args(["-R", &path]).spawn()?;
     }
-    // Startup provisioning is the invisible path — when it silently doesn't
-    // run, hooks quietly stay stale (frontend console errors live in the
-    // webview, not the terminal). Leave a breadcrumb where a dev can see it.
-    eprintln!(
-        "[abundio] startup hook provisioning: enabled={enabled}, agents={enabled_agents:?}"
-    );
-    tauri::async_runtime::spawn_blocking(move || {
-        let result = crate::agent_hooks::provision(enabled, &enabled_agents);
-        if let Err(e) = &result {
-            eprintln!("[abundio] startup hook provisioning failed: {e}");
-        }
-        result
-    })
-    .await
-    .map_err(|e| AbundioError::Io(std::io::Error::other(e.to_string())))?
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(format!("/select,{}", path))
+            .spawn()?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let parent = std::path::Path::new(&path)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "/".to_string());
+        std::process::Command::new("xdg-open").arg(&parent).spawn()?;
+    }
+    Ok(())
 }
 
-/// Register hooks for a single Agent on demand if they aren't already, creating
-/// the Agent's config dir if needed. Called when an Agent is launched so a
-/// mid-session install gets hooks without restarting. Returns whether it
-/// provisioned. No-op when hooks are disabled or the Agent is unsupported.
+/// New task's GitHub issues: this computer's `gh`, for any Workspace's
+/// repository (`owner/name`, read by git where its folder is).
 #[tauri::command]
-pub async fn ensure_agent_hooks(agent_id: String, enabled: bool) -> Result<bool, AbundioError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::agent_hooks::ensure_agent_hooks(&agent_id, enabled)
-    })
-    .await
-    .map_err(|e| AbundioError::Io(std::io::Error::other(e.to_string())))?
-}
-
-/// Read-only per-Agent provisioning footprint (config path, ownership, hooked
-/// events, registration state) for the Settings UI.
-#[tauri::command]
-pub async fn agent_hook_status(
-) -> Result<Vec<crate::agent_hooks::AgentHookStatus>, AbundioError> {
-    tauri::async_runtime::spawn_blocking(crate::agent_hooks::agent_hook_status)
+pub async fn gh_list_issues(repo: String) -> Result<Vec<abundio_core::gh_commands::GithubIssue>, AbundioError> {
+    tauri::async_runtime::spawn_blocking(move || abundio_core::gh_commands::list_issues_in_repo(&repo))
         .await
-        .map_err(|e| AbundioError::Io(std::io::Error::other(e.to_string())))?
+        .map_err(|e| AbundioError::InvalidOperation(e.to_string()))?
 }

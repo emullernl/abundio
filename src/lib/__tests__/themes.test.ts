@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { applyTheme, getTheme, themeList, themes } from "../themes";
+import {
+	applyTheme,
+	getTheme,
+	sunkenCardBg,
+	themeList,
+	themes,
+} from "../themes";
 
 describe("getTheme", () => {
 	it("returns the correct theme by name", () => {
@@ -132,5 +138,12 @@ describe("applyTheme", () => {
 		applyTheme(themes.nord);
 		const root = document.documentElement;
 		expect(root.style.getPropertyValue("--bg-primary")).toBe("#2E3440");
+	});
+});
+
+describe("sunkenCardBg", () => {
+	it("darkens a light sidebar much less than a dark one", () => {
+		expect(sunkenCardBg("light")).toBe("rgba(0, 0, 0, 0.06)");
+		expect(sunkenCardBg("dark")).toBe("rgba(0, 0, 0, 0.25)");
 	});
 });

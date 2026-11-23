@@ -1,5 +1,8 @@
 import { create } from "zustand";
+import { sentByOwnerOf } from "../lib/hostRouting";
 import { notes as notesApi } from "../lib/ipc";
+import { onSharedFromRust } from "../lib/layoutSync";
+import { notesEditorFor } from "../lib/notesEditors";
 
 /**
  * Per-Workspace Notes state.
@@ -10,9 +13,10 @@ import { notes as notesApi } from "../lib/ipc";
  * never blocks on IPC and SQLite isn't hammered on every keystroke.
  *
  * Content is an opaque TipTap JSON string (see ADR-0012); this store never
- * parses it. `""` means "no note yet". A Note is only ever active in one Window
- * (a Profile binds to one Window, a Workspace to one Profile), so there is no
- * cross-window concurrent-edit case to reconcile.
+ * parses it. `""` means "no note yet". On this computer a Note is only ever
+ * active in one Window (a Profile binds to one Window). On a Host two apps
+ * can show it (phase 9): a save in one reaches the other (`note-changed`,
+ * `applyRemoteNote`), and the last save wins.
  */
 
 const DEBOUNCE_MS = 500;
@@ -39,6 +43,9 @@ interface NotesState {
 	 *  workspace is being deleted — its note row is cascade-deleted, so a
 	 *  pending `notesApi.set` would hit a now-missing FK and error. */
 	cancelPendingSave: (workspaceId: string) => void;
+	/** Another Window saved this note (phase 9). Ignored while this Window
+	 *  has typing of its own waiting to be saved: that save comes after. */
+	applyRemoteNote: (workspaceId: string, content: string) => void;
 }
 
 export const useNotesStore = create<NotesState>((set, get) => ({
@@ -111,4 +118,35 @@ export const useNotesStore = create<NotesState>((set, get) => ({
 			saveTimers.delete(workspaceId);
 		}
 	},
+
+	applyRemoteNote: (workspaceId, content) => {
+		if (saveTimers.has(workspaceId)) return;
+		if (get().contentByWorkspaceId[workspaceId] === content) return;
+		set((state) => ({
+			contentByWorkspaceId: {
+				...state.contentByWorkspaceId,
+				[workspaceId]: content,
+			},
+		}));
+		// An open editor shows it at once, without saving it back.
+		const editor = notesEditorFor(workspaceId);
+		if (editor) {
+			try {
+				editor.commands.setContent(content ? JSON.parse(content) : "", {
+					emitUpdate: false,
+				});
+			} catch (e) {
+				console.warn("[notes] cannot show another Window's note", e);
+			}
+		}
+	},
 }));
+
+onSharedFromRust<{ workspaceId: string; content: string; fromHost?: string }>(
+	"note-changed",
+	({ workspaceId, content, fromHost }) => {
+		// A Host writes only its own Workspaces' notes (ADR-0065).
+		if (!sentByOwnerOf(fromHost, "workspace", workspaceId)) return;
+		useNotesStore.getState().applyRemoteNote(workspaceId, content);
+	},
+);

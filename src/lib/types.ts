@@ -130,6 +130,9 @@ export interface WorkspaceWithTabs {
 	/** See `Workspace.kind`. */
 	kind?: WorkspaceKind;
 	tabs: Tab[];
+	/** Set only in the Window, on a **Joined profile**'s Workspace: the Host
+	 *  it is on (phase 10). Its calls go there (`hostRouting.ts`). */
+	joined?: { hostId: string };
 }
 
 // ── Worktrees ──
@@ -397,6 +400,8 @@ export interface DetectedDevEnvironment {
 	id: string;
 	displayName: string;
 	iconName: string;
+	/** It can open a folder on a Host over SSH (phase 10f). */
+	remote?: boolean;
 }
 
 export interface LaunchFile {

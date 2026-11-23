@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
 	controlKind,
+	localCaller,
 	runningControlActivity,
 	startControlActivity,
 	subscribeControlActivity,
@@ -8,9 +9,8 @@ import {
 
 describe("controlActivity", () => {
 	it("tells reads from acts", () => {
-		expect(controlKind("pane.read")).toBe("read");
-		expect(controlKind("agent.wait")).toBe("read");
-		expect(controlKind("agent.prompt")).toBe("act");
+		expect(controlKind("pane.watch")).toBe("read");
+		expect(controlKind("pane.split")).toBe("act");
 		expect(controlKind("pane.close")).toBe("act");
 	});
 
@@ -40,5 +40,16 @@ describe("controlActivity", () => {
 		})();
 		stop();
 		expect(seen).not.toHaveBeenCalled();
+	});
+});
+
+describe("localCaller (ADR-0065)", () => {
+	it("maps a Host's name for one of this Window's Agents back to its pane", () => {
+		expect(localCaller("outside:window-1:pane-9", "window-1")).toBe("pane-9");
+		// Another Window's Agent, or a Host's own pane, stays as it is.
+		expect(localCaller("outside:window-2:pane-9", "window-1")).toBe(
+			"outside:window-2:pane-9",
+		);
+		expect(localCaller("pane-3", "window-1")).toBe("pane-3");
 	});
 });

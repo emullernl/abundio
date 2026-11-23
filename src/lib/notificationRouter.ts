@@ -1,8 +1,8 @@
-import { onAction } from "@tauri-apps/plugin-notification";
 import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { appWindow } from "./appWindow";
 import { isDemoMode } from "./demo";
+import { onNotificationAction } from "./desktop";
 import {
 	fleetConsoleShowing,
 	isFleetTileOnScreen,
@@ -108,7 +108,7 @@ export function initNotificationListener(): void {
 	// The notification plugin opens an IPC channel, which needs a Tauri host —
 	// no-op in the browser demo and in tests.
 	if (isDemoMode()) return;
-	onAction((notification) => {
+	onNotificationAction((notification) => {
 		handleNotificationClick(
 			notification.extra as Record<string, unknown> | undefined,
 		);

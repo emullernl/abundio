@@ -402,18 +402,22 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 			{uncommitted?.dirty && (
 				<DirtyEdge title={uncommittedTooltip(uncommitted)} />
 			)}
-			<button
-				type="button"
-				onClick={(e) => {
-					e.stopPropagation();
-					onDelete();
-				}}
-				title={deleteLabel}
-				aria-label={`${deleteLabel.replace(/…$/, "")}: ${workspace.name}`}
-				className="opacity-0 group-hover:opacity-100 w-6 h-6 rounded-md flex items-center justify-center text-[var(--fg-secondary)] hover:bg-[var(--error)] hover:text-white transition-all"
-			>
-				<X size={12} />
-			</button>
+			{/* A Joined profile's Workspace is only shown here: removing it is
+			    for its own Profile's Windows (phase 10). */}
+			{!workspace.joined && (
+				<button
+					type="button"
+					onClick={(e) => {
+						e.stopPropagation();
+						onDelete();
+					}}
+					title={deleteLabel}
+					aria-label={`${deleteLabel.replace(/…$/, "")}: ${workspace.name}`}
+					className="opacity-0 group-hover:opacity-100 w-6 h-6 rounded-md flex items-center justify-center text-[var(--fg-secondary)] hover:bg-[var(--error)] hover:text-white transition-all"
+				>
+					<X size={12} />
+				</button>
+			)}
 		</div>
 	);
 });

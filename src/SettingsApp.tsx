@@ -1,15 +1,21 @@
-import { emit } from "@tauri-apps/api/event";
 import { useEffect } from "react";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { SshPromptHost } from "./components/SshPromptDialog";
 import { Titlebar } from "./components/Titlebar";
 import { appWindow, currentWindowLabel } from "./lib/appWindow";
-import { listen, profiles as profilesApi, updates } from "./lib/ipc";
+import { startHostSettingsMirror } from "./lib/hostSettingsMirror";
+import { emit, listen, profiles as profilesApi, updates } from "./lib/ipc";
 import { broadcastSliceOf } from "./lib/settingsBroadcast";
 import { useProfileStore } from "./stores/profileStore";
 import {
 	usePromptActionStore,
 	watchPromptActions,
 } from "./stores/promptActionStore";
+import {
+	initialSettingsHost,
+	startSettingsHostSync,
+	useSettingsHostStore,
+} from "./stores/settingsHostStore";
 import { useSettingsStore } from "./stores/settingsStore";
 import { useUpdateStore } from "./stores/updateStore";
 
@@ -25,6 +31,14 @@ import { useUpdateStore } from "./stores/updateStore";
  * browser `storage` event.
  */
 export function SettingsApp() {
+	// The Host the per-Host sections edit (ADR-0064): the opening Window's.
+	useEffect(() => {
+		startSettingsHostSync();
+		useSettingsHostStore
+			.getState()
+			.pick(initialSettingsHost(window.location.search));
+		return startHostSettingsMirror();
+	}, []);
 	// Load the profile list so the Profiles section in SettingsPanel has
 	// data to render. The settings window has NO active profile of its own
 	// — calling profileStore.loadProfiles() would reconcile-and-push an
@@ -125,6 +139,8 @@ export function SettingsApp() {
 			>
 				<SettingsPanel onClose={handleClose} />
 			</div>
+			{/* What ssh asks while Settings ▸ Hosts checks or installs a Host. */}
+			<SshPromptHost />
 		</>
 	);
 }
@@ -226,6 +242,9 @@ export function setupCrossWindowSync(): void {
 	listen<Record<string, unknown>>("settings-store-changed", (event) => {
 		const partial = event.payload;
 		if (!partial || typeof partial !== "object") return;
+		// Only this computer's Windows change its settings, never a Host
+		// (ADR-0065; the desktop drops such events, this is a second guard).
+		if ("fromHost" in partial) return;
 		const json = canonical(sliceOf(partial));
 		if (json === lastSerialized) return;
 		// Record BEFORE rehydrate so the resulting store update doesn't echo.

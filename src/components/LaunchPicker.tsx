@@ -7,7 +7,8 @@ import {
 	TerminalBrandIcon,
 } from "../lib/agentIcons";
 import type { CodingAgent } from "../lib/types";
-import { useSettingsStore } from "../stores/settingsStore";
+import { useAgentsForWorkspace } from "../stores/hostAgentsStore";
+import { useWorkspaceStore } from "../stores/workspaceStore";
 
 export type LaunchChoice =
 	| { kind: "terminal" }
@@ -35,7 +36,10 @@ export function LaunchPicker({
 	onClose,
 	onSelect,
 }: LaunchPickerProps) {
-	const agents = useSettingsStore((s) => s.agents);
+	// The Agents of the Active workspace's Host (ADR-0064).
+	const agents = useAgentsForWorkspace(
+		useWorkspaceStore((s) => s.activeWorkspaceId),
+	);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [selectedIndex, setSelectedIndex] = useState(0);
 

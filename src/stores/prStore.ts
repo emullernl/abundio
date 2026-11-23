@@ -1,6 +1,6 @@
-import { sendNotification } from "@tauri-apps/plugin-notification";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { sendNotification } from "../lib/desktop";
 import { pr as prIpc } from "../lib/ipc";
 import type {
 	GhStatus,

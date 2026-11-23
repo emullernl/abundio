@@ -1,4 +1,3 @@
-import { open } from "@tauri-apps/plugin-shell";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
@@ -6,6 +5,8 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { type ITerminalOptions, type ITheme, Terminal } from "@xterm/xterm";
+import { agentsForPane, hostOfWorkspace } from "../stores/hostAgentsStore";
+import { isNotConnectedError } from "../stores/hostLinkStore";
 import { useOrchestratorStore } from "../stores/orchestratorStore";
 import {
 	hasActiveSubagent,
@@ -18,38 +19,31 @@ import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { classifyShellExit, recordThresholdHit } from "./activityGate";
-import {
-	type HookTransition,
-	isOpenCodeV2Payload,
-	isTurnStartEvent,
-	mapHookEvent,
-	mapOpenCodeV2Event,
-	mapSubagentHookEvent,
-	openCodeCancelGate,
-	openCodeEventKey,
-	type SubagentSignal,
-} from "./agentHookMap";
+import { setShellIntegrationSeen } from "./agentControl/integrationSeen";
+import { type HookTransition, routeHookEvent } from "./agentHookMap";
 import {
 	activityAction,
 	applyAgentExit,
 	applySessionEnd,
 	isSessionEnd,
+	noteSessionEnd,
 } from "./agentModeEvents";
 import { agentSessionIdFrom } from "./agentSessionId";
 import { escPressesToCancelAgent, matchTitleToAgent } from "./agents";
 import {
-	hasTitleStatus,
-	readTitle,
+	NO_TITLE_TRACK,
 	TITLE_TURN_END_GRACE_MS,
-	type TitleStatus,
-	titleStep,
+	type TitleTrack,
+	titleChange,
+	titleGraceEnded,
 } from "./agentTitleMap";
 import { currentWindowLabel } from "./appWindow";
 import { writeClipboardText } from "./clipboard";
+import { openExternal } from "./desktop";
 import { targetPaneId } from "./fleetFocus";
 import { outsideWorkspaceView } from "./hiddenAgentStart";
 import { startUnlessShown } from "./hiddenSpawn";
-import { agentHooks, pty } from "./ipc";
+import { agentHooks, type HookNotice, pty, statusApi } from "./ipc";
 import { folderMissingReason } from "./missingFolder";
 import {
 	decrstOutcome,
@@ -75,8 +69,10 @@ import {
 import { isMac } from "./platform";
 import { trackPtyResize } from "./projectionResize";
 import { stripControlChars } from "./promptActions";
+import { resyncSnapshot } from "./ptyResync";
 import { ShellIntegrationParser } from "./shellIntegration";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
+import { isRustStatusAuthority } from "./statusSync";
 import { installFileLinkProvider } from "./terminalFileLinks";
 import {
 	alternateScreenBefore,
@@ -110,6 +106,21 @@ const ensuredAgentsThisSession = new Set<string>();
 
 /** OpenCode 1.x PTYs whose last turn was cancelled — see `openCodeCancelGate`. */
 const openCodeCancelledPtys = new Set<string>();
+
+/** Per PTY: what to do with a hook Rust applied (`agent-hook-applied`). One
+ *  Window-wide listener, started with the first terminal. */
+const hookNoticeHandlers = new Map<string, (n: HookNotice) => void>();
+let hookNoticesHeard = false;
+function hearHookNotices(): void {
+	if (hookNoticesHeard || !isRustStatusAuthority()) return;
+	hookNoticesHeard = true;
+	void pty.onHookApplied((n) => {
+		if (n.dropped) {
+			console.debug("[abundio:hook] dropped", n.dropped, n.agent, n.ptyId);
+		}
+		hookNoticeHandlers.get(n.ptyId)?.(n);
+	});
+}
 
 /**
  * True when xterm `onData` carries a terminal-reported focus or mouse event
@@ -427,16 +438,10 @@ export interface ManagedTerminal {
 	 *  cleaning it. Cleared on that `command_start`, or when the filter window
 	 *  ends, so it can never exempt the Agent's own redraws later. */
 	awaitingTypedAgentStart: boolean;
-	/** The **Title status** last read from this agent session's terminal title
-	 *  (ADR-0047); null until its first title. */
-	titleStatus: TitleStatus | null;
-	/** The Agent's title carried a status *prefix* this agent session — proof
-	 *  its tab status is on, so its title and turn-finished hook drive status.
-	 *  A suffix alone is not proof (agentTitleMap `readTitle`). */
-	titleStatusSeen: boolean;
-	/** While the grace window runs: the busy status the title held before it
-	 *  went bare, so a prompt answered across a bare title resumes its Turn. */
-	titleBusyBeforeBare: TitleStatus | null;
+	/** What this agent session's titles have said (**Title status**, ADR-0047;
+	 *  `agentTitleMap` `titleChange`). Where Rust is the authority it reads the
+	 *  titles itself (`title_status.rs`) and this stays empty. */
+	titleTrack: TitleTrack;
 	/** The grace window after the title ended a Turn, waiting for the
 	 *  turn-finished hook before calling it a cancel or failure. */
 	titleTurnEndTimer: ReturnType<typeof setTimeout> | null;
@@ -728,6 +733,13 @@ export function getActivityByteThreshold(): number {
 
 export function setActivityByteThreshold(n: number): void {
 	ACTIVITY_BYTE_THRESHOLD = Math.max(1, Math.round(n));
+	// Rust runs the heuristic where it is the authority (phase 6d-5).
+	if (isRustStatusAuthority()) {
+		statusApi.setByteThreshold(ACTIVITY_BYTE_THRESHOLD).catch((e) => {
+			if (!isNotConnectedError(e))
+				console.warn("[status] Rust did not take the threshold", e);
+		});
+	}
 }
 // Output is ignored for INPUT_GATE_MS after the last keystroke to suppress
 // echoed characters and prompt redraws. If no output arrives for
@@ -753,38 +765,42 @@ async function startBackgroundTracking(ptyId: string) {
 	let bgBytesSinceIdle = 0;
 	let bgThresholdHitTimes: number[] = [];
 	let bgLastOutputChunkAt = 0;
-	// Use onOutputRaw to skip base64 decode — background trackers only need
-	// approximate byte counts for activity thresholds, not decoded content.
-	const unlistenOutput = await pty.onOutputRaw(ptyId, (base64Data) => {
-		// Only run byte accumulation for agent-mode PTYs
-		const entry = usePtyActivityStore.getState().activities[ptyId];
-		if (entry?.detectionMode !== "agent") return;
-		const now = Date.now();
-		if (
-			bgLastOutputChunkAt &&
-			now - bgLastOutputChunkAt > INACTIVITY_RESET_MS
-		) {
-			bgBytesSinceIdle = 0;
-			// See foreground path: hit history is pruned by its own sliding
-			// window, not by the byte-counter's inactivity gap.
-		}
-		bgLastOutputChunkAt = now;
-		// Estimate decoded byte count from base64 string length
-		bgBytesSinceIdle += Math.floor(base64Data.length * 0.75);
+	// Background trackers only need byte counts for activity thresholds, and
+	// where Rust is the authority it counts them itself (phase 6d-5): no need
+	// to hear the output at all.
+	const unlistenOutput = isRustStatusAuthority()
+		? () => {}
+		: await pty.onOutput(ptyId, (data) => {
+				// Only run byte accumulation for agent-mode PTYs
+				const entry = usePtyActivityStore.getState().activities[ptyId];
+				if (entry?.detectionMode !== "agent") return;
+				const now = Date.now();
+				if (
+					bgLastOutputChunkAt &&
+					now - bgLastOutputChunkAt > INACTIVITY_RESET_MS
+				) {
+					bgBytesSinceIdle = 0;
+					// See foreground path: hit history is pruned by its own sliding
+					// window, not by the byte-counter's inactivity gap.
+				}
+				bgLastOutputChunkAt = now;
+				bgBytesSinceIdle += data.length;
 
-		if (entry?.state === "active") {
-			touchLastOutput(ptyId, now);
-		} else if (bgBytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
-			bgBytesSinceIdle = 0;
-			const result = recordThresholdHit(bgThresholdHitTimes, now);
-			bgThresholdHitTimes = result.hitTimes;
-			if (result.fire) {
-				usePtyActivityStore.getState().recordOutput(ptyId);
-			}
-		}
-	});
+				if (entry?.state === "active") {
+					touchLastOutput(ptyId, now);
+				} else if (bgBytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
+					bgBytesSinceIdle = 0;
+					const result = recordThresholdHit(bgThresholdHitTimes, now);
+					bgThresholdHitTimes = result.hitTimes;
+					if (result.fire) {
+						usePtyActivityStore.getState().recordOutput(ptyId);
+					}
+				}
+			});
 	const unlistenStatus = await pty.onStatus(ptyId, (status) => {
-		if (status.type === "exited") {
+		// Rust sees the exit first and its status arrives as `status-updates`
+		// (phase 6d); only tests and the demo record it here.
+		if (status.type === "exited" && !isRustStatusAuthority()) {
 			// Telemetry finalizes this Turn as a pty_exit off the StatusChange cause
 			// (recordExitSuccess/recordError below) — no inline call needed.
 			const actStore = usePtyActivityStore.getState();
@@ -955,11 +971,10 @@ function scheduleWebglReconcile(): void {
 	});
 }
 
-/** Forget a pane's **Title status** — a new agent session, or none. */
+/** Forget a pane's **Title status** — a new agent session, or none. (Rust
+ *  forgets its own when the PTY's Agent or mode changes.) */
 function resetTitleStatus(managed: ManagedTerminal): void {
-	managed.titleStatus = null;
-	managed.titleStatusSeen = false;
-	managed.titleBusyBeforeBare = null;
+	managed.titleTrack = NO_TITLE_TRACK;
 	if (managed.titleTurnEndTimer) {
 		clearTimeout(managed.titleTurnEndTimer);
 		managed.titleTurnEndTimer = null;
@@ -1031,6 +1046,92 @@ function computeWebglBudget(): Set<string> {
 	});
 }
 
+/**
+ * What a deliberate keystroke into a pane does besides reaching its PTY:
+ * the input clock (it gates the output heuristic), the Attention flag, and
+ * the status moves a key makes (an answer to a Waiting Agent, ESC cancelling
+ * a turn, any key acknowledging an Error). The terminal's own input and an
+ * Agent control prompt Rust typed (`noteControlInput`) both come here.
+ */
+function noteInput(
+	managed: Pick<ManagedTerminal, "lastInputAt" | "bytesSinceIdle"> | null,
+	paneId: string,
+	ptyId: string,
+	data: string,
+): void {
+	if (managed) {
+		managed.lastInputAt = Date.now();
+		managed.bytesSinceIdle = 0;
+	}
+	notePaneInput(paneId);
+	const actStore = usePtyActivityStore.getState();
+	let entry = actStore.activities[ptyId];
+	// A **Mid-turn failure** painted this pane red while the Agent kept
+	// working (ADR-0026). Acknowledge it up front and re-read, so the
+	// branches below see what the pane was actually doing and the keystroke
+	// means what it would have meant without the failure — answering a
+	// permission prompt still answers it, ESC still cancels the turn.
+	// Without this the pane is in `error`, every branch below is skipped, and
+	// the fallthrough drops it to Idle for the rest of the turn.
+	if (entry?.state === "error" && peekPreErrorState(ptyId) !== null) {
+		actStore.clearError(ptyId);
+		entry = usePtyActivityStore.getState().activities[ptyId];
+	}
+	if (entry?.state === "waiting" && entry.detectionMode === "agent") {
+		// A waiting agent is cleared ONLY by genuine keyboard input — the
+		// user answering its prompt (ADR-0015). Focus/mouse report
+		// sequences already returned above, so anything reaching here is
+		// real input. Agent-mode panes only — terminal-mode panes keep the
+		// normal behaviour.
+		if (data === "\x1b") {
+			// Bare ESC dismisses the prompt without a choice — the agent
+			// goes back to idle, not busy.
+			actStore.clearWaiting(ptyId);
+		} else if (data === "\r" || data === "\n" || /^[0-9]$/.test(data)) {
+			// Enter or a 0-9 choice answers the prompt — the agent resumes
+			// working, so show it as busy right away. Any other key (typing
+			// a rejection reason, navigation, etc.) leaves the dot waiting.
+			actStore.applyHookEvent(ptyId, "active");
+		}
+	} else if (entry?.state === "active" && entry.detectionMode === "agent") {
+		// ESC is the user's cancel keystroke for an in-flight agent task.
+		// Claude/Gemini/Qwen interrupt on a single press; the others
+		// (Copilot, Codex, OpenCode, custom agents) require a deliberate double-ESC
+		// within ESC_DOUBLE_PRESS_WINDOW_MS. Any other key resets the
+		// double-ESC tracker so "ESC, x, ESC" can't fire it by accident.
+		// Multi-byte ESC-prefixed sequences (arrows, focus reports) are
+		// longer than one byte and naturally bypass this branch.
+		if (data === "\x1b") {
+			const agentId = actStore.detectedAgentIds[ptyId];
+			const required = escPressesToCancelAgent(agentId);
+			const now = Date.now();
+			const lastEsc = escPressTimestamps.get(ptyId);
+			const isFollowUp =
+				lastEsc !== undefined && now - lastEsc <= ESC_DOUBLE_PRESS_WINDOW_MS;
+			if (required === 1 || isFollowUp) {
+				actStore.clearActive(ptyId);
+				escPressTimestamps.delete(ptyId);
+			} else {
+				escPressTimestamps.set(ptyId, now);
+			}
+		} else {
+			escPressTimestamps.delete(ptyId);
+		}
+	} else {
+		actStore.clearError(ptyId);
+		actStore.markIdle(ptyId);
+	}
+}
+
+/** Bytes Rust typed into a pane for Agent control (`agent prompt`), kept
+ *  as the keystrokes they stand for (`agent-control-effect` `input`). */
+export function noteControlInput(paneId: string, data: string): void {
+	const managed = getTerminal(paneId) ?? null;
+	const ptyId =
+		managed?.ptyId || usePtyActivityStore.getState().panePtyMap[paneId];
+	if (!ptyId) return;
+	noteInput(managed, paneId, ptyId, data);
+}
 export function getTerminal(paneId: string): ManagedTerminal | undefined {
 	return instances.get(paneId);
 }
@@ -1167,7 +1268,7 @@ export async function createTerminal(
 	const openExternalUrl = (event: MouseEvent, url: string) => {
 		const forceOpen = isMac ? event.metaKey : event.ctrlKey;
 		if (term.modes.mouseTrackingMode !== "none" && !forceOpen) return;
-		open(url);
+		openExternal(url);
 	};
 
 	// Route OSC 8 hyperlinks (emitted by CLIs like GitHub Copilot) through the
@@ -1234,9 +1335,7 @@ export async function createTerminal(
 		awaitingTaskStart: false,
 		refused: false,
 		awaitingTypedAgentStart: false,
-		titleStatus: null,
-		titleStatusSeen: false,
-		titleBusyBeforeBare: null,
+		titleTrack: NO_TITLE_TRACK,
 		titleTurnEndTimer: null,
 		writes: createWriteBatcher((data) => term.write(data)),
 		queuedAltScreen: false,
@@ -1535,66 +1634,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			pty.write(currentPtyId, data);
 			return;
 		}
-		managed.lastInputAt = Date.now();
-		managed.bytesSinceIdle = 0;
-		notePaneInput(paneId);
-		const actStore = usePtyActivityStore.getState();
-		let entry = actStore.activities[currentPtyId];
-		// A **Mid-turn failure** painted this pane red while the Agent kept
-		// working (ADR-0026). Acknowledge it up front and re-read, so the
-		// branches below see what the pane was actually doing and the keystroke
-		// means what it would have meant without the failure — answering a
-		// permission prompt still answers it, ESC still cancels the turn.
-		// Without this the pane is in `error`, every branch below is skipped, and
-		// the fallthrough drops it to Idle for the rest of the turn.
-		if (entry?.state === "error" && peekPreErrorState(currentPtyId) !== null) {
-			actStore.clearError(currentPtyId);
-			entry = usePtyActivityStore.getState().activities[currentPtyId];
-		}
-		if (entry?.state === "waiting" && entry.detectionMode === "agent") {
-			// A waiting agent is cleared ONLY by genuine keyboard input — the
-			// user answering its prompt (ADR-0015). Focus/mouse report
-			// sequences already returned above, so anything reaching here is
-			// real input. Agent-mode panes only — terminal-mode panes keep the
-			// normal behaviour.
-			if (data === "\x1b") {
-				// Bare ESC dismisses the prompt without a choice — the agent
-				// goes back to idle, not busy.
-				actStore.clearWaiting(currentPtyId);
-			} else if (data === "\r" || data === "\n" || /^[0-9]$/.test(data)) {
-				// Enter or a 0-9 choice answers the prompt — the agent resumes
-				// working, so show it as busy right away. Any other key (typing
-				// a rejection reason, navigation, etc.) leaves the dot waiting.
-				actStore.applyHookEvent(currentPtyId, "active");
-			}
-		} else if (entry?.state === "active" && entry.detectionMode === "agent") {
-			// ESC is the user's cancel keystroke for an in-flight agent task.
-			// Claude/Gemini/Qwen interrupt on a single press; the others
-			// (Copilot, Codex, OpenCode, custom agents) require a deliberate double-ESC
-			// within ESC_DOUBLE_PRESS_WINDOW_MS. Any other key resets the
-			// double-ESC tracker so "ESC, x, ESC" can't fire it by accident.
-			// Multi-byte ESC-prefixed sequences (arrows, focus reports) are
-			// longer than one byte and naturally bypass this branch.
-			if (data === "\x1b") {
-				const agentId = actStore.detectedAgentIds[currentPtyId];
-				const required = escPressesToCancelAgent(agentId);
-				const now = Date.now();
-				const lastEsc = escPressTimestamps.get(currentPtyId);
-				const isFollowUp =
-					lastEsc !== undefined && now - lastEsc <= ESC_DOUBLE_PRESS_WINDOW_MS;
-				if (required === 1 || isFollowUp) {
-					actStore.clearActive(currentPtyId);
-					escPressTimestamps.delete(currentPtyId);
-				} else {
-					escPressTimestamps.set(currentPtyId, now);
-				}
-			} else {
-				escPressTimestamps.delete(currentPtyId);
-			}
-		} else {
-			actStore.clearError(currentPtyId);
-			actStore.markIdle(currentPtyId);
-		}
+		noteInput(managed, paneId, currentPtyId, data);
 		pty.write(currentPtyId, data);
 	});
 
@@ -1605,13 +1645,52 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 
 	// Register all event listeners and spawn PTY in parallel — each is an async
 	// IPC round-trip, so running them concurrently cuts init time significantly.
+	// What a hook Rust applied leaves for this Window (phase 6d).
+	hearHookNotices();
+	hookNoticeHandlers.set(currentPtyId, (notice) => {
+		if (notice.sessionEnd) noteSessionEnd(currentPtyId);
+		if (!notice.adopted) return;
+		usePtyActivityStore
+			.getState()
+			.noteAgentFromHost(currentPtyId, notice.agent);
+		useWorkspaceStore.getState().stampAgentOnPane(paneId, notice.agent);
+		if (notice.sessionId) {
+			useWorkspaceStore
+				.getState()
+				.stampAgentSessionOnPane(paneId, notice.agent, notice.sessionId);
+		}
+	});
 	const [unlistenOutput, unlistenActivity, unlistenStatus, unlistenHook] =
 		await Promise.all([
 			pty.onOutput(currentPtyId, (data) => {
+				// A remote pane's screen after this Window fell behind (phase 9
+				// skip-ahead): it replaces everything the terminal had.
+				const snapshot = resyncSnapshot(data);
+				if (snapshot) {
+					console.info(
+						`[skip-ahead] ${paneId}: drawing the Host's screen (${snapshot.length} bytes)`,
+					);
+					if (managed.startupBuffer) managed.startupBuffer.length = 0;
+					managed.restoreData = null;
+					// The output still waiting to be written is older than the
+					// snapshot, which replaces it; RIS (ESC c) clears the terminal
+					// in step with what xterm has already been given.
+					managed.writes.discard();
+					const ris = new Uint8Array([0x1b, 0x63]);
+					const replace = new Uint8Array(ris.length + snapshot.length);
+					replace.set(ris);
+					replace.set(snapshot, ris.length);
+					managed.writes.push(replace);
+					managed.queuedAltScreen = scanAlternateScreen(snapshot, false).after;
+					return;
+				}
 				// Always parse and strip shell integration sequences in both modes,
 				// so command_end is detected even while in agent mode.
 				const { cleaned, commands } = shellIntegration.parse(data);
-				if (commands.length > 0) managed.shellIntegrationSeen = true;
+				if (commands.length > 0 && !managed.shellIntegrationSeen) {
+					managed.shellIntegrationSeen = true;
+					setShellIntegrationSeen(paneId, true);
+				}
 
 				// Cache store state once per chunk to avoid repeated getState() calls
 				const actState = usePtyActivityStore.getState();
@@ -1676,7 +1755,11 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					scheduleWrite(managed, output);
 				}
 
-				// Process shell integration commands (agent detection + shell activity)
+				// Process shell integration commands (agent detection + shell
+				// activity). Where Rust is the authority it reads them from the
+				// PTY itself and applies their status (shell_integration.rs,
+				// phase 6d-4); the Window keeps its own bookkeeping only.
+				const statusFromRust = isRustStatusAuthority();
 				for (const cmd of commands) {
 					if (cmd.type === "cwd_change") {
 						actState.setCwd(currentPtyId, cmd.path ?? "");
@@ -1692,11 +1775,16 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						// this chunk is now stale.
 						let nowIsAgent = isAgentMode;
 						if (cmd.commandText) {
-							const agents = useSettingsStore.getState().agents;
+							// The Agents of this pane's Host (ADR-0064).
+							const agents = agentsForPane(paneId);
 							const matched = matchTitleToAgent(cmd.commandText, agents);
 							if (matched) {
 								resetTitleStatus(managed);
-								actState.setAgentPty(currentPtyId, matched.id);
+								if (statusFromRust) {
+									actState.noteAgentFromHost(currentPtyId, matched.id);
+								} else {
+									actState.setAgentPty(currentPtyId, matched.id);
+								}
 								// Persist the agent identity onto the layout so a
 								// manually-typed agent re-runs after a restart, mirroring
 								// the cwd stamp above.
@@ -1733,7 +1821,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						// shellCommandRunning=true for the agent's own command_start.
 						// If that flag stays true, the idle scanner will never
 						// transition active → ready (purple) for the agent.
-						if (!managed.suppressActivity && !nowIsAgent) {
+						if (!statusFromRust && !managed.suppressActivity && !nowIsAgent) {
 							actState.setShellCommandRunning(currentPtyId, true);
 							actState.recordOutput(currentPtyId);
 						}
@@ -1743,10 +1831,14 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						tryFlushStartup(managed);
 						// Exit agent mode when the command finishes (reads fresh state,
 						// since setAgentPty above may have mutated it).
-						const wasAgentMode = applyAgentExit(currentPtyId, paneId);
+						const wasAgentMode = applyAgentExit(
+							currentPtyId,
+							paneId,
+							statusFromRust,
+						);
 						if (wasAgentMode) resetTitleStatus(managed);
 						const freshState = usePtyActivityStore.getState();
-						if (!managed.suppressActivity && !wasAgentMode) {
+						if (!statusFromRust && !managed.suppressActivity && !wasAgentMode) {
 							freshState.setShellCommandRunning(currentPtyId, false);
 							const outcome = classifyShellExit(cmd.exitCode);
 							if (outcome === "error") {
@@ -1760,14 +1852,16 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 					}
 				}
 
-				// Agent mode: activity tracking
+				// Agent mode: activity tracking. Where Rust is the authority it
+				// runs this on the PTY's output itself (phase 6d-5); the counters
+				// here then only feed the debug activity meter.
 				if (isAgentMode) {
 					const now = Date.now();
 					if (entry?.hookDriven) {
 						// Hook-driven PTYs trust hook events for state transitions.
 						// Just keep lastOutput fresh so the idle-scanner backstop
 						// only fires on a genuinely stuck agent (a dropped Stop).
-						touchLastOutput(currentPtyId, now);
+						if (!statusFromRust) touchLastOutput(currentPtyId, now);
 					} else if (
 						!managed.suppressActivity &&
 						now - managed.lastInputAt > INPUT_GATE_MS
@@ -1788,12 +1882,12 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						managed.bytesSinceIdle += cleaned.length;
 
 						if (entry?.state === "active") {
-							touchLastOutput(currentPtyId, now);
+							if (!statusFromRust) touchLastOutput(currentPtyId, now);
 						} else if (managed.bytesSinceIdle >= ACTIVITY_BYTE_THRESHOLD) {
 							managed.bytesSinceIdle = 0;
 							const result = recordThresholdHit(managed.thresholdHitTimes, now);
 							managed.thresholdHitTimes = result.hitTimes;
-							if (result.fire) {
+							if (result.fire && !statusFromRust) {
 								usePtyActivityStore.getState().recordOutput(currentPtyId);
 							}
 						}
@@ -1832,7 +1926,9 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			}),
 
 			pty.onStatus(currentPtyId, (status) => {
-				if (status.type === "exited") {
+				// Rust sees the exit first and its status arrives as
+				// `status-updates` (phase 6d); only tests and the demo record it.
+				if (status.type === "exited" && !isRustStatusAuthority()) {
 					// Telemetry finalizes this Turn as a pty_exit off the StatusChange
 					// cause (recordExitSuccess/recordError below) — no inline call.
 					// Set activity state BEFORE setPtyStatus to avoid subscriber race
@@ -1851,6 +1947,9 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 			}),
 
 			pty.onHook(currentPtyId, (hookEvent) => {
+				// Rust applies hooks where the PTY runs (phase 6d) and sends
+				// `agent-hook-applied`; only tests and the demo route them here.
+				if (isRustStatusAuthority()) return;
 				console.debug(
 					"[abundio:hook] frontend received",
 					hookEvent.agent,
@@ -1867,39 +1966,6 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				} catch {
 					// payload is not JSON — leave undefined
 				}
-				const toolName =
-					typeof (payload as { toolName?: unknown })?.toolName === "string"
-						? ((payload as { toolName: string }).toolName as string)
-						: undefined;
-				// Grok's Stop payload discriminates how the turn ended
-				// (end_turn / cancelled / error) — mapHookEvent branches on it.
-				const stopReason =
-					typeof (payload as { reason?: unknown })?.reason === "string"
-						? ((payload as { reason: string }).reason as string)
-						: undefined;
-				// Grok's envelope stamps the session permission mode and its
-				// Notification payload carries the notification type — together they
-				// tell a self-resolving auto-mode permission_prompt apart from a
-				// prompt that genuinely blocks on the user (mapHookEvent branches).
-				const permissionMode =
-					typeof (payload as { permissionMode?: unknown })?.permissionMode ===
-					"string"
-						? (payload as { permissionMode: string }).permissionMode
-						: undefined;
-				const notificationType =
-					typeof (payload as { notificationType?: unknown })
-						?.notificationType === "string"
-						? (payload as { notificationType: string }).notificationType
-						: undefined;
-				// Grok's Notification message text is the only field separating a
-				// dialog actually shown on screen (plan approval, diff review —
-				// always blocks) from the gate-entry prompt that fires before the
-				// permission resolves (mapHookEvent branches).
-				const message =
-					typeof (payload as { message?: unknown })?.message === "string"
-						? (payload as { message: string }).message
-						: undefined;
-
 				// A hook event proves an agent runs in this PTY — adopt agent mode
 				// even if title-based detection missed it, and persist the agent
 				// identity so a hook-detected agent re-runs after a restart.
@@ -1941,106 +2007,55 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 						.getState()
 						.applyHookEvent(currentPtyId, transition, turnStart);
 				};
-				// Subagent lifecycle events drive the pane's Subagent set — which
-				// holds the Ready flip while delegated work still runs (ADR-0022,
-				// docs/plans/subagent-aware-status.md).
-				const applySubagent = (subagent: SubagentSignal) => {
-					if (subagent.action === "ignored") return;
-					if (subagent.action === "resume") {
-						applyTransition("resume", false);
-						return;
-					}
-					// A subagent hook proves an agent runs here as much as any hook.
-					adoptAgent();
-					const actStore = usePtyActivityStore.getState();
-					if (subagent.action === "started") {
-						actStore.subagentStarted(currentPtyId, subagent.id);
-					} else {
-						actStore.subagentStopped(currentPtyId, subagent.id);
-					}
-				};
-
-				// OpenCode 2.x: its TUI plugin has already sorted the event into the
-				// on-screen session, a Subagent, or a session switch (ADR-0045).
-				if (hookEvent.agent === "opencode" && isOpenCodeV2Payload(payload)) {
-					const action = mapOpenCodeV2Event(hookEvent.event, payload);
-					if (!action) return;
-					if (action.kind === "subagent") applySubagent(action.signal);
-					else if (action.kind === "transition") {
-						applyTransition(action.transition, action.turnStart);
-					} else {
-						// A different session on screen: close out the old one (the
-						// Turn tracker records this as a Session end, deliberately —
-						// the Turn on screen did end for this pane), then pick up the
-						// new one where it is, including a prompt it is already on.
-						applySessionEnd(currentPtyId);
-						if (action.running) applyTransition("active", false);
-						if (action.waiting) applyTransition("waiting", false);
-					}
-					return;
-				}
-
-				// Subagent lifecycle events bypass mapHookEvent: they carry an id,
-				// not a transition.
-				const subagent = mapSubagentHookEvent(
+				// Every routing rule, in order (agentHookMap.ts routeHookEvent,
+				// mirrored in Rust's hook_route.rs).
+				const route = routeHookEvent(
 					hookEvent.agent,
 					hookEvent.event,
 					payload,
-					(id) => hasActiveSubagent(currentPtyId, id),
+					{
+						hasSubagent: (id) => hasActiveSubagent(currentPtyId, id),
+						titleStatusSeen: managed.titleTrack.seen,
+						openCodeCancelled: openCodeCancelledPtys.has(currentPtyId),
+					},
 				);
-				if (subagent) {
-					applySubagent(subagent);
-					return;
-				}
-
-				// A Title-status Agent's turn-finished hook means nothing until its
-				// title has proved live: with tab status off, Working comes from the
-				// byte heuristic, which a hook would silence for good (ADR-0047).
-				if (hasTitleStatus(hookEvent.agent) && !managed.titleStatusSeen) {
+				if (route.openCodeCancelled) openCodeCancelledPtys.add(currentPtyId);
+				else openCodeCancelledPtys.delete(currentPtyId);
+				if (route.dropped) {
 					console.debug(
-						"[abundio:hook] no Title status yet, dropping",
+						"[abundio:hook] dropped",
+						route.dropped,
 						hookEvent.agent,
 						hookEvent.event,
 					);
-					return;
 				}
-
-				// OpenCode 1.x folds its payload discriminators into the event name
-				// — after the Subagent check above, which keys on raw names.
-				const eventKey =
-					hookEvent.agent === "opencode"
-						? openCodeEventKey(hookEvent.event, payload)
-						: hookEvent.event;
-				const transition = mapHookEvent(
-					hookEvent.agent,
-					eventKey,
-					toolName,
-					stopReason,
-					permissionMode,
-					notificationType,
-					message,
-				);
-				if (!transition) {
-					console.debug(
-						"[abundio:hook] no status mapping for",
-						hookEvent.agent,
-						eventKey,
-					);
-					return;
+				for (const step of route.steps) {
+					switch (step.kind) {
+						case "sessionEnd":
+							// A Session end (`/clear`, or a real exit — Copilot's
+							// payload cannot tell them apart): it must never put an
+							// exited Agent's PTY back into agent mode.
+							applySessionEnd(currentPtyId);
+							break;
+						case "transition":
+							applyTransition(step.transition, step.turnStart);
+							break;
+						case "subagentStarted":
+						case "subagentStopped": {
+							// A subagent hook proves an agent runs here as much as
+							// any hook. Its set holds the Ready flip while delegated
+							// work runs (ADR-0022).
+							adoptAgent();
+							const actStore = usePtyActivityStore.getState();
+							if (step.kind === "subagentStarted") {
+								actStore.subagentStarted(currentPtyId, step.id);
+							} else {
+								actStore.subagentStopped(currentPtyId, step.id);
+							}
+							break;
+						}
+					}
 				}
-				if (hookEvent.agent === "opencode") {
-					const gate = openCodeCancelGate(
-						openCodeCancelledPtys.has(currentPtyId),
-						eventKey,
-					);
-					if (gate.cancelled) openCodeCancelledPtys.add(currentPtyId);
-					else openCodeCancelledPtys.delete(currentPtyId);
-					if (gate.skip) return;
-				}
-				applyTransition(
-					transition,
-					isTurnStartEvent(hookEvent.agent, eventKey),
-				);
 			}),
 
 			// Spawn PTY concurrently with listener registration — listeners use
@@ -2053,7 +2068,15 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 								cwd,
 								cols: term.cols,
 								rows: term.rows,
-								shell: useSettingsStore.getState().shellPath ?? undefined,
+								// This computer's shell setting is for this computer;
+								// a pane on a Host starts its Host's (ADR-0064).
+								shell:
+									hostOfWorkspace(
+										useWorkspaceStore.getState().findWorkspaceForPane(paneId)
+											?.id,
+									) === null
+										? (useSettingsStore.getState().shellPath ?? undefined)
+										: undefined,
 								logId: paneId,
 								ptyId: currentPtyId,
 								// Resolved from the pane's OWN workspace, not the active
@@ -2122,7 +2145,9 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 				if (!layout) continue;
 				if (containsPane(layout, paneId)) {
 					const updated = setPtyIdInLayout(layout, paneId, currentPtyId);
-					store.updateLayoutLocal(tab.id, updated);
+					// Saved, so Rust knows which PTY the pane runs (Agent
+					// control reads it there, ADR-0063).
+					void store.updateLayout(tab.id, updated);
 					break;
 				}
 			}
@@ -2133,38 +2158,31 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		const actStore = usePtyActivityStore.getState();
 		actStore.setTitle(paneId, title);
 		// **Title status** (ADR-0047): an agent-mode pane whose Agent announces
-		// its state in the title. Replayed scrollback is a dead session's title.
+		// its state in the title. Rust reads it from its own screen where it is
+		// the authority (phase 6d-3). Replayed scrollback is a dead session's title.
+		if (isRustStatusAuthority()) return;
 		if (managed.restoring || !actStore.agentPtyIds.has(currentPtyId)) return;
-		const reading = readTitle(actStore.detectedAgentIds[currentPtyId], title);
-		if (reading === null) return;
-		// Until a prefix proves tab status is on, the pane stays on the byte
-		// heuristic — a suffix alone would turn it hook-driven for good.
-		if (reading.live) managed.titleStatusSeen = true;
-		if (!managed.titleStatusSeen) return;
-		const { status } = reading;
-		const step = titleStep(
-			managed.titleStatus,
-			status,
-			managed.titleBusyBeforeBare,
+		const change = titleChange(
+			managed.titleTrack,
+			actStore.detectedAgentIds[currentPtyId],
+			title,
 		);
-		const prev = managed.titleStatus;
-		managed.titleStatus = status;
-		if (!step.dispatch) return;
+		managed.titleTrack = change.track;
+		if (!change.dispatch) return;
 		if (managed.titleTurnEndTimer) {
 			clearTimeout(managed.titleTurnEndTimer);
 			managed.titleTurnEndTimer = null;
 		}
-		managed.titleBusyBeforeBare = step.awaitTurnEnd ? prev : null;
 		actStore.applyTitleStatus(
 			currentPtyId,
-			step.dispatch.status,
-			step.dispatch.startsTurn,
+			change.dispatch.status,
+			change.dispatch.startsTurn,
 		);
-		if (step.awaitTurnEnd) {
+		if (change.awaitTurnEnd) {
 			const ptyId = currentPtyId;
 			managed.titleTurnEndTimer = setTimeout(() => {
 				managed.titleTurnEndTimer = null;
-				managed.titleBusyBeforeBare = null;
+				managed.titleTrack = titleGraceEnded(managed.titleTrack);
 				usePtyActivityStore.getState().titleTurnEnded(ptyId);
 			}, TITLE_TURN_END_GRACE_MS);
 		}
@@ -2188,6 +2206,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		unlistenActivity();
 		unlistenStatus();
 		unlistenHook();
+		hookNoticeHandlers.delete(currentPtyId);
 		onDataSub.dispose();
 		onTitleSub.dispose();
 		resetTitleStatus(managed);
@@ -2354,6 +2373,13 @@ export function setAllTerminalsScrollback(scrollback: number): void {
 	for (const managed of instances.values()) {
 		managed.term.options.scrollback = scrollback;
 	}
+	// Each PTY's Rust screen keeps the same depth, so an Agent reads the
+	// lines the user can scroll to (ADR-0063).
+	// Never let it throw into a settings rehydrate (see CLAUDE.md on
+	// `terminalSettingsBridge`): a failure here only costs Agents history.
+	Promise.resolve()
+		.then(() => pty.setScrollback(scrollback))
+		.catch(() => {});
 }
 
 /**
@@ -2631,6 +2657,7 @@ export async function restartPanePty(
 	managed.awaitingTaskStart = false;
 	managed.awaitingTypedAgentStart = false;
 	managed.shellIntegrationSeen = false;
+	setShellIntegrationSeen(managed.paneId, false);
 	// `settled` deliberately stays true: the pane is already projected and
 	// painted, and clearing it would make the flush wait for the safety timeout.
 
@@ -2759,6 +2786,22 @@ export function teardownTerminal(paneId: string): void {
 	// never opened this session still has persisted scrollback logs on disk; purge
 	// them now instead of leaving them for the next-launch cleanupStaleLogs sweep.
 	pty.deleteLog(paneId).catch(() => {});
+	actStore.removePane(paneId);
+}
+
+/**
+ * Stop showing a pane whose PTY lives on elsewhere: a Joined profile's pane
+ * when the Window leaves it (phase 10). Like `teardownTerminal`, but the PTY
+ * keeps running on its Host and its log stays.
+ */
+export function detachTerminal(paneId: string): void {
+	const actStore = usePtyActivityStore.getState();
+	const ptyId =
+		instances.get(paneId)?.ptyId || actStore.panePtyMap[paneId] || "";
+	if (ptyId) stopBackgroundTracking(ptyId);
+	paneMouseOverrides.delete(paneId);
+	disposeInstance(paneId, false);
+	if (ptyId) actStore.removePty(ptyId, { local: true });
 	actStore.removePane(paneId);
 }
 

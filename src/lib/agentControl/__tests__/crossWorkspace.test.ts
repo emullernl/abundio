@@ -156,51 +156,6 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("calls into another Workspace", () => {
-	it("lists that Workspace's Agents", async () => {
-		const r = (await runRequest(
-			caller,
-			{ op: "agent.list" },
-			undefined,
-			there,
-		)) as {
-			agents: { handle: string; self: boolean }[];
-		};
-		expect(r.agents).toEqual([
-			expect.objectContaining({ handle: "Reviewer", self: false }),
-		]);
-	});
-
-	it("reads a pane there by handle, badged with the caller's Workspace", async () => {
-		const seen: (string | undefined)[] = [];
-		const unsub = useControlBadgeStore.subscribe((s) =>
-			seen.push(s.badges.r?.by),
-		);
-		const r = await runRequest(
-			caller,
-			{
-				op: "pane.read",
-				target: { kind: "handle", value: "reviewer" },
-				lines: null,
-				visible: false,
-			},
-			undefined,
-			there,
-		);
-		unsub();
-		expect(r).toMatchObject({ pane: "p1", text: "LGTM" });
-		expect(seen).toContain("Agent One · home");
-	});
-
-	it("pane current is still the caller's own pane", async () => {
-		const r = await runRequest(
-			caller,
-			{ op: "pane.current" },
-			undefined,
-			there,
-		);
-		expect(r).toMatchObject({ handle: "Agent One", self: true });
-	});
-
 	it("never splits there: a new pane gets a Tab of its own, owned by the caller", async () => {
 		const r = await runRequest(
 			caller,
@@ -223,31 +178,12 @@ describe("calls into another Workspace", () => {
 			.workspaces.find((w) => w.id === "home");
 		expect(JSON.parse(home?.tabs[0].layoutJson ?? "{}").type).toBe("terminal");
 	});
-
-	it("tab rename there needs --tab, then renames any Tab", async () => {
-		await expect(
-			runRequest(
-				caller,
-				{ op: "tab.rename", name: "X", target: null },
-				undefined,
-				there,
-			),
-		).rejects.toMatchObject({ code: "not_found" });
-		await expect(
-			runRequest(
-				caller,
-				{ op: "tab.rename", name: "X", target: { kind: "pane", value: 1 } },
-				undefined,
-				there,
-			),
-		).resolves.toEqual({ tab: "X", renamed: true });
-	});
 });
 
 describe("a Workspace that is not Opened", () => {
 	it("is opened in the background, then the call goes ahead", async () => {
 		vi.useFakeTimers();
-		const p = runRequest(caller, { op: "agent.list" }, undefined, {
+		const p = runRequest(caller, { op: "workspace.open" }, undefined, {
 			workspaceId: "docs",
 			open: true,
 		});
@@ -259,7 +195,7 @@ describe("a Workspace that is not Opened", () => {
 		// Its terminals mount (TerminalPool does this for every Opened one).
 		terminals.set("d", { ptyId: "pty-d", term: {} });
 		await vi.advanceTimersByTimeAsync(500);
-		await expect(p).resolves.toMatchObject({ agents: [] });
+		await expect(p).resolves.toEqual({ opened: true });
 		// The user's view did not move.
 		expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("home");
 		expect(useWorkspaceStore.getState().focusedPaneId).toBe("a");
@@ -267,7 +203,7 @@ describe("a Workspace that is not Opened", () => {
 
 	it("stalls if its panes never load", async () => {
 		vi.useFakeTimers();
-		const p = runRequest(caller, { op: "agent.list" }, undefined, {
+		const p = runRequest(caller, { op: "workspace.open" }, undefined, {
 			workspaceId: "docs",
 			open: true,
 		});
@@ -279,7 +215,7 @@ describe("a Workspace that is not Opened", () => {
 	it("is refused when its folder is missing", async () => {
 		useWorkspaceStore.setState({ missingFolderIds: new Set(["docs"]) });
 		await expect(
-			runRequest(caller, { op: "agent.list" }, undefined, {
+			runRequest(caller, { op: "workspace.open" }, undefined, {
 				workspaceId: "docs",
 				open: true,
 			}),

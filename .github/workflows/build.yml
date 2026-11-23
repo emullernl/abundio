@@ -6,7 +6,10 @@ on:
       - 'v*'
 
 jobs:
+  # The app bundles the servers a Host runs (phase 15), so they are built
+  # first, by the `server` job below.
   build:
+    needs: server
     strategy:
       fail-fast: false
       matrix:
@@ -62,6 +65,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
+      # Every installer carries all three servers, gzipped, in its resources
+      # (`bundle.resources`); a Host unpacks the one it needs.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: abundio-server-*
+          path: server-dist
+          merge-multiple: true
+
+      - name: Bundle the servers
+        shell: bash
+        run: |
+          for p in linux-x86_64 linux-aarch64 macos-universal; do
+            test -s "server-dist/abundio-server-$p" || { echo "missing server for $p" >&2; exit 1; }
+            gzip -9 -n -c "server-dist/abundio-server-$p" > "src-tauri/resources/server/abundio-server-$p.gz"
+          done
+          ls -l src-tauri/resources/server
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@action-v0.6.2
         env:
@@ -78,3 +98,88 @@ jobs:
           releaseName: "Abundio v__VERSION__"
           releaseDraft: true
           prerelease: false
+
+  # The headless server a Host runs (docs/plans/remote-hosts.md phase 8e):
+  # built for each Host platform and handed to the `build` job, which
+  # bundles all three into every installer (phase 15), and attached to the
+  # release as downloads of their own (`server-assets`).
+  server:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            runner: ubuntu-24.04
+          - platform: linux-aarch64
+            runner: ubuntu-24.04-arm
+          - platform: macos-universal
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Static (musl), in the same Alpine container as a development build.
+      - name: Build (Linux)
+        if: startsWith(matrix.platform, 'linux-')
+        run: |
+          sh scripts/build-server-linux.sh "${MATRIX_PLATFORM#linux-}"
+          cp "src-tauri/target/server-dist/$MATRIX_PLATFORM/abundio-server" "abundio-server-$MATRIX_PLATFORM"
+        env:
+          MATRIX_PLATFORM: ${{ matrix.platform }}
+
+      - name: Setup Rust (macOS)
+        if: matrix.platform == 'macos-universal'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Build (macOS universal)
+        if: matrix.platform == 'macos-universal'
+        working-directory: src-tauri
+        run: |
+          for t in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release --locked -p abundio-server --target "$t"
+          done
+          lipo -create -output ../abundio-server-macos-universal \
+            target/aarch64-apple-darwin/release/abundio-server \
+            target/x86_64-apple-darwin/release/abundio-server
+
+      # The handshake needs the exact version: never ship another one.
+      - name: Check its version
+        run: |
+          got="$(./abundio-server-$MATRIX_PLATFORM version)"
+          want="abundio-server ${GITHUB_REF_NAME#v}"
+          echo "$got"
+          [ "$got" = "$want" ] || { echo "expected $want" >&2; exit 1; }
+        env:
+          MATRIX_PLATFORM: ${{ matrix.platform }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: abundio-server-${{ matrix.platform }}
+          path: abundio-server-${{ matrix.platform }}
+          if-no-files-found: error
+
+  # The servers as downloads of their own, beside the app, for installing one
+  # by hand. The app never fetches them: it bundles its own (phase 15). The
+  # release must exist first, so after `build`, which makes it (as a draft).
+  server-assets:
+    needs: [build, server]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: abundio-server-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum abundio-server-* > SHA256SUMS && cat SHA256SUMS
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/* --clobber --repo "$GITHUB_REPOSITORY"

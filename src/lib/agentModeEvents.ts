@@ -19,12 +19,19 @@ import type { PtyDetectionMode } from "./types";
  * stamped Agent so it does NOT auto-relaunch next time. Returns whether the PTY
  * was in agent mode, since the caller's shell-mode bookkeeping must then skip.
  */
-export function applyAgentExit(ptyId: string, paneId: string): boolean {
+export function applyAgentExit(
+	ptyId: string,
+	paneId: string,
+	statusFromHost = false,
+): boolean {
 	const store = usePtyActivityStore.getState();
 	// Gate on what clearAgentPty itself gates on, so `true` always means the
 	// PTY really left agent mode.
 	if (!store.agentPtyIds.has(ptyId)) return false;
-	store.clearAgentPty(ptyId);
+	// Where Rust read the end itself (shell integration), only the Window's
+	// bookkeeping is left; the status arrives from Rust.
+	if (statusFromHost) store.noteAgentExitFromHost(ptyId);
+	else store.clearAgentPty(ptyId);
 	useWorkspaceStore.getState().stampAgentOnPane(paneId, undefined);
 	return true;
 }
@@ -49,6 +56,12 @@ export function applySessionEnd(ptyId: string): void {
 	if (store.activities[ptyId]?.detectionMode === "agent") {
 		store.applyHookEvent(ptyId, "idle");
 	}
+}
+
+/** A Session end Rust applied (phase 6d): only Turn telemetry's half here,
+ *  its status arrives from Rust. */
+export function noteSessionEnd(ptyId: string): void {
+	void trackSessionEnd(ptyId);
 }
 
 /** Whether a PTY's hook listener takes the Session end path. It must be

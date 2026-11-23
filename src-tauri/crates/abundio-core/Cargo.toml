@@ -1,0 +1,43 @@
+[package]
+name = "abundio-core"
+version = "3.1.0"
+description = "What an Abundio Host runs with no window: Workspaces, PTYs, status, layouts, Agent control"
+authors = ["Emil Müller"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# No Tauri here, ever: this crate is what the headless `abundio-server` runs
+# (docs/plans/remote-hosts.md phase 6). The desktop app depends on it. Each
+# dependency has the same version and features as in `src-tauri/Cargo.toml`,
+# where the reasons for them are written down.
+[dependencies]
+rusqlite = { version = "0.31", features = ["bundled", "backup"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+dirs = "5"
+dashmap = "6"
+base64 = "0.22"
+crossbeam-channel = "0.5"
+thiserror = "2"
+log = { version = "0.4", features = ["std"] }
+notify = "7"
+ignore = "0.4"
+git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2"] }
+regex = "1"
+tiny_http = "0.12"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+toml_edit = "0.25"
+keyring = { version = "4", default-features = false, features = ["v1"] }
+aes-gcm = "0.10"
+zeroize = { version = "1", features = ["zeroize_derive"] }
+alacritty_terminal = "0.26.0"
+portable-pty = "0.8"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30", default-features = false, features = ["signal"] }
+
+[dev-dependencies]
+tempfile = "3"
+sha2 = "0.10"

@@ -5,6 +5,8 @@ use crate::error::AbundioError;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+pub(crate) use crate::shell_env::find_in_path;
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchStyle {
@@ -180,6 +182,8 @@ pub struct DetectedDevEnvironment {
     pub id: String,
     pub display_name: String,
     pub icon_name: String,
+    /// It can open a folder on a Host over SSH (phase 10f).
+    pub remote: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -188,51 +192,6 @@ pub struct LaunchFile {
     pub path: String,
     pub line: Option<u32>,
     pub column: Option<u32>,
-}
-
-/// Probe `$PATH` + a few well-known dirs for an executable. On macOS,
-/// launching via the Tauri app bundle yields a minimal `$PATH` that excludes
-/// the user's shell PATH (e.g. `~/.local/bin`, where Claude Code's installer
-/// puts `claude`), so we resolve the full login-shell PATH via `shell_path()`
-/// rather than the inherited process env. `/usr/local/bin` and
-/// `/opt/homebrew/bin` are still appended as extras. On Windows, probes common
-/// binary extensions.
-///
-/// Cost note: the first call process-wide (shared with `gh_commands`) blocks on
-/// a login-shell subprocess to resolve the PATH (~50–300ms on macOS); the
-/// result is cached for the process lifetime, so subsequent calls are cheap.
-/// Today's callers (`lib.rs` setup, `list_installed_agent_commands`,
-/// `detect_all`) are off the UI hot path — keep them there, or warm
-/// `shell_path()` ahead of time if this ever moves onto a UI-blocking path.
-pub(crate) fn find_in_path(name: &str) -> Option<PathBuf> {
-    let path_var = crate::shell_env::shell_path();
-    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
-    let mut dirs: Vec<PathBuf> = std::env::split_paths(path_var).collect();
-    #[cfg(target_os = "macos")]
-    {
-        for extra in ["/usr/local/bin", "/opt/homebrew/bin"] {
-            let p = PathBuf::from(extra);
-            if !dirs.iter().any(|d| d == &p) {
-                dirs.push(p);
-            }
-        }
-    }
-    for dir in dirs {
-        let candidate = dir.join(name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        #[cfg(target_os = "windows")]
-        {
-            for ext in ["exe", "cmd", "bat"] {
-                let candidate_ext = dir.join(format!("{}.{}", name, ext));
-                if candidate_ext.is_file() {
-                    return Some(candidate_ext);
-                }
-            }
-        }
-    }
-    None
 }
 
 /// On macOS, editors ship their CLI inside the `.app` bundle. Resolving the
@@ -316,6 +275,7 @@ pub fn detect_all() -> Vec<DetectedDevEnvironment> {
                 id: def.id.to_string(),
                 display_name: def.display_name.to_string(),
                 icon_name: def.icon_name.to_string(),
+                remote: remote_args(def.id, "h", "/", None).is_some(),
             });
         }
     }
@@ -384,6 +344,49 @@ pub fn build_cli_args(
     }
 }
 
+/// The CLI args that open `folder` on a Host, reached over SSH as
+/// `destination` (an `~/.ssh/config` alias or `user@host`, as Abundio itself
+/// connects), or `None` for an editor that cannot (phase 10f). VS Code and its
+/// forks use their Remote-SSH extension; Zed its own `ssh://` links.
+pub fn remote_args(
+    id: &str,
+    destination: &str,
+    folder: &str,
+    file: Option<&LaunchFile>,
+) -> Option<Vec<String>> {
+    match id {
+        "vscode" | "vscode-insiders" | "cursor" | "windsurf" => {
+            let mut args = vec![
+                "--remote".to_string(),
+                format!("ssh-remote+{destination}"),
+                folder.to_string(),
+            ];
+            if let Some(f) = file {
+                args.push("--goto".into());
+                args.push(goto_target(f));
+            }
+            Some(args)
+        }
+        "zed" => {
+            let mut args = vec![format!("ssh://{destination}{}", absolute(folder))];
+            if let Some(f) = file {
+                args.push(format!("ssh://{destination}{}", absolute(&goto_target(f))));
+            }
+            Some(args)
+        }
+        _ => None,
+    }
+}
+
+/// A Host's folder and file, as an editor gets them over SSH: absolute paths.
+fn remote_paths_ok(folder: &str, file: Option<&LaunchFile>) -> bool {
+    folder.starts_with('/') && file.is_none_or(|f| f.path.starts_with('/'))
+}
+
+fn absolute(path: &str) -> String {
+    if path.starts_with('/') { path.to_string() } else { format!("/{path}") }
+}
+
 /// Build the command that starts an editor, with `path` as its `PATH`.
 ///
 /// Abundio opened from Finder or the Dock has only the minimal system `PATH`.
@@ -400,16 +403,29 @@ pub fn launch(
     id: &str,
     workspace_folder: &str,
     file: Option<&LaunchFile>,
+    remote: Option<&str>,
 ) -> Result<(), AbundioError> {
     let def = BUILTIN_DEV_ENVIRONMENTS
         .iter()
         .find(|d| d.id == id)
         .ok_or_else(|| AbundioError::NotFound(format!("dev environment '{}'", id)))?;
+    // A Host's folder is the Host's to name: only an absolute path, so it is
+    // never read as one of the editor's options.
+    if remote.is_some() && !remote_paths_ok(workspace_folder, file) {
+        return Err(AbundioError::InvalidOperation(
+            "a Host's folder must be an absolute path".into(),
+        ));
+    }
 
     for cli in def.cli_names {
         if let Some(bin) = resolve_cli(def, cli) {
-            let args = build_cli_args(def.launch_style, workspace_folder, file);
-            launch_command(&bin, &args, crate::shell_env::shell_path())
+            let args = match remote {
+                Some(dest) => remote_args(def.id, dest, workspace_folder, file).ok_or_else(|| {
+                    AbundioError::NotFound(format!("{} cannot open a folder over SSH", def.display_name))
+                })?,
+                None => build_cli_args(def.launch_style, workspace_folder, file),
+            };
+            launch_command(&bin, &args, &crate::shell_env::shell_path())
                 .spawn()
                 .map_err(AbundioError::Io)?;
             return Ok(());
@@ -432,8 +448,24 @@ pub fn launch_dev_environment(
     id: String,
     workspace_folder: String,
     file: Option<LaunchFile>,
+    host_id: Option<String>,
 ) -> Result<(), AbundioError> {
-    launch(&id, &workspace_folder, file.as_ref())
+    // A Host's folder opens over SSH, the way Abundio reaches it; a Host
+    // reached without SSH is this computer (tests, development).
+    let remote = match host_id {
+        None => None,
+        Some(id) => {
+            let host = crate::hosts::load()
+                .into_iter()
+                .find(|h| h.id == id)
+                .ok_or_else(|| AbundioError::NotFound(format!("host '{id}'")))?;
+            match host.target {
+                crate::host_router::HostTarget::Ssh { destination } => Some(destination),
+                crate::host_router::HostTarget::Direct { .. } => None,
+            }
+        }
+    };
+    launch(&id, &workspace_folder, file.as_ref(), remote.as_deref())
 }
 
 #[cfg(test)]
@@ -445,6 +477,37 @@ mod tests {
             path: path.into(),
             line,
             column,
+        }
+    }
+
+    #[test]
+    fn vscode_family_opens_a_host_folder_over_remote_ssh() {
+        assert_eq!(
+            remote_args("cursor", "build-box", "/home/dev/app", Some(&lf("/home/dev/app/a.rs", Some(3), Some(2)))).unwrap(),
+            vec!["--remote", "ssh-remote+build-box", "/home/dev/app", "--goto", "/home/dev/app/a.rs:3:2"]
+        );
+    }
+
+    #[test]
+    fn a_hosts_folder_must_be_absolute() {
+        assert!(remote_paths_ok("/home/dev/app", Some(&lf("/home/dev/app/a.rs", None, None))));
+        assert!(!remote_paths_ok("--folder-uri=x", None));
+        assert!(!remote_paths_ok("/home/dev/app", Some(&lf("-g", None, None))));
+        assert!(launch("vscode", "-x", None, Some("box")).is_err());
+    }
+
+    #[test]
+    fn zed_opens_a_host_folder_by_ssh_link() {
+        assert_eq!(
+            remote_args("zed", "dev@box", "/srv/app", None).unwrap(),
+            vec!["ssh://dev@box/srv/app"]
+        );
+    }
+
+    #[test]
+    fn editors_without_remote_support_are_refused() {
+        for id in ["sublime", "xcode", "intellij"] {
+            assert!(remote_args(id, "box", "/x", None).is_none(), "{id}");
         }
     }
 
@@ -559,7 +622,7 @@ mod tests {
 
     #[test]
     fn launch_unknown_id_returns_not_found() {
-        let err = launch("does-not-exist", "/ws", None).unwrap_err();
+        let err = launch("does-not-exist", "/ws", None, None).unwrap_err();
         assert!(matches!(err, AbundioError::NotFound(_)));
     }
 

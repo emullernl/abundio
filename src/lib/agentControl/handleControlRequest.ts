@@ -5,6 +5,7 @@
 import { useAgentSignalsStore } from "../../stores/agentSignalsStore";
 import { useControlBadgeStore } from "../../stores/controlBadgeStore";
 import { useExplorerStore } from "../../stores/explorerStore";
+import { agentsForWorkspace } from "../../stores/hostAgentsStore";
 import {
 	subscribeStatusChange,
 	usePtyActivityStore,
@@ -20,9 +21,10 @@ import {
 	pulseControlActivity,
 	startControlActivity,
 } from "../controlActivity";
-import { pasteAndSubmit } from "../firePromptAction";
 import { fleetConsoleShowing } from "../fleetFocus";
+import { sentByOwnerOf } from "../hostRouting";
 import {
+	type AgentControlEffect,
 	type AgentControlReply,
 	type AgentControlRequestEvent,
 	agentControl,
@@ -42,14 +44,12 @@ import {
 	wrapInSplit,
 } from "../paneTree";
 import { setPendingTask, takePendingTask } from "../pendingAgentRegistry";
-import { canFire } from "../promptActions";
 import { taskTabName } from "../taskPrompt";
 import {
 	getTerminal,
-	type ManagedTerminal,
+	noteControlInput,
 	startPtyUnlessShown,
 } from "../terminalManager";
-import { typedLine } from "../typedLine";
 import type { CodingAgent, WorkspaceWithTabs } from "../types";
 import { addWorktreeTargetId } from "../worktreeGrouping";
 import { basename, resolvePath } from "../worktreePath";
@@ -68,10 +68,9 @@ import {
 	paneLabel,
 } from "./describe";
 import { openFileFor } from "./fileOpen";
-import { keysToBytes } from "./keys";
 import { appendNotes, editNotes, readNotes, writeNotes } from "./notesOps";
+import { startPaneFactsSync } from "./paneFactsSync";
 import { cleanPromptText } from "./promptText";
-import { readBuffer } from "./readBuffer";
 import {
 	resolveTarget,
 	type TerminalNode,
@@ -80,10 +79,8 @@ import {
 } from "./resolveTarget";
 import {
 	autoDirection,
-	cleanCommand,
 	closeRefusal,
 	layoutDirection,
-	runRefusal,
 	startArgv,
 } from "./spawn";
 import {
@@ -93,7 +90,6 @@ import {
 	type Direction,
 } from "./types";
 import { notifyUser, startSignalClearing } from "./userSignals";
-import { type WaitOutcome, waitForPane } from "./waitForPane";
 import {
 	compilePattern,
 	EscapeStripper,
@@ -139,6 +135,8 @@ async function nameOfCaller(
 	caller: ControlCaller,
 	workspaceId: string,
 ): Promise<string> {
+	// From another computer: named as it is there (ADR-0065).
+	if (caller.label) return caller.label;
 	const store = useWorkspaceStore.getState();
 	const home = store.workspaces.find((w) => w.id === caller.workspaceId);
 	const self = home
@@ -272,10 +270,6 @@ function describeIn(scope: Scope, p: WorkspacePane): PaneDescription {
 	);
 }
 
-function describeAll(scope: Scope): PaneDescription[] {
-	return scope.panes.map((p) => describeIn(scope, p));
-}
-
 /** Commands that speak or act in an Agent's name (ADR-0056). */
 const AGENTS_ONLY = new Set<ControlRequest["op"]>([
 	"notify",
@@ -343,6 +337,12 @@ export async function runRequest(
 		pulseControlActivity(caller.paneId);
 		return reply;
 	}
+	// Rust answers the reads itself, but a Workspace Opened nowhere is
+	// opened here first, in the background (control_local.rs).
+	if (request.op === "workspace.open") {
+		await loadScope(caller, target, signal);
+		return { opened: true };
+	}
 	const scope = await loadScope(caller, target, signal);
 	// The graph draws the call for as long as it runs.
 	const ended = noteActivity(caller, request, scope);
@@ -384,55 +384,6 @@ async function runOp(
 			const { popup } = notifyUser(caller.paneId, name, request.message);
 			return { flagged: true, notification: popup };
 		}
-		case "resolve": {
-			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
-			return { paneId: pane.node.id };
-		}
-		case "pane.list":
-			return { panes: describeAll(scope) };
-		case "pane.current": {
-			// Always the caller's own pane, whatever --workspace says.
-			const own = scope.home ? scope : await loadScope(caller);
-			const pane = own.panes.find((p) => p.node.id === caller.paneId);
-			if (!pane) {
-				throw new ControlError("not_found", "your pane is no longer open");
-			}
-			return describeIn(own, pane);
-		}
-		case "agent.list":
-			return {
-				agents: describeAll(scope)
-					.filter((p) => p.mode === "agent")
-					.map(describeAgent),
-			};
-		case "agent.rename": {
-			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
-			return withBadge(scope, pane, async () => {
-				const facts = liveFacts(pane);
-				if (facts.mode !== "agent") {
-					throw new ControlError(
-						"not_an_agent",
-						"that pane is not running an Agent; only Agents have handles",
-					);
-				}
-				const check = await useWorkspaceStore
-					.getState()
-					.setAgentHandle(pane.node.id, request.handle);
-				if (!check.ok) throw new ControlError(check.code, check.message);
-				// Read back: a cleared handle has become a default one.
-				return describeAgent(await describeNew(scope, pane.node.id));
-			});
-		}
-		case "pane.read": {
-			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
-			return withBadge(scope, pane, () => readPane(scope, pane, request));
-		}
-		case "agent.prompt": {
-			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
-			return withBadge(scope, pane, () =>
-				promptAgent(scope, pane, request, signal),
-			);
-		}
 		case "pane.watch": {
 			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
 			if (hasNestedRepetition(request.pattern)) {
@@ -451,38 +402,6 @@ async function runOp(
 			return withBadge(scope, pane, () =>
 				watchPane(ptyIdOf(pane), pattern, signal),
 			);
-		}
-		case "agent.wait": {
-			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
-			return withBadge(scope, pane, async () => {
-				requireAgent(pane);
-				const outcome = await waitForPane(
-					pane.node.id,
-					ptyIdOf(pane),
-					{ until: request.until, needWorking: false },
-					signal,
-				);
-				return waitResult(scope, pane, outcome);
-			});
-		}
-		case "agent.sendKeys": {
-			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
-			return withBadge(scope, pane, async () => {
-				const managed = mountedTerminal(pane);
-				const appCursor = managed.term.modes.applicationCursorKeysMode;
-				const keys = keysToBytes(request.keys, appCursor);
-				if (!keys.ok) {
-					throw new ControlError(
-						"internal",
-						`unknown key "${keys.unknown}"; nothing was sent`,
-					);
-				}
-				await pty.write(managed.ptyId, keys.bytes);
-				return {
-					pane: paneLabel(scope.numbers.get(pane.node.id) ?? 0),
-					sent: request.keys.length,
-				};
-			});
 		}
 		case "pane.split": {
 			// In another Workspace there is no caller pane to split, and its
@@ -508,33 +427,6 @@ async function runOp(
 				focus: request.focus,
 			});
 			return describeNew(scope, paneId);
-		}
-		case "tab.rename":
-			return renameTabFor(scope, request);
-		case "pane.run": {
-			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
-			return withBadge(scope, pane, async () => {
-				const managed = mountedTerminal(pane);
-				const facts = liveFacts(pane);
-				const refusal = runRefusal({
-					mode: facts.mode,
-					exited: facts.exited,
-					integrationSeen: managed.shellIntegrationSeen,
-					shellCommandRunning:
-						usePtyActivityStore.getState().activities[managed.ptyId]
-							?.shellCommandRunning === true,
-				});
-				if (refusal) throw refusal;
-				const command = cleanCommand(request.command);
-				if (command === "") {
-					throw new ControlError("empty_prompt", "the command is empty");
-				}
-				await pty.write(managed.ptyId, typedLine(command));
-				return {
-					pane: paneLabel(scope.numbers.get(pane.node.id) ?? 0),
-					sent: true,
-				};
-			});
 		}
 		case "pane.close": {
 			const pane = resolveTarget(request.target, scope.panes, scope.numbers);
@@ -775,7 +667,12 @@ async function newWorktree(
 	if (spec) {
 		const settings = useSettingsStore.getState();
 		const prompt = spec.prompt === null ? null : cleanPromptText(spec.prompt);
-		const start = startArgv(settings.agents, spec.kind, prompt, spec.args);
+		const start = startArgv(
+			agentsForWorkspace(scope.workspaceId),
+			spec.kind,
+			prompt,
+			spec.args,
+		);
 		agent = start.agent;
 		const shell =
 			settings.shellPath || (await shells.default().catch(() => ""));
@@ -897,6 +794,13 @@ async function splitCaller(
 	extra: Partial<TerminalNode>,
 ): Promise<{ paneId: string; hint: string | null }> {
 	const self = scope.panes.find((p) => p.node.id === scope.caller.paneId);
+	if (!self && scope.caller.label) {
+		// An Agent on another computer (ADR-0065) has no pane here to split.
+		throw new ControlError(
+			"unsupported",
+			"you have no pane on this Host to split beside; start it in a new Tab instead (agent start --tab)",
+		);
+	}
 	if (!self) {
 		throw new ControlError("not_found", "your pane is no longer open");
 	}
@@ -957,7 +861,7 @@ async function startAgent(
 ) {
 	const settings = useSettingsStore.getState();
 	const { agent, argv } = startArgv(
-		settings.agents,
+		agentsForWorkspace(scope.workspaceId),
 		request.kind,
 		request.prompt === null ? null : cleanPromptText(request.prompt),
 		request.args,
@@ -1078,36 +982,6 @@ async function openSpawnedTab(
 	return paneId;
 }
 
-/** `tab rename`: the caller's own Tab, or one it opened, and never one the
- *  user has named by hand. */
-async function renameTabFor(
-	scope: Scope,
-	request: Extract<ControlRequest, { op: "tab.rename" }>,
-) {
-	// The caller's own Tab exists only in its own Workspace.
-	const self = scope.home
-		? scope.panes.find((p) => p.node.id === scope.caller.paneId)
-		: undefined;
-	if (!request.target && !self) {
-		throw new ControlError(
-			"not_found",
-			scope.home
-				? "your pane is no longer open"
-				: "in another Workspace, name the Tab by a pane in it: --tab <pane>",
-		);
-	}
-	const pane = request.target
-		? resolveTarget(request.target, scope.panes, scope.numbers)
-		: (self as WorkspacePane);
-	const tab = useWorkspaceStore
-		.getState()
-		.workspaces.find((w) => w.id === scope.workspaceId)
-		?.tabs.find((t) => t.id === pane.tabId);
-	if (!tab) throw new ControlError("not_found", "that Tab is no longer open");
-	await useWorkspaceStore.getState().renameTab(tab.id, request.name);
-	return { tab: request.name, renamed: true };
-}
-
 /** The caller as the badge names it: its handle, else its Pane number. */
 export function callerLabel(scope: Scope): string {
 	return scope.callerName;
@@ -1131,91 +1005,6 @@ async function withBadge<T>(
 	}
 }
 
-function mountedTerminal(pane: WorkspacePane): ManagedTerminal {
-	const managed = getTerminal(pane.node.id);
-	if (!managed?.ptyId) {
-		throw new ControlError(
-			"state_unknown",
-			"that pane's terminal is not loaded yet; try again in a moment",
-		);
-	}
-	return managed;
-}
-
-function requireAgent(pane: WorkspacePane): PaneLiveFacts {
-	const facts = liveFacts(pane);
-	if (facts.exited || facts.mode !== "agent") {
-		throw new ControlError(
-			"not_an_agent",
-			"that pane is not running an Agent; use `abundio pane run` for a shell",
-		);
-	}
-	return facts;
-}
-
-function waitResult(scope: Scope, pane: WorkspacePane, outcome: WaitOutcome) {
-	return {
-		...describeAgent(describeIn(scope, pane)),
-		status: outcome.end === "left" ? "exited" : outcome.end,
-		waitedMs: outcome.waitedMs,
-	};
-}
-
-/** `agent prompt`: paste the text into the Agent and press Enter, without
- *  moving keyboard focus; with `--wait`, until it has Settled. */
-async function promptAgent(
-	scope: Scope,
-	pane: WorkspacePane,
-	request: Extract<ControlRequest, { op: "agent.prompt" }>,
-	signal: AbortSignal,
-) {
-	const managed = mountedTerminal(pane);
-	const facts = requireAgent(pane);
-	if (!canFire(facts.state ?? undefined)) {
-		throw new ControlError(
-			"busy",
-			"that Agent is Waiting for an answer (a permission prompt, say); read the pane, answer it with `agent send-keys` (or ask the user, if it needs their judgment), then prompt again",
-		);
-	}
-	const text = cleanPromptText(request.text);
-	if (text.trim() === "") {
-		throw new ControlError(
-			"empty_prompt",
-			"nothing is left of the prompt once control characters are removed",
-		);
-	}
-	// Watch first, so a fast Agent's Working cannot happen before we look.
-	const waiting = request.wait
-		? waitForPane(
-				pane.node.id,
-				managed.ptyId,
-				{ until: "settled", needWorking: true },
-				signal,
-			)
-		: null;
-	pasteAndSubmit(managed, text, true);
-	const label = paneLabel(scope.numbers.get(pane.node.id) ?? 0);
-	if (!waiting) return { pane: label, sent: true };
-	return { sent: true, ...waitResult(scope, pane, await waiting) };
-}
-
-function readPane(
-	scope: Scope,
-	pane: WorkspacePane,
-	request: Extract<ControlRequest, { op: "pane.read" }>,
-) {
-	const managed = mountedTerminal(pane);
-	const lines = readBuffer(managed.term.buffer.active, managed.term.rows, {
-		lines: request.lines,
-		visible: request.visible,
-	});
-	return {
-		pane: paneLabel(scope.numbers.get(pane.node.id) ?? 0),
-		lines: lines.length,
-		text: lines.join("\n"),
-	};
-}
-
 /** Turn a handler's outcome into the reply Rust expects. */
 export function toReply(
 	outcome: PromiseSettledResult<unknown>,
@@ -1237,6 +1026,30 @@ export function toReply(
 const running = new Map<string, AbortController>();
 
 async function onRequest(e: AgentControlRequestEvent): Promise<void> {
+	// A Host acts only on its own Workspaces, never this computer's: a
+	// request naming another backend's Workspace is refused (ADR-0065).
+	const named = [e.caller.workspaceId, e.target?.workspaceId].filter(
+		(id): id is string => !!id,
+	);
+	if (
+		(e.fromHost && named.length === 0) ||
+		!named.every((id) => sentByOwnerOf(e.fromHost, "workspace", id))
+	) {
+		console.warn("[control] refused a request for another backend's Workspace");
+		await agentControl
+			.reply(
+				e.id,
+				toReply({
+					status: "rejected",
+					reason: new ControlError(
+						"out_of_reach",
+						"that Workspace is not on the machine that asked",
+					),
+				}),
+			)
+			.catch(() => {});
+		return;
+	}
 	const abort = new AbortController();
 	running.set(e.id, abort);
 	const [outcome] = await Promise.allSettled([
@@ -1258,6 +1071,33 @@ function paneOfPty(ptyId: string): string | undefined {
 	return Object.keys(map).find((paneId) => map[paneId] === ptyId);
 }
 
+const effectEnds = new Map<string, () => void>();
+
+/** Draw (or end) what the user sees of a call Rust answers itself: the
+ *  target's Control badge and the Orchestrator graph's line. Exported for
+ *  tests. */
+export function applyControlEffect(e: AgentControlEffect): void {
+	if (e.type === "input") {
+		noteControlInput(e.paneId, e.data);
+		return;
+	}
+	if (e.type === "end") {
+		effectEnds.get(e.id)?.();
+		effectEnds.delete(e.id);
+		return;
+	}
+	const endBadge = useControlBadgeStore.getState().begin(e.targetPaneId, e.by);
+	const endLine = startControlActivity({
+		callerPaneId: e.callerPaneId,
+		targetPaneId: e.targetPaneId,
+		kind: e.kind,
+	});
+	effectEnds.set(e.id, () => {
+		endBadge();
+		endLine();
+	});
+}
+
 export function startAgentControl(): () => void {
 	const unlistens = [
 		agentControl.onRequest((e) => {
@@ -1266,6 +1106,8 @@ export function startAgentControl(): () => void {
 		agentControl.onCancel((id) => {
 			running.get(id)?.abort();
 		}),
+		// A call Rust answers: its badge and graph line are drawn here.
+		agentControl.onEffect(applyControlEffect),
 		// Another Window (or this one) closed a pane that may own panes and
 		// Tabs here (ADR-0055).
 		agentControl.onPaneClosed((paneId) => {
@@ -1282,9 +1124,11 @@ export function startAgentControl(): () => void {
 		if (paneId) void useWorkspaceStore.getState().ensureDefaultHandle(paneId);
 	});
 	const stopSignals = startSignalClearing();
+	const stopFacts = startPaneFactsSync();
 	return () => {
 		unsubscribe();
 		stopSignals();
+		stopFacts();
 		for (const u of unlistens) u.then((fn) => fn()).catch(() => {});
 	};
 }

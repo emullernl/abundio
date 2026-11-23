@@ -113,3 +113,68 @@ export function titleStep(
  *  before it is read as a cancel or failure. The hook travels over loopback
  *  HTTP and the title through the PTY stream, so either may land first. */
 export const TITLE_TURN_END_GRACE_MS = 1500;
+
+/** What one agent session's titles have said so far (per PTY): the last
+ *  Title status, whether a prefix proved tab status is on, and — while the
+ *  grace window runs — the busy status before the title went bare. */
+export interface TitleTrack {
+	status: TitleStatus | null;
+	seen: boolean;
+	busyBeforeBare: TitleStatus | null;
+}
+
+export const NO_TITLE_TRACK: TitleTrack = {
+	status: null,
+	seen: false,
+	busyBeforeBare: null,
+};
+
+/** One title change in an agent-mode pane, read against its Agent's rules.
+ *  - `dispatch`: the Title status for the Status machine, if any. Any
+ *    dispatch cancels a grace window still running.
+ *  - `awaitTurnEnd`: start a grace window (`TITLE_TURN_END_GRACE_MS`); when it
+ *    runs out, `titleGraceEnded` and the Status machine's `titleTurnEnded`.
+ *  The whole rule, so Rust's `title_status.rs` can hold to it
+ *  (`fixtures/titleStatus.json`). */
+export interface TitleChange {
+	track: TitleTrack;
+	dispatch: { status: TitleStatus; startsTurn: boolean } | null;
+	awaitTurnEnd: boolean;
+}
+
+export function titleChange(
+	track: TitleTrack,
+	agentId: string | undefined,
+	title: string,
+): TitleChange {
+	const reading = readTitle(agentId, title);
+	if (reading === null) return { track, dispatch: null, awaitTurnEnd: false };
+	// Until a prefix proves tab status is on, the pane stays on the byte
+	// heuristic — a suffix alone would turn it hook-driven for good.
+	const seen = track.seen || reading.live;
+	if (!seen) {
+		return { track, dispatch: null, awaitTurnEnd: false };
+	}
+	const step = titleStep(track.status, reading.status, track.busyBeforeBare);
+	if (!step.dispatch) {
+		return {
+			track: { ...track, seen, status: reading.status },
+			dispatch: null,
+			awaitTurnEnd: false,
+		};
+	}
+	return {
+		track: {
+			seen,
+			status: reading.status,
+			busyBeforeBare: step.awaitTurnEnd ? track.status : null,
+		},
+		dispatch: step.dispatch,
+		awaitTurnEnd: step.awaitTurnEnd,
+	};
+}
+
+/** The grace window ran out with no new Title status. */
+export function titleGraceEnded(track: TitleTrack): TitleTrack {
+	return { ...track, busyBeforeBare: null };
+}

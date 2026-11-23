@@ -16,6 +16,7 @@ vi.mock("../../../lib/ipc", () => ({
 		markVersionSeen: () => Promise.resolve(),
 		setAutoCheck: () => Promise.resolve(),
 		onDownloadProgress: () => Promise.resolve(() => {}),
+		appVersion: () => Promise.resolve("1.0.0"),
 	},
 	agentSkill: {
 		provision: vi.fn(() => Promise.resolve()),
@@ -23,9 +24,6 @@ vi.mock("../../../lib/ipc", () => ({
 		status: vi.fn(() => Promise.resolve([])),
 	},
 	agentHooks: { provision: () => Promise.resolve() },
-}));
-vi.mock("@tauri-apps/api/app", () => ({
-	getVersion: () => Promise.resolve("1.0.0"),
 }));
 vi.mock("@tauri-apps/plugin-shell", () => ({ open: () => Promise.resolve() }));
 vi.mock("../../../lib/themes", () => ({

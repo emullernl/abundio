@@ -1,6 +1,7 @@
-import { sendNotification } from "@tauri-apps/plugin-notification";
 import { create } from "zustand";
 import type { TitleStatus } from "../lib/agentTitleMap";
+import { sendNotification } from "../lib/desktop";
+import { sameJson } from "../lib/layoutOps";
 import { findPaneLocation, isPaneVisible } from "../lib/notificationRouter";
 import { parseTabLayout } from "../lib/paneTree";
 import {
@@ -11,6 +12,16 @@ import {
 	type StatusTransition,
 	statusReducer,
 } from "../lib/statusReducer";
+import {
+	hasPendingStatusOps,
+	isRustStatusAuthority,
+	onStatusSettled,
+	onStatusUpdate,
+	recordScanTickForTests,
+	type StatusUpdate,
+	type StatusView,
+	sendStatusOp,
+} from "../lib/statusSync";
 import type {
 	PaneNode,
 	PtyActivityState,
@@ -84,7 +95,9 @@ export function getLastOutputAt(ptyId: string): number | null {
  *  Used in agent mode to keep the idle scanner from transitioning "active" → "ready"
  *  while output is still flowing but below the byte-accumulation threshold. */
 export function touchLastOutput(ptyId: string, now?: number): void {
-	lastOutputTimestamps.set(ptyId, now ?? Date.now());
+	const at = now ?? Date.now();
+	lastOutputTimestamps.set(ptyId, at);
+	sendStatusOp({ op: "touch", ptyId, now: at });
 }
 
 // ── Types ──
@@ -151,14 +164,22 @@ interface PtyActivityState_Store {
 	subagentStarted: (ptyId: string, agentId: string) => void;
 	subagentStopped: (ptyId: string, agentId: string) => void;
 	setAgentPty: (ptyId: string, agentId?: string) => void;
+	/** `setAgentPty` without its status half: Rust applied that (a hook it
+	 *  routed, phase 6d). Records which Agent runs in the PTY. */
+	noteAgentFromHost: (ptyId: string, agentId: string) => void;
 	clearAgentPty: (ptyId: string) => void;
+	/** `clearAgentPty` without its status half: Rust applied that (the
+	 *  shell reported the Agent's end, phase 6d-4). */
+	noteAgentExitFromHost: (ptyId: string) => void;
 	setTitle: (paneId: string, title: string) => void;
 	setRunningCommand: (ptyId: string, text: string | null) => void;
 	setCwd: (ptyId: string, path: string) => void;
 	registerPane: (paneId: string, ptyId: string) => void;
 	markWorkspaceOpened: (workspaceId: string) => void;
 	unmarkWorkspaceOpened: (workspaceId: string) => void;
-	removePty: (ptyId: string) => void;
+	/** Forget a PTY. `local`: only in this Window, its status kept in Rust
+	 *  (a Joined profile's pane that runs on, phase 10). */
+	removePty: (ptyId: string, opts?: { local?: boolean }) => void;
 	removePane: (paneId: string) => void;
 }
 
@@ -206,6 +227,26 @@ function hydrate(
 		lastInputAt: 0,
 		lastOutputChunkAt: null,
 		lastEscAt: null,
+		activeSubagents: subagentState.get(ptyId)?.subagents ?? NO_SUBAGENTS,
+		stopHeldForSubagents: subagentState.get(ptyId)?.stopHeld ?? false,
+		preErrorState: preErrorStates.get(ptyId) ?? null,
+		titleHeld: titleHeldPtys.has(ptyId),
+	};
+}
+
+/** This PTY's status as the store keeps it, for shadow mode
+ *  and Rust (`lib/statusSync.ts`); `null` when it has no entry. */
+function statusView(ptyId: string): StatusView | null {
+	const entry = usePtyActivityStore.getState().activities[ptyId];
+	if (!entry) return null;
+	return {
+		state: CANONICAL_STATE[entry.state],
+		mode: entry.detectionMode,
+		hookDriven: entry.hookDriven,
+		shellCommandRunning: entry.shellCommandRunning,
+		workingSince: entry.lastOutputAt,
+		lastActivityAt:
+			lastOutputTimestamps.get(ptyId) ?? entry.lastOutputAt ?? null,
 		activeSubagents: subagentState.get(ptyId)?.subagents ?? NO_SUBAGENTS,
 		stopHeldForSubagents: subagentState.get(ptyId)?.stopHeld ?? false,
 		preErrorState: preErrorStates.get(ptyId) ?? null,
@@ -370,6 +411,7 @@ function applyStatusEvent(
 				: {}),
 		}));
 	}
+	sendStatusOp({ op: "apply", ptyId, event });
 	if (changed || isTurnStart) {
 		const prevSnap = snap(prevEntry ?? project(before, undefined));
 		emitStatusChange({
@@ -379,6 +421,61 @@ function applyStatusEvent(
 			cause: event,
 		});
 	}
+}
+
+// The bodies of `initPty` and `setShellCommandRunning`, which change status
+// outside the reducer; the actions also mirror them in shadow mode.
+
+function initPtyNow(ptyId: string, mode?: PtyDetectionMode): void {
+	const existing = usePtyActivityStore.getState().activities[ptyId];
+	if (existing) {
+		// Update mode if explicitly provided
+		if (mode && existing.detectionMode !== mode) {
+			usePtyActivityStore.setState((s) => ({
+				activities: {
+					...s.activities,
+					[ptyId]: { ...s.activities[ptyId], detectionMode: mode },
+				},
+			}));
+		}
+		return;
+	}
+	// A fresh entry starts Idle, so the mid-turn-failure memory must not
+	// survive into it (the invariant is: non-null only while Error). This
+	// set() bypasses applyStatusEvent, so clear it by hand.
+	preErrorStates.delete(ptyId);
+	usePtyActivityStore.setState((s) => ({
+		activities: {
+			...s.activities,
+			[ptyId]: {
+				state: "idle",
+				lastOutputAt: null,
+				hasEverReceivedOutput: true,
+				detectionMode: mode ?? "shell",
+				hookDriven: false,
+				shellCommandRunning: false,
+			},
+		},
+	}));
+}
+
+function setShellCommandRunningNow(ptyId: string, running: boolean): void {
+	// Deliberately not a reducer event: this only records *that* a command
+	// is in flight. The status moves that go with it (recordOutput on
+	// start, recordError / recordExitSuccess on end) are dispatched by
+	// terminalManager, which is the only caller and the only place that
+	// knows the exit code. Skips the set() when unchanged, preserving the
+	// hot-path no-re-render the out-of-band map used to give.
+	usePtyActivityStore.setState((s) => {
+		const entry = s.activities[ptyId];
+		if (!entry || entry.shellCommandRunning === running) return s;
+		return {
+			activities: {
+				...s.activities,
+				[ptyId]: { ...entry, shellCommandRunning: running },
+			},
+		};
+	});
 }
 
 // ── Store ──
@@ -395,55 +492,13 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 		detectedAgentIds: {},
 
 		initPty: (ptyId, mode) => {
-			const existing = get().activities[ptyId];
-			if (existing) {
-				// Update mode if explicitly provided
-				if (mode && existing.detectionMode !== mode) {
-					set((s) => ({
-						activities: {
-							...s.activities,
-							[ptyId]: { ...s.activities[ptyId], detectionMode: mode },
-						},
-					}));
-				}
-				return;
-			}
-			// A fresh entry starts Idle, so the mid-turn-failure memory must not
-			// survive into it (the invariant is: non-null only while Error). This
-			// set() bypasses applyStatusEvent, so clear it by hand.
-			preErrorStates.delete(ptyId);
-			set((s) => ({
-				activities: {
-					...s.activities,
-					[ptyId]: {
-						state: "idle",
-						lastOutputAt: null,
-						hasEverReceivedOutput: true,
-						detectionMode: mode ?? "shell",
-						hookDriven: false,
-						shellCommandRunning: false,
-					},
-				},
-			}));
+			initPtyNow(ptyId, mode);
+			sendStatusOp({ op: "init", ptyId, mode: mode ?? null });
 		},
 
 		setShellCommandRunning: (ptyId, running) => {
-			// Deliberately not a reducer event: this only records *that* a command
-			// is in flight. The status moves that go with it (recordOutput on
-			// start, recordError / recordExitSuccess on end) are dispatched by
-			// terminalManager, which is the only caller and the only place that
-			// knows the exit code. Skips the set() when unchanged, preserving the
-			// hot-path no-re-render the out-of-band map used to give.
-			set((s) => {
-				const entry = s.activities[ptyId];
-				if (!entry || entry.shellCommandRunning === running) return s;
-				return {
-					activities: {
-						...s.activities,
-						[ptyId]: { ...entry, shellCommandRunning: running },
-					},
-				};
-			});
+			setShellCommandRunningNow(ptyId, running);
+			sendStatusOp({ op: "shellCommandRunning", ptyId, running });
 		},
 
 		recordOutput: (ptyId) => {
@@ -544,6 +599,19 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			applyStatusEvent(ptyId, { kind: "recordExitSuccess" });
 		},
 
+		noteAgentFromHost: (ptyId, agentId) => {
+			const s = get();
+			const ids = s.agentPtyIds.has(ptyId)
+				? s.agentPtyIds
+				: new Set(s.agentPtyIds).add(ptyId);
+			if (ids === s.agentPtyIds && s.detectedAgentIds[ptyId] === agentId)
+				return;
+			set({
+				agentPtyIds: ids,
+				detectedAgentIds: { ...s.detectedAgentIds, [ptyId]: agentId },
+			});
+		},
+
 		setAgentPty: (ptyId, agentId) => {
 			const s = get();
 			if (s.agentPtyIds.has(ptyId)) {
@@ -580,6 +648,15 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			} else {
 				set({ agentPtyIds: newSet, ...detectedUpdate });
 			}
+		},
+
+		noteAgentExitFromHost: (ptyId) => {
+			const s = get();
+			if (!s.agentPtyIds.has(ptyId)) return;
+			const newSet = new Set(s.agentPtyIds);
+			newSet.delete(ptyId);
+			const { [ptyId]: _, ...restDetected } = s.detectedAgentIds;
+			set({ agentPtyIds: newSet, detectedAgentIds: restDetected });
 		},
 
 		clearAgentPty: (ptyId) => {
@@ -648,7 +725,8 @@ export const usePtyActivityStore = create<PtyActivityState_Store>(
 			set({ openedWorkspaceIds: next });
 		},
 
-		removePty: (ptyId) => {
+		removePty: (ptyId, opts) => {
+			if (!opts?.local) sendStatusOp({ op: "remove", ptyId });
 			lastOutputTimestamps.delete(ptyId);
 			subagentState.delete(ptyId);
 			preErrorStates.delete(ptyId);
@@ -704,7 +782,12 @@ function getPtyToPaneMap(
 	return _cachedPtyToPaneMap;
 }
 
-setInterval(() => {
+// Where Rust is the authority, the idle scan runs there and its changes
+// arrive through `applyRustUpdate` below. Tests and the browser demo have no
+// Rust, so the store scans for itself.
+if (!isRustStatusAuthority()) setInterval(scanForIdle, SCAN_INTERVAL_MS);
+
+function scanForIdle(): void {
 	const { activities } = usePtyActivityStore.getState();
 	const now = Date.now();
 	const updates: Record<string, PtyActivityEntry> = {};
@@ -743,7 +826,192 @@ setInterval(() => {
 		}));
 		for (const c of changes) emitStatusChange(c);
 	}
-}, SCAN_INTERVAL_MS);
+	recordScanTickForTests(now);
+}
+
+// ── Rust's answers (phase 3c) ──
+
+/** Newest Rust update applied per pane, so an older one never wins. */
+const appliedSeq = new Map<string, number>();
+/** A scan change Rust sent while the pane still had changes in flight: the
+ *  answer to those will carry its effect, and this names its cause. */
+const deferredScanCause = new Map<string, StatusEvent>();
+/** The newest update Rust made by itself that arrived while the pane had
+ *  changes in flight, per pane. */
+const deferredUpdates = new Map<string, StatusUpdate>();
+/** The newest change Rust made by itself that has reached this Window, per
+ *  pane, whether it was applied, deferred or overtaken. */
+const heardHostSeq = new Map<string, number>();
+
+function viewToEntry(
+	v: StatusView,
+	prev: PtyActivityEntry | undefined,
+): PtyActivityEntry {
+	return {
+		state: LEGACY_STATE[v.state],
+		lastOutputAt: v.workingSince,
+		hasEverReceivedOutput: prev?.hasEverReceivedOutput ?? true,
+		detectionMode: v.mode,
+		hookDriven: v.hookDriven,
+		shellCommandRunning: v.shellCommandRunning,
+	};
+}
+
+/** Whatever the order of their keys: Rust's answers come through a JSON
+ *  value whose keys are sorted, never as the Window built its own. */
+function viewsEqual(a: StatusView | null, b: StatusView | null): boolean {
+	return sameJson(a, b);
+}
+
+/** Take Rust's view of a pane: the entry and the hot maps. */
+function writeView(ptyId: string, v: StatusView): void {
+	if (v.lastActivityAt !== null)
+		lastOutputTimestamps.set(ptyId, v.lastActivityAt);
+	if (v.activeSubagents.length > 0 || v.stopHeldForSubagents) {
+		subagentState.set(ptyId, {
+			subagents: v.activeSubagents,
+			stopHeld: v.stopHeldForSubagents,
+		});
+	} else {
+		subagentState.delete(ptyId);
+	}
+	if (v.preErrorState !== null) preErrorStates.set(ptyId, v.preErrorState);
+	else preErrorStates.delete(ptyId);
+	if (v.titleHeld) titleHeldPtys.add(ptyId);
+	else titleHeldPtys.delete(ptyId);
+	usePtyActivityStore.setState((s) => ({
+		activities: {
+			...s.activities,
+			[ptyId]: viewToEntry(v, s.activities[ptyId]),
+		},
+	}));
+}
+
+/**
+ * Apply one update from Rust. The Window already applied its own changes,
+ * so an answer to them is only compared, and only once the pane has nothing
+ * else in flight; a difference means the prediction was wrong, and Rust's
+ * view is taken and announced. A change from Rust's idle scan is the
+ * Window's only source of those transitions and is always taken.
+ * Exported for tests.
+ */
+export function applyRustUpdate(
+	incoming: StatusUpdate,
+	incomingFromScan: boolean,
+): void {
+	let u = incoming;
+	let fromScan = incomingFromScan;
+	if (fromScan && u.change) {
+		heardHostSeq.set(u.ptyId, Math.max(heardHostSeq.get(u.ptyId) ?? 0, u.seq));
+	}
+	if (u.seq <= (appliedSeq.get(u.ptyId) ?? 0)) return;
+	if (hasPendingStatusOps(u.ptyId)) {
+		if (fromScan) {
+			// Kept, not dropped: an answer to the change in flight can still
+			// arrive with a lower seq (Rust answered it first), and then this
+			// is the newer view.
+			const held = deferredUpdates.get(u.ptyId);
+			if (!held || held.seq < u.seq) deferredUpdates.set(u.ptyId, u);
+			if (u.change) deferredScanCause.set(u.ptyId, u.change.cause);
+		} else {
+			appliedSeq.set(u.ptyId, u.seq);
+		}
+		return;
+	}
+	// Nothing in flight: of this and an update held back meanwhile, the one
+	// with the higher seq is Rust's latest view.
+	const held = deferredUpdates.get(u.ptyId);
+	deferredUpdates.delete(u.ptyId);
+	if (held && held.seq > u.seq) {
+		u = held;
+		fromScan = true;
+	}
+	appliedSeq.set(u.ptyId, u.seq);
+	// An answer can overtake the event that carries a change Rust made by
+	// itself: the answer already shows it, under the Window's own cause.
+	const unheardHost =
+		!fromScan &&
+		u.hostSeq != null &&
+		u.hostSeq > (heardHostSeq.get(u.ptyId) ?? 0);
+	const local = statusView(u.ptyId);
+	if (viewsEqual(local, u.view)) {
+		deferredScanCause.delete(u.ptyId);
+		return;
+	}
+	const prevEntry = usePtyActivityStore.getState().activities[u.ptyId];
+	if (u.view === null) {
+		// Rust has no entry: the pane was removed there.
+		if (!prevEntry) return;
+		console.warn(
+			"[status] Rust has no status for a pane the Window keeps",
+			u.ptyId,
+		);
+		return;
+	}
+	// A change Rust made by itself (a hook, an exit, a title, the idle scan)
+	// that landed while the Window's own change was in flight, or that this
+	// answer overtook, is what the Window could not predict: credit it, not
+	// the Window's change, and it is no correction.
+	const deferred = deferredScanCause.get(u.ptyId);
+	deferredScanCause.delete(u.ptyId);
+	const hostCause = unheardHost ? (u.hostCause ?? undefined) : undefined;
+	const cause = deferred ?? hostCause ?? u.change?.cause ?? null;
+	const fields = (Object.keys(u.view) as (keyof StatusView)[]).filter(
+		(k) => !sameJson(local?.[k], u.view?.[k]),
+	);
+	// The last activity time is stamped by both sides as each sees output, a
+	// hook or a title, so a few milliseconds apart is no wrong prediction (it
+	// leaves the Window when output activity moves to Rust, phase 6d-5).
+	const onlyActivityTime =
+		fields.length === 1 && fields[0] === "lastActivityAt";
+	if (
+		!fromScan &&
+		!deferred &&
+		!hostCause &&
+		!onlyActivityTime &&
+		cause?.kind !== "tick"
+	) {
+		const shown = fields.map(
+			(k) =>
+				`${k}: ${JSON.stringify(local?.[k])} → ${JSON.stringify(u.view?.[k])}`,
+		);
+		console.warn(
+			`[status] Rust corrected the Window's status (${shown.join(", ")}; cause ${cause?.kind ?? "none"})`,
+			{ ptyId: u.ptyId, window: local, rust: u.view },
+		);
+	}
+	writeView(u.ptyId, u.view);
+	const nextEntry = usePtyActivityStore.getState().activities[u.ptyId];
+	if (!prevEntry || !nextEntry) return;
+	const prevSnap = snap(prevEntry);
+	const nextSnap = snap(nextEntry);
+	if (
+		prevSnap.state === nextSnap.state &&
+		prevSnap.detectionMode === nextSnap.detectionMode &&
+		prevSnap.hookDriven === nextSnap.hookDriven
+	) {
+		return;
+	}
+	emitStatusChange({
+		ptyId: u.ptyId,
+		prev: prevSnap,
+		next: nextSnap,
+		cause: cause ?? { kind: "focus" },
+	});
+}
+
+onStatusUpdate(applyRustUpdate);
+
+/** A pane has nothing in flight any more: apply what Rust sent meanwhile,
+ *  if no answer did. Exported for tests. */
+export function applyHeldRustUpdate(ptyId: string): void {
+	const held = deferredUpdates.get(ptyId);
+	if (held) applyRustUpdate(held, true);
+}
+onStatusSettled(applyHeldRustUpdate);
+
+/** Test-only: a pane's status as the store keeps it. */
+export const __statusViewForTests = statusView;
 
 // ── Notifications for state transitions ──
 //
@@ -1162,3 +1430,19 @@ function makeShellCountSelector(target: PtyActivityState) {
 export const selectIdleShellCount = makeShellCountSelector("idle");
 export const selectWorkingShellCount = makeShellCountSelector("active");
 export const selectErrorShellCount = makeShellCountSelector("error");
+
+// Rust reads each Agent's Title status from the PTY's own title (phase
+// 6d-3), so it needs to know which Agent a PTY runs: tell it on every change.
+usePtyActivityStore.subscribe((s, prev) => {
+	if (s.detectedAgentIds === prev.detectedAgentIds) return;
+	for (const [ptyId, agentId] of Object.entries(s.detectedAgentIds)) {
+		if (prev.detectedAgentIds[ptyId] !== agentId) {
+			sendStatusOp({ op: "agent", ptyId, agentId });
+		}
+	}
+	for (const ptyId of Object.keys(prev.detectedAgentIds)) {
+		if (!(ptyId in s.detectedAgentIds)) {
+			sendStatusOp({ op: "agent", ptyId, agentId: null });
+		}
+	}
+});

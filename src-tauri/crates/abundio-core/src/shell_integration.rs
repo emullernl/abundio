@@ -1,0 +1,305 @@
+//! **Shell integration**, read where the PTY runs (docs/plans/remote-hosts.md
+//! phase 6d-4): the shell reports each command's start (with its text), its
+//! end (with its exit code) and its folder on the `7770` channel
+//! (`ESC ] 7770 ; … BEL`, written by the wrapper scripts in
+//! `pty_manager.rs`). Reading them here keeps a Host's status with no
+//! Window: a shell command's Working and Error, and an Agent typed at the
+//! prompt entering and leaving agent mode (`StatusStore::shell_commands`).
+//!
+//! [`Parser`] finds the same commands as the Window's `ShellIntegrationParser`
+//! (`src/lib/shellIntegration.ts`), across any chunking; [`match_agent`] is
+//! `matchTitleToAgent` (`src/lib/agents.ts`). Both are held to the Window's
+//! by `fixtures/shellIntegration.json`. The Window still strips the
+//! sequences before xterm.js draws, and keeps the running command and folder.
+
+use std::sync::RwLock;
+
+use serde::{Deserialize, Serialize};
+
+const ESC: u8 = 0x1b;
+const BEL: u8 = 0x07;
+const PREFIX: &[u8] = b"]7770;";
+
+/// Held bytes past this are a misframed sequence that will never end: given
+/// up on, as the Window does (`MAX_PARTIAL`).
+const MAX_PARTIAL: usize = 16 * 1024;
+
+/// One shell-integration report (`ShellCommand`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ShellCommand {
+    CommandStart {
+        #[serde(rename = "commandText", default, skip_serializing_if = "Option::is_none")]
+        command_text: Option<String>,
+    },
+    CommandEnd {
+        #[serde(rename = "exitCode", default, skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i64>,
+    },
+    #[serde(rename = "cwd_change")]
+    Cwd {
+        #[serde(default)]
+        path: String,
+    },
+}
+
+/// A PTY's reader of the channel: a sequence split across reads is held
+/// until its end arrives.
+#[derive(Default)]
+pub struct Parser {
+    residual: Vec<u8>,
+}
+
+impl Parser {
+    pub fn parse(&mut self, data: &[u8]) -> Vec<ShellCommand> {
+        if self.residual.is_empty() && !data.contains(&ESC) {
+            return Vec::new();
+        }
+        let mut input = std::mem::take(&mut self.residual);
+        input.extend_from_slice(data);
+        let mut commands = Vec::new();
+        let mut i = 0;
+        // Hold from `i` on for the next read, unless that is too much.
+        let hold = |i: usize, residual: &mut Vec<u8>, input: &[u8]| -> bool {
+            if input.len() - i > MAX_PARTIAL {
+                return false;
+            }
+            *residual = input[i..].to_vec();
+            true
+        };
+        while i < input.len() {
+            if input[i] != ESC {
+                i += 1;
+                continue;
+            }
+            let after = &input[i + 1..];
+            let n = after.len().min(PREFIX.len());
+            if after[..n] != PREFIX[..n] {
+                // Some other escape sequence.
+                i += 1;
+                continue;
+            }
+            if n < PREFIX.len() {
+                // The prefix so far matches, and the read ends inside it.
+                if hold(i, &mut self.residual, &input) {
+                    break;
+                }
+                i += 1;
+                continue;
+            }
+            let start = i + 1 + PREFIX.len();
+            let Some(bel) = input[start..].iter().position(|&b| b == BEL).map(|p| start + p) else {
+                if hold(i, &mut self.residual, &input) {
+                    break;
+                }
+                i += 1;
+                continue;
+            };
+            let payload = String::from_utf8_lossy(&input[start..bel]);
+            if let Some(c) = read_payload(&payload) {
+                commands.push(c);
+            }
+            i = bel + 1;
+        }
+        commands
+    }
+}
+
+fn read_payload(payload: &str) -> Option<ShellCommand> {
+    if payload == "command_start" {
+        return Some(ShellCommand::CommandStart { command_text: None });
+    }
+    if let Some(text) = payload.strip_prefix("command_start;") {
+        let command_text = (!text.is_empty()).then(|| text.to_string());
+        return Some(ShellCommand::CommandStart { command_text });
+    }
+    if let Some(code) = payload.strip_prefix("command_end;") {
+        return Some(ShellCommand::CommandEnd { exit_code: parse_int(code) });
+    }
+    payload
+        .strip_prefix("cwd;")
+        .map(|path| ShellCommand::Cwd { path: path.to_string() })
+}
+
+/// JavaScript's `parseInt(s, 10)`: leading space, a sign, then the digits
+/// up to the first that is not one; `None` when there are none.
+fn parse_int(s: &str) -> Option<i64> {
+    let s = s.trim_start();
+    let (negative, rest) = match s.as_bytes().first() {
+        Some(b'-') => (true, &s[1..]),
+        Some(b'+') => (false, &s[1..]),
+        _ => (false, s),
+    };
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return None;
+    }
+    let n: i64 = digits.parse().unwrap_or(i64::MAX);
+    Some(if negative { -n } else { n })
+}
+
+/// One Agent a typed command can start (`CodingAgent`'s id, command and
+/// enabled flag).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentCommand {
+    pub id: String,
+    pub command: String,
+    pub enabled: bool,
+}
+
+/// `matchTitleToAgent`: the first enabled Agent whose command appears in the
+/// command line as a word (after the start, a slash or a space; before the
+/// end or a space), ignoring case.
+pub fn match_agent<'a>(text: &str, agents: &'a [AgentCommand]) -> Option<&'a AgentCommand> {
+    if text.is_empty() {
+        return None;
+    }
+    let lower = text.to_lowercase();
+    agents.iter().filter(|a| a.enabled).find(|a| has_word(&lower, &a.command.to_lowercase()))
+}
+
+/// Whether `word` appears in `text` with a boundary on each side, at any
+/// position (as a regular expression would try each one).
+fn has_word(text: &str, word: &str) -> bool {
+    let mut from = 0;
+    while let Some(p) = text[from..].find(word) {
+        let at = from + p;
+        let before = text[..at].chars().next_back();
+        let after = text[at + word.len()..].chars().next();
+        let starts = before.is_none_or(|c| c == '/' || c == '\\' || c.is_whitespace());
+        if starts && after.is_none_or(char::is_whitespace) {
+            return true;
+        }
+        let Some(c) = text[at..].chars().next() else { return false };
+        from = at + c.len_utf8();
+    }
+    false
+}
+
+/// The built-in Agents (`BUILTIN_AGENTS` in `src/lib/agents.ts`), what a
+/// Host knows before any Window has said otherwise.
+pub fn builtin_agents() -> Vec<AgentCommand> {
+    ["claude", "copilot", "gemini", "codex", "opencode", "qwen", "kimi", "grok", "vibe"]
+        .iter()
+        .map(|id| AgentCommand { id: id.to_string(), command: id.to_string(), enabled: true })
+        .collect()
+}
+
+/// The Agents a typed command is matched against: the built-ins until a
+/// Window reports the user's list (custom Agents, disabled ones).
+pub struct AgentCommands(RwLock<Vec<AgentCommand>>);
+
+impl Default for AgentCommands {
+    fn default() -> Self {
+        Self(RwLock::new(builtin_agents()))
+    }
+}
+
+impl AgentCommands {
+    pub fn set(&self, agents: Vec<AgentCommand>) {
+        if let Ok(mut a) = self.0.write() {
+            *a = agents;
+        }
+    }
+
+    /// The Agent `text` starts, if any.
+    pub fn matching(&self, text: &str) -> Option<String> {
+        let a = self.0.read().ok()?;
+        match_agent(text, &a).map(|a| a.id.clone())
+    }
+}
+
+/// Apply every PTY's shell reports to `status`, telling each PTY's owning
+/// Window (if any) what changed.
+pub fn listen(
+    ptys: &crate::pty_manager::PtyManager,
+    status: std::sync::Arc<crate::status_store::StatusStore>,
+    agents: std::sync::Arc<AgentCommands>,
+    events: crate::event_sink::Events,
+) {
+    use crate::event_sink::EventsExt;
+    ptys.on_shell(std::sync::Arc::new(move |pty: &str, commands: Vec<ShellCommand>| {
+        let config = crate::status_machine::StatusConfig::default();
+        let updates = status.shell_commands(pty, &commands, &agents, crate::hook_apply::now_ms(), &config);
+        if !updates.is_empty() {
+            for watcher in status.watchers(pty) {
+                events.to_client(&watcher, "status-updates", updates.clone());
+            }
+        }
+    }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ParseCase {
+        chunks: Vec<String>,
+        expected: Vec<Vec<ShellCommand>>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct MatchCase {
+        text: String,
+        agents: Vec<AgentCommand>,
+        expected: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Fixture {
+        builtins: Vec<AgentCommand>,
+        parse: Vec<ParseCase>,
+        matches: Vec<MatchCase>,
+    }
+
+    fn fixture() -> Fixture {
+        let raw = include_str!("../../../../src/lib/__tests__/fixtures/shellIntegration.json");
+        serde_json::from_str(raw).unwrap()
+    }
+
+    #[test]
+    fn finds_the_commands_the_window_finds_however_the_output_is_cut() {
+        let f = fixture();
+        assert!(f.parse.len() > 100);
+        for (n, case) in f.parse.iter().enumerate() {
+            let mut p = Parser::default();
+            for (i, chunk) in case.chunks.iter().enumerate() {
+                assert_eq!(p.parse(chunk.as_bytes()), case.expected[i], "case {n} chunk {i}: {chunk:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn matches_agents_as_the_window_does() {
+        let f = fixture();
+        assert!(f.matches.len() >= 100);
+        for case in &f.matches {
+            let got = match_agent(&case.text, &case.agents).map(|a| a.id.clone());
+            assert_eq!(got, case.expected, "{:?}", case.text);
+        }
+    }
+
+    #[test]
+    fn knows_the_windows_built_in_agents() {
+        assert_eq!(builtin_agents(), fixture().builtins);
+    }
+
+    #[test]
+    fn reads_the_payloads() {
+        let mut p = Parser::default();
+        assert_eq!(
+            p.parse(b"\x1b]7770;command_start;vibe\x07out\x1b]7770;command_end;130\x07\x1b]7770;cwd;/x\x07"),
+            vec![
+                ShellCommand::CommandStart { command_text: Some("vibe".into()) },
+                ShellCommand::CommandEnd { exit_code: Some(130) },
+                ShellCommand::Cwd { path: "/x".into() },
+            ]
+        );
+        assert_eq!(parse_int(" -2x"), Some(-2));
+        assert_eq!(parse_int("x"), None);
+    }
+}

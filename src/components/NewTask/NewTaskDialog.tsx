@@ -46,6 +46,7 @@ import {
 	flattenRowsToIds,
 } from "../../lib/worktreeGrouping";
 import { basename, isValidBranch, resolvePath } from "../../lib/worktreePath";
+import { useAgentsForWorkspace } from "../../stores/hostAgentsStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import {
@@ -92,7 +93,6 @@ export function NewTaskDialog({ request }: { request: NewTaskRequest }) {
 	const facts = useWorkspaceGitStore((s) => s.worktreeFacts);
 	const repoSlugsById = useWorkspaceGitStore((s) => s.repoSlugsById);
 	const gitInfo = useWorkspaceGitStore((s) => s.byWorkspaceId);
-	const agents = useSettingsStore((s) => s.agents);
 	const taskTemplate = useSettingsStore((s) => s.taskTemplate);
 	const issueTemplate = useSettingsStore((s) => s.issueTemplate);
 	const rememberedDestination = useSettingsStore((s) => s.taskDestination);
@@ -111,6 +111,8 @@ export function NewTaskDialog({ request }: { request: NewTaskRequest }) {
 		),
 	);
 	const ws = workspaces.find((w) => w.id === workspaceId);
+	// The Agents of the chosen Workspace's Host (ADR-0064).
+	const agents = useAgentsForWorkspace(workspaceId);
 	const focused = fromFleet ? focusedTileId : focusedPaneId;
 
 	const agentPanes = useMemo(

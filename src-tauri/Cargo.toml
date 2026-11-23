@@ -13,7 +13,12 @@ crate-type = ["lib", "cdylib", "staticlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[workspace]
+members = ["crates/abundio-core", "crates/abundio-server"]
+
 [dependencies]
+# Everything a Host runs with no window (docs/plans/remote-hosts.md phase 6).
+abundio-core = { path = "crates/abundio-core" }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-shell = "2"
 tauri-plugin-notification = "2"
@@ -52,6 +57,7 @@ base64 = "0.22"
 # same image is free and two different images can never collide on a filename.
 # See ADR-0038.
 sha2 = "0.10"
+flate2 = "1"
 crossbeam-channel = "0.5"
 thiserror = "2"
 log = "0.4"
@@ -121,6 +127,7 @@ toml_edit = "0.25"
 keyring = { version = "4", default-features = false, features = ["v1"] }
 aes-gcm = "0.10"
 zeroize = { version = "1", features = ["zeroize_derive"] }
+alacritty_terminal = "0.26.0"
 
 # killpg(SIGWINCH) for the redraw nudge (pty_manager::redraw): tell the
 # program in a PTY to redraw at its current size. nix's safe wrapper rather

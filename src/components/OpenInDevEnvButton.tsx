@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pickActiveDevEnvId } from "../lib/devEnvironments";
 import { devEnvironments as devEnvApi } from "../lib/ipc";
 import type { DetectedDevEnvironment, LaunchFile } from "../lib/types";
@@ -8,10 +8,21 @@ import { useSettingsStore } from "../stores/settingsStore";
 interface Props {
 	workspaceFolder: string;
 	activeFilePath: string | null;
+	/** The Workspace's Host: its folder opens over SSH, in an editor that can
+	 *  (phase 10f). `null`: this computer. */
+	hostId?: string | null;
 }
 
-export function OpenInDevEnvButton({ workspaceFolder, activeFilePath }: Props) {
-	const installed = useDevEnvironmentsStore((s) => s.installed);
+export function OpenInDevEnvButton({
+	workspaceFolder,
+	activeFilePath,
+	hostId = null,
+}: Props) {
+	const detected = useDevEnvironmentsStore((s) => s.installed);
+	const installed = useMemo(
+		() => (hostId ? detected.filter((e) => e.remote) : detected),
+		[detected, hostId],
+	);
 	const loaded = useDevEnvironmentsStore((s) => s.loaded);
 	const lastOpenedDevEnvId = useSettingsStore((s) => s.lastOpenedDevEnvId);
 	const setLastOpenedDevEnvId = useSettingsStore(
@@ -34,13 +45,13 @@ export function OpenInDevEnvButton({ workspaceFolder, activeFilePath }: Props) {
 				? { path: activeFilePath }
 				: null;
 			try {
-				await devEnvApi.launch(env.id, workspaceFolder, file);
+				await devEnvApi.launch(env.id, workspaceFolder, file, hostId);
 				setLastOpenedDevEnvId(env.id);
 			} catch (err) {
 				console.error("Failed to launch dev environment:", err);
 			}
 		},
-		[workspaceFolder, activeFilePath, setLastOpenedDevEnvId],
+		[workspaceFolder, activeFilePath, setLastOpenedDevEnvId, hostId],
 	);
 
 	const handlePrimaryClick = useCallback(() => {

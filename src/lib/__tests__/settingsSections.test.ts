@@ -76,3 +76,19 @@ describe("SETTINGS_NAV", () => {
 		expect(navIds).toContain(DEFAULT_SECTION);
 	});
 });
+
+import { settingsNavFor } from "../settingsSections";
+
+describe("settingsNavFor (ADR-0064: a Host picked filters Settings)", () => {
+	it("shows only the Host's sections, and every section for this computer", () => {
+		const ids = (nav: ReturnType<typeof settingsNavFor>) =>
+			nav.flatMap((g) => g.items.map((i) => i.id));
+		expect(ids(settingsNavFor(true)).sort()).toEqual([
+			"agents",
+			"profiles",
+			"terminal",
+		]);
+		expect(ids(settingsNavFor(false))).toContain("theme");
+		expect(settingsNavFor(true).every((g) => g.items.length > 0)).toBe(true);
+	});
+});

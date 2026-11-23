@@ -145,6 +145,20 @@ each is open. Add `--workspace <name>` to any command to act there, e.g.
   agents. Never do that uninvited.
 - A new pane in another Workspace always gets a Tab of its own there.
 
+### Workspaces on another machine
+
+`abundio workspace list` may also show Workspaces of another machine (a
+Host the user joined), named `<name>@<host>`, with `"host"` and `"online"`.
+Name them, and their agents, with that `@<host>` ending:
+`abundio agent prompt "Reviewer@build-box" "<text>" --wait`,
+`abundio pane list --workspace app@build-box`.
+
+- A Host that is not connected answers `host_offline`: tell the user rather
+  than retrying in a loop.
+- There you have no pane of your own, so `pane split` is refused: start an
+  agent there with `agent start --tab --workspace <name>@<host>`.
+- Agents on a Host can never reach yours; only you reach theirs.
+
 `abundio workspace close <name>` closes another Workspace, just as the user's
 Close does: its terminals and agents stop, and its row, folder and files
 stay. You can never close your own. It is refused while an agent there is

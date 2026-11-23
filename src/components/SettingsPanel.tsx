@@ -1,17 +1,24 @@
 import { useEffect, useState } from "react";
+import { listen } from "../lib/ipc";
 import {
+	HOST_SECTIONS,
 	initialSection,
 	normalizeSection,
-	SETTINGS_NAV,
 	type SettingsSection,
+	settingsNavFor,
 } from "../lib/settingsSections";
+import { useSettingsHostStore } from "../stores/settingsHostStore";
 import { AgentsSection } from "./Settings/AgentsSection";
 import { EditorSection } from "./Settings/EditorSection";
 import { FontsSection } from "./Settings/FontsSection";
 import { GithubSection } from "./Settings/GithubSection";
+import { HostAgentsSection } from "./Settings/HostAgentsSection";
+import { HostProfilesSection } from "./Settings/HostProfilesSection";
+import { HostsSection } from "./Settings/HostsSection";
 import {
 	AgentIcon,
 	EditorIcon,
+	HostIcon,
 	KeyboardIcon,
 	PaletteIcon,
 	PrIcon,
@@ -23,6 +30,7 @@ import {
 	UpdateIcon,
 } from "./Settings/icons";
 import { KeyboardSection } from "./Settings/KeyboardSection";
+import { PerHostSection, SettingsHostPicker } from "./Settings/PerHostSection";
 import { ProfilesSection } from "./Settings/ProfilesSection";
 import { PromptActionsSection } from "./Settings/PromptActionsSection";
 import { NavGroupLabel, NavItem } from "./Settings/primitives";
@@ -48,6 +56,7 @@ const SECTION_ICON: Record<SettingsSection, React.ReactNode> = {
 	tasks: <TaskIcon />,
 	keyboard: <KeyboardIcon />,
 	profiles: <ProfileIcon />,
+	hosts: <HostIcon />,
 	github: <PrIcon />,
 	updates: <UpdateIcon />,
 };
@@ -57,11 +66,19 @@ const SECTION_BODY: Record<SettingsSection, React.ReactNode> = {
 	fonts: <FontsSection />,
 	terminal: <TerminalSection />,
 	editor: <EditorSection />,
-	agents: <AgentsSection />,
+	agents: (
+		<PerHostSection local={<AgentsSection />} host={<HostAgentsSection />} />
+	),
 	"prompt-actions": <PromptActionsSection />,
 	tasks: <TasksSection />,
 	keyboard: <KeyboardSection />,
-	profiles: <ProfilesSection />,
+	profiles: (
+		<PerHostSection
+			local={<ProfilesSection />}
+			host={<HostProfilesSection />}
+		/>
+	),
+	hosts: <HostsSection />,
 	github: <GithubSection />,
 	updates: <UpdatesSection />,
 };
@@ -69,6 +86,8 @@ const SECTION_BODY: Record<SettingsSection, React.ReactNode> = {
 export function SettingsPanel({ onClose }: Props) {
 	// Resolve the deep-linked section in a lazy initializer, not an effect: an
 	// effect would paint the default page for a frame before snapping.
+	// A Host picked filters Settings to that Host's sections (ADR-0064).
+	const hostPicked = useSettingsHostStore((s) => s.hostId !== null);
 	const [section, setSection] = useState<SettingsSection>(() =>
 		initialSection(window.location.search),
 	);
@@ -95,12 +114,10 @@ export function SettingsPanel({ onClose }: Props) {
 	// The other half of the deep link: Rust emits `settings-set-section` instead
 	// of rebuilding the URL when the Settings window is already open.
 	useEffect(() => {
-		const unlisten = import("@tauri-apps/api/event").then(({ listen }) =>
-			listen<string>("settings-set-section", (event) => {
-				const next = normalizeSection(event.payload);
-				if (next) setSection(next);
-			}),
-		);
+		const unlisten = listen<string>("settings-set-section", (event) => {
+			const next = normalizeSection(event.payload);
+			if (next) setSection(next);
+		});
 		return () => {
 			unlisten.then((fn) => fn()).catch(() => {});
 		};
@@ -117,6 +134,11 @@ export function SettingsPanel({ onClose }: Props) {
 		document.addEventListener("keydown", handleEscape, true);
 		return () => document.removeEventListener("keydown", handleEscape, true);
 	}, [onClose]);
+
+	// Picking a Host while on a section it does not have: go to its first.
+	useEffect(() => {
+		if (hostPicked && !HOST_SECTIONS.has(section)) setSection("agents");
+	}, [hostPicked, section]);
 
 	return (
 		/* Renders as the entire content of the dedicated Settings window
@@ -144,6 +166,7 @@ export function SettingsPanel({ onClose }: Props) {
 					Settings
 				</span>
 				<div className="flex items-center gap-3">
+					<SettingsHostPicker />
 					<span
 						className="font-mono"
 						style={{
@@ -176,7 +199,7 @@ export function SettingsPanel({ onClose }: Props) {
 							"color-mix(in srgb, var(--bg-primary) 50%, var(--bg-secondary))",
 					}}
 				>
-					{SETTINGS_NAV.map((group) => (
+					{settingsNavFor(hostPicked).map((group) => (
 						<div key={group.caption} className="flex flex-col gap-1">
 							<NavGroupLabel>{group.caption}</NavGroupLabel>
 							{group.items.map((item) => (

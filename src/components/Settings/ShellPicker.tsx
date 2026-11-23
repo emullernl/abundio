@@ -101,17 +101,27 @@ function ShellRow({
 	);
 }
 
-/** The Default Shell list — System Default plus every shell Rust found. */
-export function ShellPicker() {
-	const shellPath = useSettingsStore((s) => s.shellPath);
-	const setShellPath = useSettingsStore((s) => s.setShellPath);
+/** The Default Shell list — System Default plus every shell Rust found.
+ *  This computer's by default; a Host's when given its value, change and
+ *  shell list (Host settings, ADR-0064). */
+export function ShellPicker(
+	props: {
+		value?: string | null;
+		onChange?: (path: string | null) => void;
+		listShells?: () => Promise<AvailableShell[]>;
+	} = {},
+) {
+	const ownShellPath = useSettingsStore((s) => s.shellPath);
+	const ownSetShellPath = useSettingsStore((s) => s.setShellPath);
+	const shellPath = props.onChange ? (props.value ?? null) : ownShellPath;
+	const setShellPath = props.onChange ?? ownSetShellPath;
+	const listShells = props.listShells;
 
 	const [availableShells, setAvailableShells] = useState<AvailableShell[]>([]);
 	const shellsLoaded = useRef(false);
 	useEffect(() => {
 		if (shellsLoaded.current) return;
-		shellsIpc
-			.listAvailable()
+		(listShells ?? shellsIpc.listAvailable)()
 			.then((shells) => {
 				setAvailableShells(shells);
 				shellsLoaded.current = true;
@@ -119,7 +129,7 @@ export function ShellPicker() {
 			.catch(() => {
 				setAvailableShells([]);
 			});
-	}, []);
+	}, [listShells]);
 
 	return (
 		<div className="overflow-y-auto flex flex-col flex-1 min-h-0 gap-0.5">

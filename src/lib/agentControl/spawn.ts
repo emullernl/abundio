@@ -6,8 +6,7 @@ import {
 	optionSafePrompt,
 	TASK_PROMPT_PLACEHOLDER,
 } from "../agents";
-import { oneLine } from "../typedLine";
-import type { CodingAgent, PtyDetectionMode } from "../types";
+import type { CodingAgent } from "../types";
 import { ControlError, type Direction } from "./types";
 
 /** Split right when the caller is at least twice as wide as tall in cells,
@@ -65,46 +64,6 @@ export function startArgv(
 			),
 		],
 	};
-}
-
-export interface RunFacts {
-	mode: PtyDetectionMode | null;
-	exited: boolean;
-	/** Shell integration has reported in this PTY (a prompt or a command). */
-	integrationSeen: boolean;
-	shellCommandRunning: boolean;
-}
-
-/** Why `pane run` may not type into this pane now, or null when it may. */
-export function runRefusal(f: RunFacts): ControlError | null {
-	if (f.exited) {
-		return new ControlError("not_found", "that pane's shell has exited");
-	}
-	if (f.mode === "agent") {
-		return new ControlError(
-			"busy",
-			"an Agent is running in that pane; use `abundio agent prompt`",
-		);
-	}
-	if (!f.integrationSeen) {
-		return new ControlError(
-			"state_unknown",
-			"cannot tell whether that shell is at its prompt (no shell integration seen yet), so nothing was typed",
-		);
-	}
-	if (f.shellCommandRunning) {
-		return new ControlError(
-			"busy",
-			"a command is still running in that pane; wait for it or read the pane",
-		);
-	}
-	return null;
-}
-
-/** `pane run`'s command as typed: one line, no control characters, so it
- *  cannot carry its own Enter or escape sequences. */
-export function cleanCommand(command: string): string {
-	return oneLine(command);
 }
 
 /** `pane close` works on any pane in reach but the caller's own: closing

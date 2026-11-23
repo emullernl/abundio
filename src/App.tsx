@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppLoader } from "./components/AppLoader";
 import { CommandPalette } from "./components/CommandPalette";
@@ -8,17 +7,21 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { FileSearchPalette } from "./components/FileSearchPalette";
 import { FileWindowCloseConfirmDialog } from "./components/FileWindow/FileWindowCloseConfirmDialog";
 import { FleetConsole } from "./components/FleetConsole/FleetConsole";
+import { JoinedUpdateBanner } from "./components/JoinedUpdateBanner";
 import { type LaunchChoice, LaunchPicker } from "./components/LaunchPicker";
 import { MissingFolderPanel } from "./components/MissingFolderPanel";
 import { Navigator } from "./components/Navigator/Navigator";
 import { NewTaskDialog } from "./components/NewTask/NewTaskDialog";
 import { NewWorkspaceDialog } from "./components/NewWorkspaceDialog";
 import { OpenInDevEnvButton } from "./components/OpenInDevEnvButton";
+import { OpenRemoteProfileDialog } from "./components/OpenRemoteProfileDialog";
 import { OrchestratorView } from "./components/Orchestrator/OrchestratorView";
 import { OVERVIEW_BAR_HEIGHT, OverviewBar } from "./components/OverviewBar";
+import { RemoteHostBanner } from "./components/RemoteHostBanner";
 import { RightSidebar } from "./components/RightSidebar/RightSidebar";
 import { SaveConfirmDialog } from "./components/SaveConfirmDialog";
 import { Sidebar } from "./components/Sidebar/Sidebar";
+import { SshPromptHost } from "./components/SshPromptDialog";
 import { StatisticsOverlay } from "./components/Statistics/StatisticsOverlay";
 import { StatusBar } from "./components/StatusBar";
 import { TabBar } from "./components/TabBar";
@@ -37,6 +40,7 @@ import { useSplitPane } from "./hooks/useSplitPane";
 import { useTerminalFileDrop } from "./hooks/useTerminalFileDrop";
 import { useWorkspace } from "./hooks/useWorkspace";
 import { useWorktreeSync } from "./hooks/useWorktreeSync";
+import { startAgentCommandsSync } from "./lib/agentCommandsSync";
 import { startAgentControl } from "./lib/agentControl/handleControlRequest";
 import { cycleAgent } from "./lib/agentCycle";
 import {
@@ -67,11 +71,16 @@ import {
 	workspaceViewOnly,
 } from "./lib/fleetFocus";
 import { installFocusSweep } from "./lib/focusSweep";
+import { hostSettingsFromApp } from "./lib/hostSettings";
+import { startHostSettingsMirror } from "./lib/hostSettingsMirror";
 import {
 	agentRegistry,
 	appMenu,
+	hostSettingsApi,
+	hostsApi,
 	listen,
 	listenToThisWindow,
+	settingsWindow,
 	updates,
 	windowSession,
 } from "./lib/ipc";
@@ -105,6 +114,7 @@ import {
 } from "./lib/terminalClipboard";
 import { setAllTerminalsFontSize } from "./lib/terminalManager";
 import { unsavedFilePaths } from "./lib/unsavedFiles";
+import { addWindowFocusListener } from "./lib/windowFocus";
 import { cycleOpenedWorkspace } from "./lib/workspaceCycle";
 import { isOrchestrator, workWorkspaces } from "./lib/workspaceKind";
 import {
@@ -112,7 +122,10 @@ import {
 	buildWorkspaceRows,
 	flattenRowsToIds,
 } from "./lib/worktreeGrouping";
-import { useAgentRegistryStore } from "./stores/agentRegistryStore";
+import {
+	rescanIfStale,
+	useAgentRegistryStore,
+} from "./stores/agentRegistryStore";
 import {
 	panesWantingAttention,
 	useAgentSignalsStore,
@@ -120,6 +133,7 @@ import {
 import { useDevEnvironmentsStore } from "./stores/devEnvironmentsStore";
 import { useExplorerStore } from "./stores/explorerStore";
 import { confirmFileWindowsClean } from "./stores/fileWindowCloseConfirmStore";
+import { useHostLinkStore } from "./stores/hostLinkStore";
 import { useNotesStore } from "./stores/notesStore";
 import { useOrchestratorStore } from "./stores/orchestratorStore";
 import {
@@ -384,6 +398,7 @@ export function App() {
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	const [fileSearchOpen, setFileSearchOpen] = useState(false);
 	const [navigatorOpen, setNavigatorOpen] = useState(false);
+	const [openRemoteOpen, setOpenRemoteOpen] = useState(false);
 	const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
 
 	// LaunchPicker is shared for new-tab and split flows
@@ -422,14 +437,16 @@ export function App() {
 			name,
 			folderPath,
 			choice,
+			location,
 		}: {
 			name: string;
 			folderPath: string;
 			choice: LaunchChoice;
+			location: { hostId: string; profileId: string } | null;
 		}) => {
 			const agent = choice.kind === "agent" ? choice.agent : undefined;
-			createWorkspace(name, folderPath, agent).catch((err) =>
-				console.error("Failed to create workspace:", err),
+			createWorkspace(name, folderPath, agent, location ?? undefined).catch(
+				(err) => console.error("Failed to create workspace:", err),
 			);
 		},
 		[createWorkspace],
@@ -460,6 +477,7 @@ export function App() {
 		string | null
 	>(null);
 	const appWindowRef = useRef<ReturnType<typeof appWindow>>(null);
+	const hostAway = useHostLinkStore((s) => s.link.state !== "online");
 	const workspacesInitialized = useWorkspaceStore(
 		(s) => s.workspacesInitialized,
 	);
@@ -661,12 +679,49 @@ export function App() {
 	// burn it on a seed that never happened. Nothing reaches disk until the
 	// toggles are actually set, so any failure in between simply leaves the
 	// claim for the next launch. See ADR-0037.
+	// This computer's Host settings (ADR-0064) move from the app's own
+	// storage into its database, once: the first local Window to find none
+	// there writes the values the app has (phase 10d-1). A failed read waits
+	// for the next start; a remote Window's Host seeds its own.
+	useEffect(() => {
+		void (async () => {
+			if (await hostsApi.remoteProfileForWindow().catch(() => null)) return;
+			const have = await hostSettingsApi.get().catch(() => undefined);
+			if (have !== null) return;
+			await hostSettingsApi
+				.set(hostSettingsFromApp(useSettingsStore.getState()))
+				.then(() =>
+					console.info(
+						"[host settings] this computer's moved into its database",
+					),
+				)
+				.catch((e) =>
+					console.warn("[host settings] cannot write this computer's", e),
+				);
+		})();
+	}, []);
+
+	// Coming to the front, scan again if the last scan is old: an Agent
+	// installed meanwhile (in a pane, on a Host) shows up without a restart.
+	useEffect(
+		() =>
+			addWindowFocusListener((focused) => {
+				if (!focused) return;
+				rescanIfStale(useSettingsStore.getState().agents.map((a) => a.command));
+			}),
+		[],
+	);
+
 	useEffect(() => {
 		const settings = useSettingsStore.getState();
 		const registry = useAgentRegistryStore.getState();
 		registry
 			.load(settings.agents.map((a) => a.command))
 			.then(async () => {
+				// The Agent list is this computer's (every Window shares it): a
+				// remote Window's scan is its Host's, which must never switch this
+				// computer's Agents on or off (phase 10).
+				if (await hostsApi.remoteProfileForWindow().catch(() => null)) return;
 				const { installedCommands: installed, scannedCommands: scanned } =
 					useAgentRegistryStore.getState();
 				if (installed.size === 0) return;
@@ -857,6 +912,8 @@ export function App() {
 
 	// The Orchestrator session follows its view, per Profile (ADR-0057).
 	const activeProfileId = useProfileStore((s) => s.activeProfileId);
+	// A remote Window's Workspaces are all on its Host (phase 10f).
+	const remoteHostId = useProfileStore((s) => s.remote?.hostId ?? null);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: re-installed for each Profile
 	useEffect(() => {
 		if (!workspacesInitialized) return;
@@ -885,8 +942,24 @@ export function App() {
 		};
 	}, []);
 
+	// File ▸ Open Remote Profile… (phase 7d, development builds). Rust aims
+	// it at one Window.
+	useEffect(() => {
+		const unlisten = listenToThisWindow<void>("open-remote-profile", () =>
+			setOpenRemoteOpen(true),
+		);
+		return () => {
+			unlisten.then((fn) => fn());
+		};
+	}, []);
+
 	// Agent control (ADR-0054): `abundio` calls from this Window's panes.
 	useEffect(() => startAgentControl(), []);
+
+	// The Agents a typed command can start, for Rust's shell integration.
+	useEffect(() => startAgentCommandsSync(), []);
+	// This computer's Host settings follow its app settings (ADR-0064).
+	useEffect(() => startHostSettingsMirror(), []);
 
 	// Listen for native menu "Switch Profile" submenu clicks.
 	useEffect(() => {
@@ -1070,7 +1143,7 @@ export function App() {
 			// Settings is now a singleton OS window (ADR-0007). The Rust
 			// command opens or focuses it; the panel renders inside that
 			// dedicated window, not as a modal here.
-			invoke("open_settings_window").catch(() => {});
+			settingsWindow.open().catch(() => {});
 		});
 		registerAction("search-in-terminal", () => {
 			// A file's Orchestrator tab, when that is where focus is: find in
@@ -1296,6 +1369,8 @@ export function App() {
 		<div className="flex flex-col h-full w-full">
 			{!workspacesInitialized && <AppLoader />}
 			<Titlebar />
+			<RemoteHostBanner />
+			<JoinedUpdateBanner />
 			<div className="flex flex-1 min-h-0">
 				{/* The Fleet Console hides both sidebars. They stay mounted — the
 				    Left sidebar owns the Add worktree dialog the console hands off
@@ -1311,7 +1386,12 @@ export function App() {
 				</div>
 				<div
 					className="flex-1 min-w-0 flex flex-col relative"
-					style={{ paddingTop: TITLEBAR_HEIGHT + OVERVIEW_BAR_HEIGHT }}
+					style={{
+						paddingTop: TITLEBAR_HEIGHT + OVERVIEW_BAR_HEIGHT,
+						// Frozen while a remote Window's Host is away: what is
+						// typed is dropped (`isHostOffline`), and it looks it.
+						...(hostAway ? { opacity: 0.55, filter: "grayscale(0.6)" } : {}),
+					}}
 				>
 					<div
 						style={{
@@ -1405,6 +1485,7 @@ export function App() {
 										/>
 										{!orchestrator && (
 											<OpenInDevEnvButton
+												hostId={workspace.joined?.hostId ?? remoteHostId}
 												workspaceFolder={workspace.rootFolder}
 												activeFilePath={isActive ? activeFocusedFilePath : null}
 											/>
@@ -1468,6 +1549,10 @@ export function App() {
 				onClose={() => setFileSearchOpen(false)}
 			/>
 			<Navigator open={navigatorOpen} onClose={() => setNavigatorOpen(false)} />
+			<SshPromptHost />
+			{openRemoteOpen && (
+				<OpenRemoteProfileDialog onClose={() => setOpenRemoteOpen(false)} />
+			)}
 			{newTaskRequest && <NewTaskDialog request={newTaskRequest} />}
 			<LaunchPicker
 				isOpen={!!launchPicker}

@@ -7,6 +7,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../../lib/ipc", () => ({
 	fonts: { listSystemFonts: () => Promise.resolve([]) },
 	shells: { listAvailable: () => Promise.resolve([]) },
+	// The Host picker (ADR-0064): no Hosts added, so it stays hidden.
+	hostsApi: { list: () => Promise.resolve([]) },
+	joinedApi: {
+		attach: () => Promise.resolve(),
+		callOn: () => Promise.resolve(null),
+	},
+	listenToThisWindow: () => Promise.resolve(() => {}),
 	agentSkill: {
 		provision: vi.fn(() => Promise.resolve()),
 		provisionStartup: vi.fn(() => Promise.resolve()),
@@ -19,11 +26,10 @@ vi.mock("../../../lib/ipc", () => ({
 		status: () => Promise.resolve({ staged: null, available: null }),
 		releaseNotes: () => Promise.resolve([]),
 		markVersionSeen: () => Promise.resolve(),
+		appVersion: () => Promise.resolve("0.0.0"),
 	},
 	pr: {},
-}));
-vi.mock("@tauri-apps/api/app", () => ({
-	getVersion: () => Promise.resolve("0.0.0"),
+	listen: () => Promise.resolve(() => {}),
 }));
 vi.mock("@tauri-apps/plugin-shell", () => ({ open: () => Promise.resolve() }));
 vi.mock("@tauri-apps/api/event", () => ({

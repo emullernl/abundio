@@ -1,0 +1,2054 @@
+/// In-process git via libgit2 (`git2` crate). Replaces the `Command::new("git")`
+/// subprocess-based implementations in `git_commands.rs` for the three
+/// hot-path operations the `GitScheduler` uses on every fs/git event:
+///   - `compute_status_fingerprint_sync`
+///   - `compute_branch_info_sync`
+///   - `compute_changed_files_sync`
+///
+/// Why: each subprocess git invocation took ~200-500 ms on macOS (fork + exec
+/// + git startup), and the scheduler runs all three on every meaningful
+/// change. While the host process is doing that work, the WKWebView's
+/// WebContent process is held back enough to produce visible main-thread
+/// stalls in the JS event loop. Moving to in-process libgit2 cuts each
+/// operation to ~10-50 ms.
+///
+/// The public function signatures match the subprocess versions byte-for-byte
+/// (same struct shapes, same return types) so `git_commands.rs` can swap them
+/// in without touching its callers (the `#[tauri::command]` wrappers,
+/// `git_scheduler.rs`, etc.).
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+use dashmap::DashMap;
+use git2::{
+    BranchType, Delta, Diff, DiffOptions, ErrorCode, IndexAddOption, Oid, Reference, Repository,
+    Status, StatusOptions, WorktreeAddOptions, WorktreePruneOptions,
+};
+
+use crate::error::AbundioError;
+use crate::git_core::{
+    HistoryCommit, CommitHistory, BranchInfo, CommitFile, GitChangedFile, GitConflictFile,
+    TreeDiffStats,
+};
+
+const MAX_UNTRACKED: usize = 500;
+
+fn default_branch_cache() -> &'static DashMap<String, String> {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<DashMap<String, String>> = OnceLock::new();
+    CACHE.get_or_init(DashMap::new)
+}
+
+fn open_repo(cwd: &str) -> Result<Repository, AbundioError> {
+    Repository::discover(cwd).map_err(|e| match e.code() {
+        ErrorCode::NotFound => AbundioError::NotGitRepo(cwd.to_string()),
+        _ => AbundioError::Git(format!("open repo: {e}")),
+    })
+}
+
+pub fn compute_status_fingerprint_sync(cwd: &str) -> Result<String, AbundioError> {
+    let repo = open_repo(cwd)?;
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true)
+        .recurse_untracked_dirs(false)
+        .include_ignored(false);
+    let statuses = repo
+        .statuses(Some(&mut opts))
+        .map_err(|e| AbundioError::Git(format!("statuses: {e}")))?;
+
+    // Build a deterministic fingerprint. The exact format doesn't need to
+    // match `git status --porcelain`; it just needs to change iff the
+    // working-tree state changed.
+    let mut entries: Vec<(String, u32)> = statuses
+        .iter()
+        .map(|s| (s.path().unwrap_or("").to_string(), s.status().bits()))
+        .collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut out = String::with_capacity(entries.len() * 24);
+    for (path, status) in entries {
+        out.push_str(&format!("{:08x} {}\n", status, path));
+    }
+    Ok(out)
+}
+
+/// The branch HEAD is on, as a shortname.
+///
+/// Three cases, and they are easy to conflate:
+/// - **On a branch** → `Some("main")`.
+/// - **Detached** (mid-rebase, checked-out tag, bisect) → `repo.head()`
+///   *succeeds*, resolving to the direct `HEAD` reference, and `shorthand()`
+///   yields the literal `"HEAD"`. So `Some("HEAD")` means detached, and
+///   nothing else does.
+/// - **Unborn** (fresh `git init`, no commits) → `repo.head()` errors, since
+///   there is no ref to resolve. The intended branch name is still recorded in
+///   HEAD's symbolic target, so recover it there rather than reporting the
+///   repo as detached — it isn't, it's just empty.
+fn head_branch_name(repo: &Repository) -> Option<String> {
+    if let Ok(head) = repo.head() {
+        return head.shorthand().map(String::from);
+    }
+    let target = repo.find_reference("HEAD").ok()?.symbolic_target()?.to_string();
+    let name = target.strip_prefix("refs/heads/")?;
+    if name.is_empty() {
+        return None;
+    }
+    Some(name.to_string())
+}
+
+pub fn compute_branch_info_sync(cwd: &str) -> Result<BranchInfo, AbundioError> {
+    let repo = open_repo(cwd)?;
+    let current = head_branch_name(&repo).unwrap_or_else(|| "HEAD".to_string());
+    let default = detect_default_branch(&repo, cwd)?;
+    Ok(BranchInfo {
+        default_branch: default,
+        current_branch: current,
+    })
+}
+
+fn detect_default_branch(repo: &Repository, cwd: &str) -> Result<String, AbundioError> {
+    let cache_key = std::fs::canonicalize(cwd)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| cwd.to_string());
+    if let Some(cached) = default_branch_cache().get(&cache_key) {
+        return Ok(cached.clone());
+    }
+
+    // Prefer the remote's symbolic HEAD (works for any default branch name).
+    if let Ok(reference) = repo.find_reference("refs/remotes/origin/HEAD") {
+        if let Some(target) = reference.symbolic_target() {
+            if let Some(name) = target.strip_prefix("refs/remotes/origin/") {
+                if !name.is_empty() {
+                    default_branch_cache().insert(cache_key, name.to_string());
+                    return Ok(name.to_string());
+                }
+            }
+        }
+    }
+    // Fall back to common branch names locally.
+    if repo.find_reference("refs/heads/main").is_ok() {
+        default_branch_cache().insert(cache_key, "main".to_string());
+        return Ok("main".to_string());
+    }
+    if repo.find_reference("refs/heads/master").is_ok() {
+        default_branch_cache().insert(cache_key, "master".to_string());
+        return Ok("master".to_string());
+    }
+    // A freshly `git init`'d repo has an unborn HEAD: no commits, so no branch
+    // refs exist yet. Read HEAD's symbolic target to recover the intended
+    // default branch name (e.g. `refs/heads/main` → `main`) so the bundle still
+    // resolves and the repo is recognized the moment it's initialized. Not
+    // cached — the eventual default may differ once commits/remotes appear.
+    if let Ok(head_ref) = repo.find_reference("HEAD") {
+        if let Some(target) = head_ref.symbolic_target() {
+            if let Some(name) = target.strip_prefix("refs/heads/") {
+                if !name.is_empty() {
+                    return Ok(name.to_string());
+                }
+            }
+        }
+    }
+    Err(AbundioError::Git("No default branch found".to_string()))
+}
+
+fn resolve_base_branch(
+    repo: &Repository,
+    cwd: &str,
+    base_branch: Option<String>,
+) -> Result<String, AbundioError> {
+    match base_branch {
+        Some(b) if !b.is_empty() => Ok(b),
+        _ => detect_default_branch(repo, cwd),
+    }
+}
+
+/// Drop entries for paths that are unmerged.
+///
+/// A conflicted path has no stage 0, so its staged/unstaged/untracked rows are
+/// meaningless — and libgit2's diff APIs are not consistent across versions
+/// about omitting them, so we do it explicitly rather than trusting them to.
+fn retain_unconflicted(
+    files: Vec<GitChangedFile>,
+    conflicted: &std::collections::HashSet<String>,
+) -> Vec<GitChangedFile> {
+    if conflicted.is_empty() {
+        return files;
+    }
+    files
+        .into_iter()
+        .filter(|f| !conflicted.contains(&f.path))
+        .collect()
+}
+
+/// One index stage's blob as text. Stage 1 = ancestor, 2 = ours, 3 = theirs.
+///
+/// Note the vocabulary: "ours"/"theirs" are git's own index terms (`git checkout
+/// --ours` addresses stage 2) and stay on this side of the IPC boundary. They
+/// invert during a rebase, so the UI says Current/Incoming instead — and for
+/// marker-less conflicts names neither side. See ADR-0029.
+fn blob_at_stage<'r>(
+    repo: &'r Repository,
+    index: &git2::Index,
+    file_path: &str,
+    stage: u16,
+) -> Option<git2::Blob<'r>> {
+    let entry = index.get_path(Path::new(file_path), stage as i32)?;
+    repo.find_blob(entry.id).ok()
+}
+
+/// The three conflict stages of an unmerged path, plus what kind of conflict it
+/// is and whether it is binary.
+pub fn compute_conflict_file_sync(
+    cwd: &str,
+    file_path: &str,
+) -> Result<GitConflictFile, AbundioError> {
+    let repo = open_repo(cwd)?;
+    // Opened once for all three stages rather than per stage.
+    let index = repo
+        .index()
+        .map_err(|e| AbundioError::Git(format!("open index: {e}")))?;
+
+    let ancestor = blob_at_stage(&repo, &index, file_path, 1);
+    let ours = blob_at_stage(&repo, &index, file_path, 2);
+    let theirs = blob_at_stage(&repo, &index, file_path, 3);
+
+    // Which stages are present *is* the conflict kind — there is nothing else to
+    // derive it from, and git's own status names map one-to-one.
+    let kind = match (ancestor.is_some(), ours.is_some(), theirs.is_some()) {
+        (true, true, true) => "both_modified",
+        (true, true, false) => "deleted_by_them",
+        (true, false, true) => "deleted_by_us",
+        (false, true, true) => "both_added",
+        (false, true, false) => "added_by_us",
+        (false, false, true) => "added_by_them",
+        // No stages at all: the path is not unmerged (already resolved, or never
+        // was). Reported rather than raised — the caller polls this from UI that
+        // can legitimately race a resolution.
+        _ => "none",
+    };
+
+    let binary_of = |b: &Option<git2::Blob<'_>>| b.as_ref().is_some_and(|b| b.is_binary());
+    let is_binary = binary_of(&ancestor) || binary_of(&ours) || binary_of(&theirs);
+
+    let text = |blob: Option<git2::Blob<'_>>| -> Option<String> {
+        if is_binary {
+            return None;
+        }
+        blob.map(|b| String::from_utf8_lossy(b.content()).to_string())
+    };
+
+    Ok(GitConflictFile {
+        file_path: file_path.to_string(),
+        kind: kind.to_string(),
+        is_binary,
+        base: text(ancestor),
+        ours: text(ours),
+        theirs: text(theirs),
+    })
+}
+
+/// Stage a single path, with `git add -A <path>` semantics.
+///
+/// **This is the only place in the codebase that writes the on-disk git index.**
+/// It is deliberate and user-initiated: the invariant Abundio holds is that the
+/// index is never written as a side effect of telemetry, polling or rendering —
+/// not that it is never written at all. See ADR-0029, and the `Safety:` note on
+/// `snapshot_worktree_tree`, which remains a strictly in-memory operation.
+///
+/// `add_path` on a conflicted path is what resolves it: libgit2 drops stages
+/// 1/2/3 and writes a stage 0 entry. When the file is gone from disk the
+/// deletion is staged instead, which is how "accept the delete" works for a
+/// delete/modify conflict with no extra command.
+pub fn stage_path_sync(cwd: &str, file_path: &str) -> Result<(), AbundioError> {
+    let repo = open_repo(cwd)?;
+    let mut index = repo
+        .index()
+        .map_err(|e| AbundioError::Git(format!("open index: {e}")))?;
+
+    let workdir = repo.workdir().ok_or_else(|| {
+        AbundioError::Git("cannot stage in a bare repository".to_string())
+    })?;
+    let rel = Path::new(file_path);
+
+    if workdir.join(rel).exists() {
+        index
+            .add_path(rel)
+            .map_err(|e| AbundioError::Git(format!("stage {file_path}: {e}")))?;
+    } else {
+        index
+            .remove_path(rel)
+            .map_err(|e| AbundioError::Git(format!("stage deletion {file_path}: {e}")))?;
+    }
+
+    index
+        .write()
+        .map_err(|e| AbundioError::Git(format!("write index: {e}")))?;
+    Ok(())
+}
+
+/// Unmerged paths, straight from the index's conflict stages.
+///
+/// Sourced from `index.conflicts()` rather than a `Status::CONFLICTED` walk:
+/// it is O(conflicts) against an already-open index instead of a full
+/// working-tree scan. Line counts are deliberately zero — an unmerged path has
+/// no stage 0, so there is no honest numstat to report.
+fn conflicted_files(repo: &Repository) -> Vec<GitChangedFile> {
+    let Ok(index) = repo.index() else {
+        return Vec::new();
+    };
+    if !index.has_conflicts() {
+        return Vec::new();
+    }
+    let Ok(conflicts) = index.conflicts() else {
+        return Vec::new();
+    };
+    let mut seen: Vec<String> = Vec::new();
+    for conflict in conflicts.flatten() {
+        // Take the path from whichever stage is present: a delete conflict is
+        // missing `our` or `their`, an add/add is missing `ancestor`.
+        let entry = conflict
+            .our
+            .as_ref()
+            .or(conflict.their.as_ref())
+            .or(conflict.ancestor.as_ref());
+        let Some(entry) = entry else { continue };
+        let path = String::from_utf8_lossy(&entry.path).to_string();
+        if !seen.contains(&path) {
+            seen.push(path);
+        }
+    }
+    seen.sort();
+    seen.into_iter()
+        .map(|path| GitChangedFile {
+            path,
+            status: "U".to_string(),
+            additions: 0,
+            deletions: 0,
+            section: "conflicted".to_string(),
+        })
+        .collect()
+}
+
+/// The multi-step git operation currently suspended in this repository, if any.
+///
+/// Uses `repo.state()` rather than probing for `.git/MERGE_HEAD` and friends:
+/// libgit2 resolves the correct gitdir, so this is right in a linked worktree
+/// (whose state files live under `<repo>/.git/worktrees/<name>/`), and it
+/// distinguishes the rebase and sequencer variants that path probing flattens.
+pub fn compute_operation_in_progress_sync(cwd: &str) -> Result<Option<String>, AbundioError> {
+    use git2::RepositoryState as S;
+    let repo = open_repo(cwd)?;
+    Ok(match repo.state() {
+        S::Clean => None,
+        S::Merge => Some("merge".to_string()),
+        S::Rebase | S::RebaseInteractive | S::RebaseMerge => Some("rebase".to_string()),
+        S::CherryPick | S::CherryPickSequence => Some("cherry_pick".to_string()),
+        S::Revert | S::RevertSequence => Some("revert".to_string()),
+        // Bisect and the mailbox-apply states are not conflict resolution and
+        // have no "continue" advice worth showing.
+        _ => None,
+    })
+}
+
+pub fn compute_changed_files_sync(
+    cwd: &str,
+    base_branch: Option<String>,
+) -> Result<Vec<GitChangedFile>, AbundioError> {
+    let repo = open_repo(cwd)?;
+    let base = resolve_base_branch(&repo, cwd, base_branch)?;
+
+    let mut all_files = Vec::new();
+
+    // 1. conflicted: unmerged index entries. First because it is blocking, and
+    //    because a stable leading section keeps `filesEqual` on the frontend
+    //    trivially order-deterministic.
+    let conflicted = conflicted_files(&repo);
+    let conflicted_paths: std::collections::HashSet<String> =
+        conflicted.iter().map(|f| f.path.clone()).collect();
+    all_files.extend(conflicted);
+
+    // 2. against_base: merge-base of HEAD..base, diffed to HEAD.
+    //    Conflicted paths are deliberately NOT removed here: this section
+    //    compares committed history on a different axis, and dropping them
+    //    would silently shrink the branch review mid-merge.
+    if let Ok(files) = diff_against_base(&repo, &base) {
+        all_files.extend(files);
+    }
+
+    // 3. staged: HEAD tree vs index.
+    if let Ok(files) = diff_staged(&repo) {
+        all_files.extend(retain_unconflicted(files, &conflicted_paths));
+    }
+
+    // 4. unstaged: index vs working tree.
+    if let Ok(files) = diff_unstaged(&repo) {
+        all_files.extend(retain_unconflicted(files, &conflicted_paths));
+    }
+
+    // 5. untracked: from statuses (WT_NEW flag).
+    all_files.extend(retain_unconflicted(
+        untracked_files(&repo),
+        &conflicted_paths,
+    ));
+
+    Ok(all_files)
+}
+
+/// Snapshot the entire working tree to a git tree OID, for per-Turn churn
+/// diffing (see ADR-0021). Captures `git add -A` semantics: tracked
+/// modifications + non-ignored untracked files (recursively) + deletions,
+/// respecting `.gitignore`. Best-effort: `Ok(None)` when `cwd` isn't a git repo.
+///
+/// Safety: all index mutations are in-memory — we **never** call `index.write()`,
+/// so the user's on-disk `.git/index` (staging area) is untouched. This remains
+/// true: `stage_path_sync` is the sole on-disk index writer in the codebase, and
+/// it runs only on explicit user action. The invariant this note protects is
+/// that Abundio never writes the index as a *side effect* of telemetry, polling
+/// or rendering — which is exactly what this function would otherwise be doing.
+/// See ADR-0029. Only loose
+/// tree/blob objects are written to the ODB (content-addressed, deduplicated,
+/// reaped by `git gc`), exactly as `git add -A` + `git write-tree` do. The cost
+/// is a working-tree stat-walk (a `git status`-class scan, proportional to the
+/// number of non-ignored files in the worktree) plus hashing of only the
+/// changed/new files (libgit2's stat cache skips unchanged tracked files). Runs
+/// on a blocking thread, comparable to `compute_status_fingerprint_sync`.
+pub fn snapshot_worktree_tree(cwd: &str) -> Result<Option<String>, AbundioError> {
+    let repo = match open_repo(cwd) {
+        Ok(r) => r,
+        Err(AbundioError::NotGitRepo(_)) => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let mut index = repo
+        .index()
+        .map_err(|e| AbundioError::Git(format!("open index: {e}")))?;
+    // Seed the in-memory index from HEAD so tracked content is the baseline;
+    // an unborn branch (no commits) starts from an empty index.
+    match repo.head().and_then(|h| h.peel_to_tree()) {
+        Ok(tree) => index
+            .read_tree(&tree)
+            .map_err(|e| AbundioError::Git(format!("read_tree: {e}")))?,
+        Err(_) => index
+            .clear()
+            .map_err(|e| AbundioError::Git(format!("clear index: {e}")))?,
+    }
+    // `git add -A`: stage modified files, add non-ignored untracked files, and
+    // remove deleted files. DEFAULT (no FORCE) respects `.gitignore`.
+    index
+        .add_all(["."], IndexAddOption::DEFAULT, None)
+        .map_err(|e| AbundioError::Git(format!("add_all: {e}")))?;
+    // Writes tree (and any new blob) objects to the ODB. Crucially NOT
+    // `index.write()` — the on-disk index file is never serialized.
+    let oid = index
+        .write_tree_to(&repo)
+        .map_err(|e| AbundioError::Git(format!("write_tree: {e}")))?;
+    Ok(Some(oid.to_string()))
+}
+
+/// Line/file churn between two worktree tree snapshots (per-Turn working-tree
+/// diff). Each of additions/deletions/files is independently non-negative — no
+/// flooring needed. Binary files contribute 0 lines but count as a file.
+/// Renames are counted as delete+add (no rename detection), matching the diff
+/// behaviour elsewhere in this module.
+pub fn diff_tree_stats(
+    cwd: &str,
+    start_oid: &str,
+    end_oid: &str,
+) -> Result<TreeDiffStats, AbundioError> {
+    let repo = open_repo(cwd)?;
+    let start = Oid::from_str(start_oid)
+        .and_then(|o| repo.find_tree(o))
+        .map_err(|e| AbundioError::Git(format!("find start tree: {e}")))?;
+    let end = Oid::from_str(end_oid)
+        .and_then(|o| repo.find_tree(o))
+        .map_err(|e| AbundioError::Git(format!("find end tree: {e}")))?;
+    let mut opts = DiffOptions::new();
+    let diff = repo
+        .diff_tree_to_tree(Some(&start), Some(&end), Some(&mut opts))
+        .map_err(|e| AbundioError::Git(format!("diff trees: {e}")))?;
+    let stats = diff
+        .stats()
+        .map_err(|e| AbundioError::Git(format!("diff stats: {e}")))?;
+    Ok(TreeDiffStats {
+        additions: stats.insertions() as i64,
+        deletions: stats.deletions() as i64,
+        files: stats.files_changed() as i64,
+    })
+}
+
+fn resolve_base_oid(
+    repo: &Repository,
+    base: &str,
+) -> Result<git2::Oid, AbundioError> {
+    repo.refname_to_id(&format!("refs/heads/{}", base))
+        .or_else(|_| repo.refname_to_id(&format!("refs/remotes/origin/{}", base)))
+        .map_err(|e| AbundioError::Git(format!("resolve base ref: {e}")))
+}
+
+fn diff_against_base(
+    repo: &Repository,
+    base: &str,
+) -> Result<Vec<GitChangedFile>, AbundioError> {
+    let head = repo
+        .head()
+        .map_err(|e| AbundioError::Git(format!("head: {e}")))?
+        .peel_to_commit()
+        .map_err(|e| AbundioError::Git(format!("head commit: {e}")))?;
+
+    let base_oid = resolve_base_oid(repo, base)?;
+    let merge_base = repo
+        .merge_base(head.id(), base_oid)
+        .map_err(|e| AbundioError::Git(format!("merge base: {e}")))?;
+
+    let merge_base_tree = repo
+        .find_commit(merge_base)
+        .and_then(|c| c.tree())
+        .map_err(|e| AbundioError::Git(format!("merge base tree: {e}")))?;
+    let head_tree = head
+        .tree()
+        .map_err(|e| AbundioError::Git(format!("head tree: {e}")))?;
+
+    let mut opts = DiffOptions::new();
+    let diff = repo
+        .diff_tree_to_tree(Some(&merge_base_tree), Some(&head_tree), Some(&mut opts))
+        .map_err(|e| AbundioError::Git(format!("diff tree to tree: {e}")))?;
+    diff_to_changed_files(&diff, "against_base")
+}
+
+/// How many **Commits** rows are sent. The Ahead count past this is still
+/// reported in `CommitHistory::ahead`, never silently dropped.
+pub const COMMIT_HISTORY_CAP: usize = 200;
+
+/// The **Commits** section's list for the Workspace at `cwd`: every Ahead
+/// commit (`git log <base>..HEAD`), then the Shared history (`git log
+/// <merge-base>`), newest first and `COMMIT_HISTORY_CAP` rows in all. Merge
+/// commits are listed along with the commits they brought in, as `git log`
+/// does.
+///
+/// Two walks rather than one `git log HEAD` split at a line: a branch that
+/// has merged its base in has Ahead and Shared commits interleaved in plain
+/// log order, and no single divider could separate them. The Shared walk
+/// starts at the merge-base, so it is the base *as the branch last saw it* —
+/// base commits the branch does not contain are never listed.
+///
+/// A base that cannot be resolved (no default branch, a deleted or mistyped
+/// base, unrelated histories) is not an error: the list is HEAD's history
+/// with `base: None` and nothing marked Shared.
+pub fn compute_commit_history_sync(
+    cwd: &str,
+    base_branch: Option<String>,
+) -> Result<CommitHistory, AbundioError> {
+    let repo = open_repo(cwd)?;
+    let github = github_remote(&repo);
+    // An unborn branch has no commits at all.
+    let Ok(head) = repo.head().and_then(|h| h.peel_to_commit()) else {
+        return Ok(CommitHistory {
+            base: resolve_base_branch(&repo, cwd, base_branch).ok(),
+            ahead: 0,
+            commits: Vec::new(),
+            github_slug: github.map(|(_, slug)| slug),
+        });
+    };
+    // (name, tip, merge-base), or None — every step is allowed to fail.
+    let base = resolve_base_branch(&repo, cwd, base_branch)
+        .ok()
+        .and_then(|name| {
+            let tip = resolve_base_oid(&repo, &name).ok()?;
+            let merge_base = repo.merge_base(head.id(), tip).ok()?;
+            Some((name, tip, merge_base))
+        });
+
+    // The scheduler calls this on every fs event, and the Ahead walk reads
+    // the whole `base..HEAD` range — thousands of commits when the local base
+    // branch has not been pulled in months. The answer depends only on HEAD,
+    // the base, and the GitHub remote and where its tracking refs point (for
+    // `on_remote`), so it is recomputed only when one of those has moved.
+    let cache_key = format!(
+        "{}\n{:?}\n{:?}\n{:016x}",
+        head.id(),
+        base,
+        github,
+        github
+            .as_ref()
+            .map(|(remote, _)| remote_refs_fingerprint(&repo, remote))
+            .unwrap_or(0)
+    );
+    let cache_slot = repo.path().to_string_lossy().to_string();
+    if let Some(hit) = commit_history_cache().get(&cache_slot) {
+        if hit.0 == cache_key {
+            return Ok(hit.1.clone());
+        }
+    }
+
+    let walk_err = |e: git2::Error| AbundioError::Git(format!("revwalk: {e}"));
+    // (oid, shared)
+    let mut rows: Vec<(Oid, bool)> = Vec::new();
+    let mut ahead = 0;
+
+    match &base {
+        Some((_, tip, merge_base)) => {
+            // Ahead: bounded by the range, so topological order is affordable.
+            let mut walk = repo.revwalk().map_err(walk_err)?;
+            walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)
+                .map_err(walk_err)?;
+            walk.push(head.id()).map_err(walk_err)?;
+            walk.hide(*tip).map_err(walk_err)?;
+            for oid in walk.flatten() {
+                ahead += 1;
+                if rows.len() < COMMIT_HISTORY_CAP {
+                    rows.push((oid, false));
+                }
+            }
+            push_history(&repo, *merge_base, true, &mut rows)?;
+        }
+        None => push_history(&repo, head.id(), false, &mut rows)?,
+    }
+
+    // `None` — no GitHub remote, or the walk failed — means nothing counts as
+    // pushed, which only ever disables "Open on GitHub".
+    let pushed = github.as_ref().and_then(|(remote, _)| {
+        let shown: std::collections::HashSet<Oid> = rows.iter().map(|(o, _)| *o).collect();
+        pushed_among(&repo, head.id(), remote, &shown)
+    });
+    let commits = rows
+        .into_iter()
+        .filter_map(|(oid, shared)| Some((repo.find_commit(oid).ok()?, shared)))
+        .map(|(c, shared)| {
+            let author = c.author();
+            HistoryCommit {
+                oid: c.id().to_string(),
+                subject: c.summary().unwrap_or("").to_string(),
+                message: c.message().unwrap_or("").trim_end().to_string(),
+                author_name: author.name().unwrap_or("").to_string(),
+                author_email: author.email().unwrap_or("").to_string(),
+                time: author.when().seconds(),
+                is_merge: c.parent_count() > 1,
+                shared,
+                on_remote: pushed.as_ref().is_some_and(|p| p.contains(&c.id())),
+            }
+        })
+        .collect();
+    let result = CommitHistory {
+        base: base.map(|(name, _, _)| name),
+        ahead,
+        commits,
+        github_slug: github.map(|(_, slug)| slug),
+    };
+    commit_history_cache().insert(cache_slot, (cache_key, result.clone()));
+    Ok(result)
+}
+
+/// Fill `rows` up to the cap with `from` and its ancestors, newest first.
+/// Time order only: a topological sort would read the whole history before
+/// yielding the first commit, and this walk has no range to bound it.
+fn push_history(
+    repo: &Repository,
+    from: Oid,
+    shared: bool,
+    rows: &mut Vec<(Oid, bool)>,
+) -> Result<(), AbundioError> {
+    if rows.len() >= COMMIT_HISTORY_CAP {
+        return Ok(());
+    }
+    let walk_err = |e: git2::Error| AbundioError::Git(format!("revwalk: {e}"));
+    let mut walk = repo.revwalk().map_err(walk_err)?;
+    walk.set_sorting(git2::Sort::TIME).map_err(walk_err)?;
+    walk.push(from).map_err(walk_err)?;
+    let room = COMMIT_HISTORY_CAP - rows.len();
+    let batch: Vec<Oid> = walk.flatten().take(room).collect();
+    rows.extend(children_first(repo, batch).into_iter().map(|o| (o, shared)));
+    Ok(())
+}
+
+/// Reorder a time-sorted batch so no commit comes before one of its children
+/// in the batch. Time order alone cannot promise that: commits made in the
+/// same second (a scripted series, a fast rebase) tie, and a tie may list the
+/// parent first. Stable — among commits free to go next, the one earliest in
+/// time order goes — so this only ever moves a tied pair. A full topological
+/// walk would fix it too, but reads the whole history before the first row.
+fn children_first(repo: &Repository, batch: Vec<Oid>) -> Vec<Oid> {
+    use std::collections::{BTreeSet, HashMap};
+    let pos: HashMap<Oid, usize> = batch.iter().enumerate().map(|(i, o)| (*o, i)).collect();
+    // For each commit, how many of its children in the batch are still unplaced.
+    let mut waiting = vec![0usize; batch.len()];
+    let mut parents: Vec<Vec<usize>> = vec![Vec::new(); batch.len()];
+    for (i, oid) in batch.iter().enumerate() {
+        if let Ok(c) = repo.find_commit(*oid) {
+            for p in c.parent_ids() {
+                if let Some(&j) = pos.get(&p) {
+                    parents[i].push(j);
+                    waiting[j] += 1;
+                }
+            }
+        }
+    }
+    let mut ready: BTreeSet<usize> = (0..batch.len()).filter(|&i| waiting[i] == 0).collect();
+    let mut out = Vec::with_capacity(batch.len());
+    while let Some(i) = ready.pop_first() {
+        out.push(batch[i]);
+        for &j in &parents[i] {
+            waiting[j] -= 1;
+            if waiting[j] == 0 {
+                ready.insert(j);
+            }
+        }
+    }
+    out
+}
+
+/// Last `compute_commit_history_sync` answer per repository gitdir (a linked
+/// worktree has its own, since its HEAD differs), with the key it was
+/// computed for. One entry per repository, overwritten on change, so it
+/// cannot grow past the number of opened Workspaces.
+fn commit_history_cache() -> &'static DashMap<String, (String, CommitHistory)> {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<DashMap<String, (String, CommitHistory)>> = OnceLock::new();
+    CACHE.get_or_init(DashMap::new)
+}
+
+/// The one remote "Open on GitHub" links to: `(remote name, owner/repo)`.
+/// The first remote, `origin` first, whose URL is a GitHub repository — the
+/// same order `github_repo_slugs_in` uses. Choosing the remote here, beside
+/// the reachability check, keeps the link and the "is it pushed?" answer
+/// about the *same* repository; for a fork checkout, a commit pushed only to
+/// the other remote would otherwise link to a page that does not exist.
+fn github_remote(repo: &Repository) -> Option<(String, String)> {
+    let remotes = repo.remotes().ok()?;
+    let names = std::iter::once("origin").chain(
+        remotes
+            .iter()
+            .flatten()
+            .filter(|n| *n != "origin")
+            .collect::<Vec<_>>(),
+    );
+    for name in names {
+        let Ok(remote) = repo.find_remote(name) else {
+            continue;
+        };
+        let slug = [remote.url(), remote.pushurl()]
+            .into_iter()
+            .flatten()
+            .find_map(parse_github_slug);
+        if let Some(slug) = slug {
+            return Some((name.to_string(), slug));
+        }
+    }
+    None
+}
+
+/// A hash of the remote's tracking refs and the commits they point at.
+/// Changes when a fetch or push moves one, which is when `on_remote` can.
+/// A hash, not the list itself: this runs on every refresh, and a busy
+/// clone can carry thousands of remote refs. A collision costs at most one
+/// stale list until the next change.
+fn remote_refs_fingerprint(repo: &Repository, remote: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut pairs: Vec<(String, Oid)> = Vec::new();
+    if let Ok(refs) = repo.references_glob(&format!("refs/remotes/{remote}/*")) {
+        for r in refs.flatten() {
+            if let (Some(name), Some(target)) = (r.name(), r.target()) {
+                pairs.push((name.to_string(), target));
+            }
+        }
+    }
+    pairs.sort();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    pairs.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Past this many unpushed commits the answer is given up on (and every row
+/// counts as unpushed). A never-fetched clone has *all* of history unpushed;
+/// this keeps that case from walking it on every refresh.
+const UNPUSHED_WALK_LIMIT: usize = 5_000;
+
+/// Which of `shown` some tracking ref of `remote` reaches. Walks HEAD with the
+/// remote's refs hidden, which yields exactly the unpushed commits — normally
+/// a handful. `None` when the walk cannot be set up or hits the limit; the
+/// caller then treats every commit as unpushed, which can only ever disable
+/// "Open on GitHub", never wrongly enable it.
+fn pushed_among(
+    repo: &Repository,
+    head: Oid,
+    remote: &str,
+    shown: &std::collections::HashSet<Oid>,
+) -> Option<std::collections::HashSet<Oid>> {
+    let mut walk = repo.revwalk().ok()?;
+    walk.push(head).ok()?;
+    let mut any_ref = false;
+    if let Ok(refs) = repo.references_glob(&format!("refs/remotes/{remote}/*")) {
+        for r in refs.flatten() {
+            // `origin/HEAD` is symbolic; its target is hidden on its own.
+            if let Some(target) = r.target() {
+                // A ref to a missing object fails to hide; skipping it can
+                // only leave a commit counted as unpushed.
+                any_ref |= walk.hide(target).is_ok();
+            }
+        }
+    }
+    // Nothing fetched from this remote: nothing is on it.
+    if !any_ref {
+        return Some(Default::default());
+    }
+    let mut unpushed = std::collections::HashSet::new();
+    for oid in walk.flatten() {
+        if unpushed.len() >= UNPUSHED_WALK_LIMIT {
+            return None;
+        }
+        unpushed.insert(oid);
+    }
+    Some(shown.difference(&unpushed).copied().collect())
+}
+
+fn find_commit_by_hex<'r>(
+    repo: &'r Repository,
+    oid: &str,
+) -> Result<git2::Commit<'r>, AbundioError> {
+    let oid = Oid::from_str(oid).map_err(|e| AbundioError::Git(format!("bad commit id: {e}")))?;
+    repo.find_commit(oid)
+        .map_err(|e| AbundioError::Git(format!("find commit: {e}")))
+}
+
+/// The trees a commit is measured between: its first parent (none for a root
+/// commit) and itself. First parent is what `git show` and GitHub use, and for
+/// a merge it answers "what did the merge bring into this branch".
+fn commit_trees<'r>(
+    commit: &git2::Commit<'r>,
+) -> Result<(Option<git2::Tree<'r>>, git2::Tree<'r>), AbundioError> {
+    let tree = commit
+        .tree()
+        .map_err(|e| AbundioError::Git(format!("commit tree: {e}")))?;
+    let parent_tree = match commit.parent(0) {
+        Ok(p) => Some(
+            p.tree()
+                .map_err(|e| AbundioError::Git(format!("parent tree: {e}")))?,
+        ),
+        Err(_) => None,
+    };
+    Ok((parent_tree, tree))
+}
+
+pub fn commit_files_sync(cwd: &str, oid: &str) -> Result<Vec<CommitFile>, AbundioError> {
+    let repo = open_repo(cwd)?;
+    let commit = find_commit_by_hex(&repo, oid)?;
+    let (parent_tree, tree) = commit_trees(&commit)?;
+    let mut opts = DiffOptions::new();
+    let diff = repo
+        .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut opts))
+        .map_err(|e| AbundioError::Git(format!("diff commit: {e}")))?;
+    // The side that holds the path: the commit, or the parent for a delete.
+    let entry = |path: &str| {
+        [Some(&tree), parent_tree.as_ref()]
+            .into_iter()
+            .flatten()
+            .find_map(|t| t.get_path(Path::new(path)).ok())
+    };
+    let mut files: Vec<CommitFile> = diff_to_changed_files(&diff, "commit")?
+        .into_iter()
+        .map(|f| {
+            let e = entry(&f.path);
+            // Mode 160000: a gitlink. Its id names a commit in another
+            // repository, so there is no blob here to read or test.
+            let is_submodule = e.as_ref().is_some_and(|e| e.filemode() == 0o160000);
+            let is_binary = !is_submodule
+                && e.and_then(|e| repo.find_blob(e.id()).ok())
+                    .is_some_and(|b| b.is_binary());
+            (f, is_binary, is_submodule)
+        })
+        .map(|(f, is_binary, is_submodule)| CommitFile {
+            is_binary,
+            is_submodule,
+            path: f.path,
+            status: f.status,
+            additions: f.additions,
+            deletions: f.deletions,
+        })
+        .collect();
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
+}
+
+/// `(original, modified)` for one path in one commit. A side where the path
+/// does not exist (added, deleted, root commit) is the empty string, matching
+/// `git_file_diff`.
+pub fn commit_file_diff_sync(
+    cwd: &str,
+    oid: &str,
+    file_path: &str,
+) -> Result<(String, String), AbundioError> {
+    let repo = open_repo(cwd)?;
+    let commit = find_commit_by_hex(&repo, oid)?;
+    let (parent_tree, tree) = commit_trees(&commit)?;
+    let read = |tree: &git2::Tree| -> String {
+        tree.get_path(Path::new(file_path))
+            .ok()
+            .and_then(|e| repo.find_blob(e.id()).ok())
+            .map(|b| String::from_utf8_lossy(b.content()).to_string())
+            .unwrap_or_default()
+    };
+    let original = parent_tree.as_ref().map(read).unwrap_or_default();
+    Ok((original, read(&tree)))
+}
+
+fn diff_staged(repo: &Repository) -> Result<Vec<GitChangedFile>, AbundioError> {
+    let head_tree = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
+    let mut opts = DiffOptions::new();
+    let diff = repo
+        .diff_tree_to_index(head_tree.as_ref(), None, Some(&mut opts))
+        .map_err(|e| AbundioError::Git(format!("diff tree to index: {e}")))?;
+    diff_to_changed_files(&diff, "staged")
+}
+
+fn diff_unstaged(repo: &Repository) -> Result<Vec<GitChangedFile>, AbundioError> {
+    let mut opts = DiffOptions::new();
+    let diff = repo
+        .diff_index_to_workdir(None, Some(&mut opts))
+        .map_err(|e| AbundioError::Git(format!("diff index to workdir: {e}")))?;
+    diff_to_changed_files(&diff, "unstaged")
+}
+
+fn diff_to_changed_files(
+    diff: &Diff,
+    section: &str,
+) -> Result<Vec<GitChangedFile>, AbundioError> {
+    // Build file list from deltas first, then attach per-file line stats
+    // via patch iteration. Two passes keeps the code simple and matches
+    // the structure of the previous `git diff --name-status` + `--numstat`
+    // pair the subprocess version used.
+    let mut by_path: HashMap<String, GitChangedFile> = HashMap::new();
+
+    let count = diff.deltas().count();
+    for i in 0..count {
+        let delta = match diff.get_delta(i) {
+            Some(d) => d,
+            None => continue,
+        };
+        let path = delta
+            .new_file()
+            .path()
+            .or_else(|| delta.old_file().path())
+            .and_then(|p| p.to_str())
+            .map(String::from)
+            .unwrap_or_default();
+        if path.is_empty() {
+            continue;
+        }
+        let status = delta_status_char(delta.status());
+
+        let (additions, deletions) = match git2::Patch::from_diff(diff, i) {
+            Ok(Some(patch)) => match patch.line_stats() {
+                Ok((_ctx, adds, dels)) => (adds as i32, dels as i32),
+                Err(_) => (0, 0),
+            },
+            _ => (0, 0),
+        };
+
+        by_path.insert(
+            path.clone(),
+            GitChangedFile {
+                path,
+                status,
+                additions,
+                deletions,
+                section: section.to_string(),
+            },
+        );
+    }
+
+    Ok(by_path.into_values().collect())
+}
+
+fn delta_status_char(status: Delta) -> String {
+    match status {
+        Delta::Added => "A",
+        Delta::Deleted => "D",
+        Delta::Modified => "M",
+        Delta::Renamed => "R",
+        Delta::Copied => "C",
+        Delta::Typechange => "T",
+        Delta::Unmodified => " ",
+        Delta::Ignored => "!",
+        Delta::Untracked => "?",
+        Delta::Unreadable => "X",
+        Delta::Conflicted => "U",
+    }
+    .to_string()
+}
+
+/// Read a file's contents at a specific git tree-ish (HEAD, a branch name,
+/// or a tag — anything `refname_to_id` can resolve). Returns the blob as a
+/// UTF-8-lossy string, matching the existing `git show <rev>:<path>` behavior
+/// that `git_file_diff` relied on. Returns empty string on any error or
+/// non-existent path, mirroring the old `.unwrap_or_default()` semantics.
+pub fn file_blob_at_rev(cwd: &str, rev: &str, file_path: &str) -> String {
+    let Ok(repo) = open_repo(cwd) else {
+        return String::new();
+    };
+    blob_string_at_commit(&repo, rev, file_path).unwrap_or_default()
+}
+
+fn blob_string_at_commit(
+    repo: &Repository,
+    rev: &str,
+    file_path: &str,
+) -> Option<String> {
+    let oid = repo
+        .refname_to_id(&format!("refs/heads/{}", rev))
+        .or_else(|_| repo.refname_to_id(&format!("refs/remotes/origin/{}", rev)))
+        .or_else(|_| repo.revparse_single(rev).map(|o| o.id()))
+        .ok()?;
+    let commit = repo.find_commit(oid).ok()?;
+    let tree = commit.tree().ok()?;
+    let entry = tree.get_path(std::path::Path::new(file_path)).ok()?;
+    let blob = repo.find_blob(entry.id()).ok()?;
+    Some(String::from_utf8_lossy(blob.content()).to_string())
+}
+
+/// Read a file's contents from the git index (the staged content).
+/// Equivalent to `git show :<path>`. Returns empty string on any error.
+pub fn file_blob_at_index(cwd: &str, file_path: &str) -> String {
+    let Ok(repo) = open_repo(cwd) else {
+        return String::new();
+    };
+    blob_string_at_index(&repo, file_path).unwrap_or_default()
+}
+
+/// Read a path's blob from index **stage 0** (the ordinary, merged entry).
+///
+/// Stage 0 is intentional: this backs the staged/unstaged diffs, which are only
+/// meaningful for a merged path. An unmerged path has no stage 0 and correctly
+/// yields `None` here — see `blob_string_at_stage` for the conflict stages.
+fn blob_string_at_index(repo: &Repository, file_path: &str) -> Option<String> {
+    let index = repo.index().ok()?;
+    let entry = index.get_path(std::path::Path::new(file_path), 0)?;
+    let blob = repo.find_blob(entry.id).ok()?;
+    Some(String::from_utf8_lossy(blob.content()).to_string())
+}
+
+/// Enumerate every local and remote branch with shortname formatting,
+/// matching `git branch -a --format=%(refname:short)`.
+pub fn list_branches(cwd: &str) -> Result<Vec<String>, AbundioError> {
+    let repo = open_repo(cwd)?;
+    let mut out = Vec::new();
+    for kind in [git2::BranchType::Local, git2::BranchType::Remote] {
+        let iter = repo
+            .branches(Some(kind))
+            .map_err(|e| AbundioError::Git(format!("branches: {e}")))?;
+        for entry in iter.flatten() {
+            let (branch, _) = entry;
+            if let Ok(Some(name)) = branch.name() {
+                out.push(name.to_string());
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Cheap "is this a git repo?" check. Used by `ensure_git_repo` after a
+/// canonicalized-path cache miss; mirrors the original `git rev-parse
+/// --git-dir` exit-status check.
+pub fn is_git_repo(cwd: &str) -> bool {
+    Repository::discover(cwd).is_ok()
+}
+
+/// True if any remote's fetch or push URL points to github.com. Used by
+/// `gh_status` to decide whether to show the PR panel. Purely local — reads
+/// the repo's configured remotes, no network.
+pub fn has_github_remote(cwd: &str) -> bool {
+    let Ok(repo) = open_repo(cwd) else {
+        return false;
+    };
+    let Ok(remotes) = repo.remotes() else {
+        return false;
+    };
+    remotes.iter().flatten().any(|name| {
+        repo.find_remote(name).is_ok_and(|remote| {
+            [remote.url(), remote.pushurl()]
+                .into_iter()
+                .flatten()
+                .any(url_is_github)
+        })
+    })
+}
+
+fn url_is_github(url: &str) -> bool {
+    url.contains("github.com/") || url.contains("github.com:")
+}
+
+/// The GitHub `owner/repo` ("nameWithOwner") for this workspace, or None if it
+/// has no github remote. Prefers `origin`, falling back to any github remote.
+/// Purely local — reads the configured remotes, no network. Used for the
+/// client-side All-vs-Repo PR filter (see ADR-0019); replaces the prior
+/// `has_github_remote` signal with the actual repo identity the filter needs.
+pub fn github_repo_slug(cwd: &str) -> Option<String> {
+    github_repo_slugs(cwd).into_iter().next()
+}
+
+/// Every GitHub `owner/repo` this workspace's remotes point at, deduplicated
+/// and in remote order (`origin` first when present). Purely local — reads the
+/// configured remotes, no network.
+///
+/// Keeping *all* of them is what lets the Profile scope match a fork: a
+/// checkout whose `origin` is `me/foo` and `upstream` is `acme/foo` contributes
+/// both, and GitHub reports a PR against the base repo. The Repo scope's
+/// `github_repo_slug` is the head of this same list, so the two filters can
+/// never disagree about which remote counts as the repo identity. See ADR-0028.
+pub fn github_repo_slugs(cwd: &str) -> Vec<String> {
+    match open_repo(cwd) {
+        Ok(repo) => github_repo_slugs_in(&repo),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// `github_repo_slugs` against an already-open repository.
+pub fn github_repo_slugs_in(repo: &Repository) -> Vec<String> {
+    let Ok(remotes) = repo.remotes() else {
+        return Vec::new();
+    };
+
+    // `origin` first, then the rest in git's order.
+    let names: Vec<String> = std::iter::once("origin".to_string())
+        .chain(
+            remotes
+                .iter()
+                .flatten()
+                .filter(|n| *n != "origin")
+                .map(str::to_string),
+        )
+        .collect();
+
+    let mut slugs: Vec<String> = Vec::new();
+    for name in names {
+        let Ok(remote) = repo.find_remote(&name) else {
+            continue;
+        };
+        for slug in [remote.url(), remote.pushurl()]
+            .into_iter()
+            .flatten()
+            .filter_map(parse_github_slug)
+        {
+            if !slugs.contains(&slug) {
+                slugs.push(slug);
+            }
+        }
+    }
+    slugs
+}
+
+/// Parse `owner/repo` from a github.com remote URL (HTTPS or SSH forms),
+/// stripping a trailing `.git`. Returns None for non-github URLs or anything
+/// that isn't exactly `owner/repo`.
+fn parse_github_slug(url: &str) -> Option<String> {
+    let rest = url
+        .strip_prefix("https://github.com/")
+        .or_else(|| url.strip_prefix("http://github.com/"))
+        .or_else(|| url.strip_prefix("ssh://git@github.com/"))
+        .or_else(|| url.strip_prefix("git@github.com:"))?;
+    let rest = rest.strip_suffix(".git").unwrap_or(rest);
+    let rest = rest.trim_end_matches('/');
+    let mut parts = rest.splitn(3, '/');
+    let owner = parts.next().filter(|s| !s.is_empty())?;
+    let name = parts.next().filter(|s| !s.is_empty())?;
+    Some(format!("{}/{}", owner, name))
+}
+
+
+/// One worktree of a repository, as surfaced to the frontend for grouping,
+/// expansion-on-create, and the Add/Remove flows.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeEntry {
+    /// Canonicalized worktree root folder.
+    pub path: String,
+    /// Checked-out branch shorthand, or None if detached/unborn/missing.
+    pub branch: Option<String>,
+    /// True for the repository's main worktree (the Primary worktree).
+    pub is_primary: bool,
+    /// Whether the worktree's folder still exists on disk. A git-tracked
+    /// worktree whose folder is gone (`exists: false`) is "prunable" — present
+    /// here so the frontend can distinguish a stale folder (keep, render stale)
+    /// from a git-confirmed removal (entry absent entirely → safe to delete).
+    pub exists: bool,
+}
+
+#[cfg(test)]
+mod slug_tests {
+    use super::parse_github_slug;
+
+    #[test]
+    fn parses_https_with_and_without_git_suffix() {
+        assert_eq!(
+            parse_github_slug("https://github.com/org/repo.git").as_deref(),
+            Some("org/repo")
+        );
+        assert_eq!(
+            parse_github_slug("https://github.com/org/repo").as_deref(),
+            Some("org/repo")
+        );
+    }
+
+    #[test]
+    fn parses_ssh_forms() {
+        assert_eq!(
+            parse_github_slug("git@github.com:org/repo.git").as_deref(),
+            Some("org/repo")
+        );
+        assert_eq!(
+            parse_github_slug("ssh://git@github.com/org/repo").as_deref(),
+            Some("org/repo")
+        );
+    }
+
+    #[test]
+    fn rejects_non_github_and_malformed() {
+        assert_eq!(parse_github_slug("https://gitlab.com/org/repo.git"), None);
+        assert_eq!(parse_github_slug("https://github.com/org"), None);
+        assert_eq!(parse_github_slug("git@github.com:"), None);
+    }
+}
+
+/// Current branch shortname, or None when this isn't a repo or HEAD can't be
+/// resolved at all. Used by `compute_workspace_git_summary` to drive the
+/// sidebar branch chip and the status bar segment.
+///
+/// Shares `head_branch_name` with `compute_branch_info_sync` so the two paths
+/// agree on every HEAD state — in particular an unborn HEAD reports its
+/// intended branch from both, rather than `"HEAD"` from one and `None` from
+/// the other.
+pub fn current_branch_only(cwd: &str) -> Option<String> {
+    current_branch_only_in(&Repository::discover(cwd).ok()?)
+}
+
+/// `current_branch_only` against an already-open repository — lets the batch
+/// workspace summary pay for one `discover` per workspace instead of three.
+pub fn current_branch_only_in(repo: &Repository) -> Option<String> {
+    head_branch_name(repo)
+}
+
+/// Public wrapper around the cached default-branch detection. The cache
+/// itself lives in `git_commands.rs` (alongside the public commands that
+/// use it); this function does the lookup against libgit2 refs without
+/// touching that cache.
+pub fn detect_default_branch_uncached(cwd: &str) -> Result<String, AbundioError> {
+    let repo = open_repo(cwd)?;
+    if let Ok(reference) = repo.find_reference("refs/remotes/origin/HEAD") {
+        if let Some(target) = reference.symbolic_target() {
+            if let Some(name) = target.strip_prefix("refs/remotes/origin/") {
+                if !name.is_empty() {
+                    return Ok(name.to_string());
+                }
+            }
+        }
+    }
+    if repo.find_reference("refs/heads/main").is_ok() {
+        return Ok("main".to_string());
+    }
+    if repo.find_reference("refs/heads/master").is_ok() {
+        return Ok("master".to_string());
+    }
+    Err(AbundioError::Git("No default branch found".to_string()))
+}
+
+// ── Worktrees ──
+//
+// git2 0.19 does NOT bind `git_repository_commondir`, so the key shared by
+// all worktrees of one repository is derived from `repo.path()`:
+//   - main worktree:   path() = <main>/.git                    → key = <main>/.git
+//   - linked worktree: path() = <main>/.git/worktrees/<name>   → strip 2 = <main>/.git
+// This relies on git's standard on-disk worktree layout. See ADR-0017.
+
+fn canonicalize_lossy(p: &Path) -> String {
+    std::fs::canonicalize(p)
+        .map(|c| strip_verbatim_prefix(&c.to_string_lossy()))
+        .unwrap_or_else(|_| p.to_string_lossy().to_string())
+}
+
+/// Strip Windows' `\\?\` verbatim (extended-length) prefix that
+/// `std::fs::canonicalize` adds on Windows. The rest of the app stores
+/// unprefixed roots (from the folder picker), so without this the same folder
+/// compares unequal — e.g. the main worktree shows up twice in the sidebar.
+/// `\\?\UNC\server\share` → `\\server\share`; `\\?\C:\x` → `C:\x`. No-op on
+/// POSIX, where paths never carry the prefix.
+fn strip_verbatim_prefix(s: &str) -> String {
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+/// The common git dir shared by every worktree of a repository, derived from
+/// the opened repo's gitdir. `None` only if the path has no parents.
+fn common_git_dir(repo: &Repository) -> Option<PathBuf> {
+    let gitdir = repo.path();
+    if repo.is_worktree() {
+        // Prefer git's authoritative `commondir` pointer file — it handles
+        // `--separate-git-dir`, submodules, and other non-standard layouts that
+        // the `worktrees/<name>` strip below would group wrong. The file holds a
+        // path (usually relative to the gitdir) to the common dir.
+        if let Ok(contents) = std::fs::read_to_string(gitdir.join("commondir")) {
+            let trimmed = contents.trim();
+            if !trimmed.is_empty() {
+                let p = Path::new(trimmed);
+                return Some(if p.is_absolute() {
+                    p.to_path_buf()
+                } else {
+                    gitdir.join(p)
+                });
+            }
+        }
+        // Fallback for the standard layout: strip the trailing `worktrees/<name>`.
+        gitdir.parent()?.parent().map(|p| p.to_path_buf())
+    } else {
+        Some(gitdir.to_path_buf())
+    }
+}
+
+/// The facts the sidebar needs to group worktrees: a stable per-repository key,
+/// whether this folder is the repository's main (primary) worktree, and the
+/// worktree's *canonical* root. The canonical root lets the live-sync reconciler
+/// compare a workspace against `list_repo_worktrees` output (also canonical)
+/// without a symlink mismatch silently deleting it. See ADR-0017.
+pub struct WorktreeSummaryBits {
+    pub group_key: Option<String>,
+    pub is_main_worktree: bool,
+    pub canonical_root: Option<String>,
+}
+
+pub fn worktree_summary_bits(cwd: &str) -> WorktreeSummaryBits {
+    match Repository::discover(cwd) {
+        Ok(repo) => worktree_summary_bits_in(&repo),
+        Err(_) => WorktreeSummaryBits {
+            group_key: None,
+            is_main_worktree: false,
+            canonical_root: None,
+        },
+    }
+}
+
+/// `worktree_summary_bits` against an already-open repository.
+pub fn worktree_summary_bits_in(repo: &Repository) -> WorktreeSummaryBits {
+    WorktreeSummaryBits {
+        group_key: common_git_dir(repo).map(|p| canonicalize_lossy(&p)),
+        is_main_worktree: !repo.is_worktree() && !repo.is_bare() && repo.workdir().is_some(),
+        canonical_root: repo.workdir().map(canonicalize_lossy),
+    }
+}
+
+fn head_shorthand(cwd: &Path) -> Option<String> {
+    Repository::discover(cwd)
+        .ok()?
+        .head()
+        .ok()?
+        .shorthand()
+        .map(String::from)
+}
+
+/// Open the MAIN repository from any worktree's cwd (so `worktrees()` and
+/// `workdir()` reflect the whole repo, not just the linked tree we're in).
+fn open_main_repo(cwd: &str) -> Result<Repository, AbundioError> {
+    let repo = open_repo(cwd)?;
+    let common = common_git_dir(&repo)
+        .ok_or_else(|| AbundioError::Git("cannot resolve common git dir".into()))?;
+    Repository::open(&common).map_err(|e| AbundioError::Git(format!("open main repo: {e}")))
+}
+
+/// Enumerate all worktrees of the repository `cwd` belongs to: the main
+/// worktree (unless bare) first as primary, then every linked worktree whose
+/// folder still exists on disk. Each entry carries its checked-out branch.
+pub fn list_repo_worktrees(cwd: &str) -> Result<Vec<WorktreeEntry>, AbundioError> {
+    let main_repo = open_main_repo(cwd)?;
+    let mut entries = Vec::new();
+
+    if let Some(workdir) = main_repo.workdir() {
+        entries.push(WorktreeEntry {
+            path: canonicalize_lossy(workdir),
+            branch: head_shorthand(workdir),
+            is_primary: true,
+            exists: workdir.exists(),
+        });
+    }
+
+    if let Ok(names) = main_repo.worktrees() {
+        for name in names.iter().flatten() {
+            let Ok(wt) = main_repo.find_worktree(name) else {
+                continue;
+            };
+            let wt_path = wt.path();
+            // Include git-tracked worktrees even when their folder is gone (the
+            // frontend uses `exists` to tell stale-folder from real removal).
+            let exists = wt_path.exists();
+            entries.push(WorktreeEntry {
+                path: canonicalize_lossy(wt_path),
+                branch: if exists { head_shorthand(wt_path) } else { None },
+                is_primary: false,
+                exists,
+            });
+        }
+    }
+
+    Ok(entries)
+}
+
+/// Sanitize a folder path into a git worktree admin name (basename, unique key
+/// in `.git/worktrees/`). Falls back to "worktree" if no basename.
+fn worktree_name_for(path: &Path) -> String {
+    path.file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "worktree".to_string())
+}
+
+/// Resolve the branch the new worktree should check out, creating it when
+/// needed. Returns the reference plus whether we created a branch (so the
+/// caller can roll it back if the worktree add then fails).
+fn resolve_worktree_branch<'r>(
+    main_repo: &'r Repository,
+    branch: &str,
+) -> Result<(Reference<'r>, bool), AbundioError> {
+    if let Ok(b) = main_repo.find_branch(branch, BranchType::Local) {
+        // Existing local branch — git refuses to check it out if it's already
+        // checked out in another worktree, surfaced as the add error.
+        return Ok((
+            b.into_reference(),
+            false,
+        ));
+    }
+    if let Ok(remote_b) = main_repo.find_branch(&format!("origin/{branch}"), BranchType::Remote) {
+        // Exists only on the remote — create a local tracking branch.
+        let commit = remote_b
+            .get()
+            .peel_to_commit()
+            .map_err(|e| AbundioError::Git(format!("peel origin/{branch}: {e}")))?;
+        let mut local = main_repo
+            .branch(branch, &commit, false)
+            .map_err(|e| AbundioError::Git(format!("create tracking branch: {e}")))?;
+        let _ = local.set_upstream(Some(&format!("origin/{branch}")));
+        return Ok((local.into_reference(), true));
+    }
+    // New branch forked from the primary worktree's current HEAD. A repo with
+    // no commits (unborn HEAD, e.g. right after `git init`) has no commit to
+    // base a worktree on — git itself can't do this — so surface a clear,
+    // actionable message instead of the raw libgit2 "reference not found".
+    let head = main_repo.head().map_err(|e| {
+        if e.code() == ErrorCode::UnbornBranch {
+            AbundioError::Git(
+                "this repository has no commits yet — make an initial commit before adding a worktree"
+                    .to_string(),
+            )
+        } else {
+            AbundioError::Git(format!("primary HEAD: {e}"))
+        }
+    })?;
+    let head_commit = head
+        .peel_to_commit()
+        .map_err(|e| AbundioError::Git(format!("primary HEAD commit: {e}")))?;
+    let b = main_repo
+        .branch(branch, &head_commit, false)
+        .map_err(|e| AbundioError::Git(format!("create branch '{branch}': {e}")))?;
+    Ok((b.into_reference(), true))
+}
+
+/// Create a new worktree of the repository at `path`, checking out `branch`
+/// (created from the primary's HEAD when it doesn't exist). `path` must be an
+/// absolute, non-existent folder; its parent is created if missing.
+pub fn add_worktree(
+    primary_cwd: &str,
+    branch: &str,
+    path: &str,
+) -> Result<WorktreeEntry, AbundioError> {
+    let main_repo = open_main_repo(primary_cwd)?;
+
+    let target = Path::new(path);
+    if target.exists() {
+        return Err(AbundioError::Git(format!(
+            "target folder already exists: {path}"
+        )));
+    }
+
+    // Resolve the branch before touching the filesystem so a failure here (e.g.
+    // a commitless repo's unborn HEAD) doesn't leave an empty `.worktrees` dir
+    // behind.
+    let (branch_ref, created_branch) = resolve_worktree_branch(&main_repo, branch)?;
+
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(AbundioError::Io)?;
+    }
+
+    let name = worktree_name_for(target);
+    let mut opts = WorktreeAddOptions::new();
+    opts.reference(Some(&branch_ref));
+
+    if let Err(e) = main_repo.worktree(&name, target, Some(&opts)) {
+        // Roll back a branch we created so a retry isn't blocked by it.
+        if created_branch {
+            if let Ok(mut b) = main_repo.find_branch(branch, BranchType::Local) {
+                let _ = b.delete();
+            }
+        }
+        // Best-effort: remove the parent dir we may have created above.
+        // `remove_dir` only succeeds when empty, so a pre-existing populated
+        // `<repo>.worktrees/` (other worktrees) is left untouched.
+        if let Some(parent) = target.parent() {
+            let _ = std::fs::remove_dir(parent);
+        }
+        return Err(AbundioError::Git(format!("worktree add: {e}")));
+    }
+
+    Ok(WorktreeEntry {
+        path: canonicalize_lossy(target),
+        branch: Some(branch.to_string()),
+        is_primary: false,
+        exists: true,
+    })
+}
+
+/// Remove the worktree whose folder is `worktree_path`: deletes the folder and
+/// prunes git's admin link. The branch is left intact. Errors (without forcing)
+/// if the worktree is locked.
+pub fn remove_worktree(primary_cwd: &str, worktree_path: &str) -> Result<(), AbundioError> {
+    let main_repo = open_main_repo(primary_cwd)?;
+    let target = canonicalize_lossy(Path::new(worktree_path));
+
+    let names = main_repo
+        .worktrees()
+        .map_err(|e| AbundioError::Git(format!("worktrees: {e}")))?;
+    for name in names.iter().flatten() {
+        let Ok(wt) = main_repo.find_worktree(name) else {
+            continue;
+        };
+        if canonicalize_lossy(wt.path()) == target {
+            let mut opts = WorktreePruneOptions::new();
+            // valid: prune even though the worktree still exists.
+            // working_tree: actually delete the folder on disk.
+            // locked stays false → a locked worktree errors instead of force-prune.
+            opts.valid(true).working_tree(true);
+            wt.prune(Some(&mut opts))
+                .map_err(|e| AbundioError::Git(format!("prune worktree: {e}")))?;
+            return Ok(());
+        }
+    }
+    Err(AbundioError::NotFound(format!(
+        "worktree not found: {worktree_path}"
+    )))
+}
+
+/// True if the worktree at `cwd` has any staged or unstaged change, or an
+/// untracked file — used to escalate the Remove-worktree confirmation.
+pub fn worktree_is_dirty(cwd: &str) -> bool {
+    match open_repo(cwd) {
+        Ok(repo) => worktree_is_dirty_in(&repo),
+        Err(_) => false,
+    }
+}
+
+/// [`worktree_is_dirty`] on an already-open repository, so the batched
+/// workspace summary pays for one `Repository::discover` per workspace.
+///
+/// This is the definition of a **Dirty workspace** for a workspace the app has
+/// not opened, and for the Remove-worktree confirmation. An *opened* workspace's
+/// marker is derived instead by the frontend from `compute_changed_files_sync`
+/// rows (`lib/dirtyWorkspace.ts`) — a different computation for the same
+/// question, and nothing in the types keeps the two honest. The agreement is
+/// enforced by test (`dirtiness_agrees_between_the_status_walk_and_the_changed_file_sections`).
+pub fn worktree_is_dirty_in(repo: &Repository) -> bool {
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true)
+        .recurse_untracked_dirs(false)
+        .include_ignored(false);
+    let dirty = match repo.statuses(Some(&mut opts)) {
+        Ok(statuses) => statuses.iter().any(|s| {
+            s.status().intersects(
+                Status::WT_NEW
+                    | Status::WT_MODIFIED
+                    | Status::WT_DELETED
+                    | Status::WT_RENAMED
+                    | Status::WT_TYPECHANGE
+                    | Status::INDEX_NEW
+                    | Status::INDEX_MODIFIED
+                    | Status::INDEX_DELETED
+                    | Status::INDEX_RENAMED
+                    | Status::INDEX_TYPECHANGE
+                    | Status::CONFLICTED,
+            )
+        }),
+        Err(_) => false,
+    };
+    dirty
+}
+
+/// Cap on bytes read per untracked file when counting lines. Bounds the I/O on
+/// a refresh and avoids slurping a huge text blob; larger files under-count
+/// (acceptable — they're rare and usually binary anyway).
+const MAX_UNTRACKED_LINE_COUNT_BYTES: u64 = 1024 * 1024;
+
+/// Count the lines in a brand-new (untracked, not-yet-`git add`ed) file so it
+/// contributes its line count as additions — matching `git diff --numstat`'s
+/// treatment of a new file (the whole file is "+"). Returns 0 for directory
+/// entries, binary files, empty/unreadable files, or anything over the cap.
+fn count_untracked_additions(workdir: &std::path::Path, rel_path: &str) -> i32 {
+    use std::io::Read;
+    // With recurse_untracked_dirs(false), a new directory surfaces as a single
+    // entry ending in '/'. Counting its "lines" is meaningless (and would mean
+    // walking it), so skip — matches git's own per-file numstat.
+    if rel_path.ends_with('/') {
+        return 0;
+    }
+    let full = workdir.join(rel_path);
+    match std::fs::metadata(&full) {
+        Ok(m) if m.is_file() => {}
+        _ => return 0,
+    }
+    let Ok(file) = std::fs::File::open(&full) else {
+        return 0;
+    };
+    let mut buf = Vec::new();
+    if file
+        .take(MAX_UNTRACKED_LINE_COUNT_BYTES)
+        .read_to_end(&mut buf)
+        .is_err()
+        || buf.is_empty()
+    {
+        return 0;
+    }
+    // NUL byte ⇒ treat as binary (git reports no line stats for binaries).
+    if buf.contains(&0) {
+        return 0;
+    }
+    let newlines = buf.iter().filter(|&&b| b == b'\n').count();
+    // A non-empty final line with no trailing newline still counts as one line.
+    let trailing = i32::from(buf.last() != Some(&b'\n'));
+    newlines as i32 + trailing
+}
+
+fn untracked_files(repo: &Repository) -> Vec<GitChangedFile> {
+    let mut opts = StatusOptions::new();
+    // Don't recurse into untracked directories: a single un-gitignored tree
+    // (a fresh node_modules/ or target/) would make libgit2 walk every file
+    // beneath it before our MAX_UNTRACKED cap can break the loop — the cap only
+    // short-circuits the user-side iteration, not libgit2's enumeration. With
+    // recursion off, libgit2 surfaces the directory itself as one untracked
+    // entry (git's default `git status` behaviour), matching
+    // compute_status_fingerprint_sync. See PR #94 review.
+    opts.include_untracked(true)
+        .recurse_untracked_dirs(false)
+        .include_ignored(false);
+    let statuses = match repo.statuses(Some(&mut opts)) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let workdir = repo.workdir();
+    let mut files = Vec::new();
+    for status in statuses.iter() {
+        if !status.status().contains(Status::WT_NEW) {
+            continue;
+        }
+        if files.len() >= MAX_UNTRACKED {
+            break;
+        }
+        if let Some(path) = status.path() {
+            // A new file isn't in any tree/index yet, so the tree/index diffs
+            // above report nothing for it. Count its lines here so a freshly
+            // created file's code shows up in the change stats (and in agent
+            // Turn telemetry) instead of reading as 0 additions.
+            let additions = workdir
+                .map(|w| count_untracked_additions(w, path))
+                .unwrap_or(0);
+            files.push(GitChangedFile {
+                path: path.to_string(),
+                status: "?".to_string(),
+                additions,
+                deletions: 0,
+                section: "untracked".to_string(),
+            });
+        }
+    }
+    files
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn count_untracked_additions_handles_edge_cases() {
+        let dir = tempfile::tempdir().unwrap();
+        let w = dir.path();
+        std::fs::write(w.join("trailing.txt"), "a\nb\nc\n").unwrap();
+        std::fs::write(w.join("no_trailing.txt"), "x\ny").unwrap();
+        std::fs::write(w.join("empty.txt"), "").unwrap();
+        std::fs::write(w.join("binary.dat"), [0u8, 1, 2, b'\n', 3]).unwrap();
+        std::fs::create_dir(w.join("subdir")).unwrap();
+
+        // Trailing newline: 3 lines → 3 additions (git numstat semantics).
+        assert_eq!(count_untracked_additions(w, "trailing.txt"), 3);
+        // No trailing newline: the final non-empty line still counts.
+        assert_eq!(count_untracked_additions(w, "no_trailing.txt"), 2);
+        // Empty file: 0.
+        assert_eq!(count_untracked_additions(w, "empty.txt"), 0);
+        // Binary (NUL byte): no line stats, like git.
+        assert_eq!(count_untracked_additions(w, "binary.dat"), 0);
+        // Directory entry (untracked dir, recursion off → trailing slash): 0.
+        assert_eq!(count_untracked_additions(w, "subdir/"), 0);
+        // Missing path: 0.
+        assert_eq!(count_untracked_additions(w, "nope.txt"), 0);
+    }
+
+    #[test]
+    fn fresh_repo_resolves_default_branch_from_unborn_head() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_str().unwrap();
+        // A bare `init` leaves an unborn HEAD: no commits, no branch refs yet.
+        git2::Repository::init(dir.path()).unwrap();
+
+        // Branch info must still resolve (no "No default branch found"), so the
+        // GitScheduler can emit a success bundle the moment `git init` runs and
+        // the repo gets recognized instead of staying "Not a git repository".
+        let info = compute_branch_info_sync(path).expect("branch info for fresh repo");
+        assert!(!info.default_branch.is_empty());
+        // Changed-files must not error on the unborn repo either.
+        let files =
+            compute_changed_files_sync(path, None).expect("changed files for fresh repo");
+        assert!(files.is_empty());
+        // And it must register as a (main) git worktree for sidebar grouping.
+        let bits = worktree_summary_bits(path);
+        assert!(bits.group_key.is_some());
+        assert!(bits.is_main_worktree);
+    }
+
+    #[test]
+    fn unborn_head_reports_its_intended_branch_not_detached() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_str().unwrap();
+        git2::Repository::init(dir.path()).unwrap();
+
+        // `"HEAD"` is reserved for a genuinely detached HEAD. A fresh repo is
+        // on a branch that has no commits yet, so both paths must name it —
+        // otherwise the status bar labels a brand-new repo "detached".
+        let info = compute_branch_info_sync(path).expect("branch info for fresh repo");
+        assert_ne!(info.current_branch, "HEAD");
+        assert!(!info.current_branch.is_empty());
+        // Both sources must agree; they used to diverge here ("HEAD" vs None).
+        assert_eq!(current_branch_only(path), Some(info.current_branch));
+    }
+
+    #[test]
+    fn detached_head_reports_the_head_sentinel_from_both_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_str().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let sig = git2::Signature::now("t", "t@example.com").unwrap();
+        let tree = repo
+            .find_tree(repo.index().unwrap().write_tree().unwrap())
+            .unwrap();
+        let oid = repo
+            .commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
+        repo.set_head_detached(oid).unwrap();
+
+        assert_eq!(compute_branch_info_sync(path).unwrap().current_branch, "HEAD");
+        assert_eq!(current_branch_only(path), Some("HEAD".to_string()));
+    }
+
+    #[test]
+    fn non_repo_dir_is_not_a_git_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_str().unwrap();
+        assert!(!is_git_repo(path));
+        assert!(compute_branch_info_sync(path).is_err());
+        let bits = worktree_summary_bits(path);
+        assert!(bits.group_key.is_none());
+        assert!(!bits.is_main_worktree);
+    }
+
+    #[test]
+    fn strip_verbatim_prefix_normalizes_windows_paths() {
+        // Plain disk paths shed the `\\?\` prefix so they match the unprefixed
+        // roots the folder picker stores (the sidebar dedup/grouping key).
+        assert_eq!(
+            strip_verbatim_prefix(r"\\?\C:\Users\me\dev\project"),
+            r"C:\Users\me\dev\project"
+        );
+        // Verbatim UNC paths collapse back to the familiar `\\server\share` form.
+        assert_eq!(
+            strip_verbatim_prefix(r"\\?\UNC\server\share\repo"),
+            r"\\server\share\repo"
+        );
+        // Already-unprefixed and POSIX paths pass through untouched.
+        assert_eq!(strip_verbatim_prefix(r"C:\Users\me"), r"C:\Users\me");
+        assert_eq!(strip_verbatim_prefix("/home/me/dev/project"), "/home/me/dev/project");
+    }
+
+    // ---- Per-Turn worktree snapshot / diff (ADR-0021) ----
+
+    /// Minimal subprocess git for test setup only (production is pure libgit2).
+    fn run_git(cwd: &std::path::Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .expect("git failed to spawn");
+        assert!(
+            out.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).to_string()
+    }
+
+    /// Temp repo with `initial.txt` committed.
+    fn repo_with_commit() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        run_git(p, &["init"]);
+        run_git(p, &["config", "user.email", "t@t.com"]);
+        run_git(p, &["config", "user.name", "T"]);
+        std::fs::write(p.join("initial.txt"), "hello\n").unwrap();
+        run_git(p, &["add", "."]);
+        run_git(p, &["commit", "-m", "init"]);
+        dir
+    }
+
+    fn snap(cwd: &std::path::Path) -> String {
+        snapshot_worktree_tree(cwd.to_str().unwrap())
+            .unwrap()
+            .expect("snapshot Some")
+    }
+
+    fn stats(cwd: &std::path::Path, a: &str, b: &str) -> TreeDiffStats {
+        diff_tree_stats(cwd.to_str().unwrap(), a, b).unwrap()
+    }
+
+    #[test]
+    fn snapshot_counts_tracked_edit_as_additions() {
+        let dir = repo_with_commit();
+        let p = dir.path();
+        std::fs::write(p.join("a.txt"), "1\n2\n3\n").unwrap();
+        run_git(p, &["add", "a.txt"]);
+        run_git(p, &["commit", "-m", "add a"]);
+        let s = snap(p);
+        std::fs::write(p.join("a.txt"), "1\n2\n3\n4\n5\n").unwrap();
+        let e = snap(p);
+        let st = stats(p, &s, &e);
+        assert_eq!((st.additions, st.deletions, st.files), (2, 0, 1));
+    }
+
+    #[test]
+    fn snapshot_counts_deletion_as_net_negative_not_floored() {
+        // The headline fix: a Turn that removes lines records deletions > 0
+        // (the old net-vs-base metric floored such Turns to +0 −0).
+        let dir = repo_with_commit();
+        let p = dir.path();
+        std::fs::write(p.join("b.txt"), "1\n2\n3\n4\n5\n").unwrap();
+        run_git(p, &["add", "b.txt"]);
+        run_git(p, &["commit", "-m", "add b"]);
+        let s = snap(p);
+        std::fs::write(p.join("b.txt"), "1\n2\n3\n").unwrap();
+        let e = snap(p);
+        let st = stats(p, &s, &e);
+        assert_eq!((st.additions, st.deletions, st.files), (0, 2, 1));
+    }
+
+    #[test]
+    fn snapshot_counts_new_untracked_and_excludes_gitignored() {
+        let dir = repo_with_commit();
+        let p = dir.path();
+        std::fs::write(p.join(".gitignore"), "*.log\n").unwrap();
+        run_git(p, &["add", ".gitignore"]);
+        run_git(p, &["commit", "-m", "ignore logs"]);
+        let s = snap(p);
+        // New untracked file (no `git add`) is counted; an ignored file is not.
+        std::fs::write(p.join("keep.txt"), "a\nb\n").unwrap();
+        std::fs::write(p.join("skip.log"), "x\ny\nz\n").unwrap();
+        let e = snap(p);
+        let st = stats(p, &s, &e);
+        assert_eq!((st.additions, st.deletions, st.files), (2, 0, 1));
+    }
+
+    #[test]
+    fn snapshot_counts_whole_file_deletion() {
+        let dir = repo_with_commit();
+        let p = dir.path();
+        std::fs::write(p.join("gone.txt"), "1\n2\n").unwrap();
+        run_git(p, &["add", "gone.txt"]);
+        run_git(p, &["commit", "-m", "add gone"]);
+        let s = snap(p);
+        std::fs::remove_file(p.join("gone.txt")).unwrap();
+        let e = snap(p);
+        let st = stats(p, &s, &e);
+        assert_eq!((st.additions, st.deletions, st.files), (0, 2, 1));
+    }
+
+    #[test]
+    fn snapshot_never_touches_on_disk_index() {
+        // The invariant that makes this safe: we never call `index.write()`, so
+        // the user's staging area is untouched.
+        let dir = repo_with_commit();
+        let p = dir.path();
+        // Make the on-disk index non-trivial (a staged add).
+        std::fs::write(p.join("staged.txt"), "s\n").unwrap();
+        run_git(p, &["add", "staged.txt"]);
+        // An unstaged change too, so add_all has real work to do.
+        std::fs::write(p.join("initial.txt"), "hello\nworld\n").unwrap();
+
+        let index_path = p.join(".git").join("index");
+        let before = std::fs::read(&index_path).unwrap();
+        let status_before = run_git(p, &["status", "--porcelain"]);
+
+        let _ = snap(p);
+
+        let after = std::fs::read(&index_path).unwrap();
+        assert_eq!(before, after, ".git/index must be byte-identical");
+        assert_eq!(status_before, run_git(p, &["status", "--porcelain"]));
+    }
+
+    #[test]
+    fn snapshot_works_on_unborn_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        git2::Repository::init(p).unwrap();
+        std::fs::write(p.join("a.txt"), "x\n").unwrap();
+        let s = snap(p); // no commits → Some via the clear() arm
+        std::fs::write(p.join("b.txt"), "1\n2\n").unwrap();
+        let e = snap(p);
+        let st = stats(p, &s, &e);
+        assert_eq!((st.additions, st.deletions, st.files), (2, 0, 1));
+    }
+
+    #[test]
+    fn snapshot_returns_none_for_non_git_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(snapshot_worktree_tree(dir.path().to_str().unwrap())
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn snapshot_counts_binary_file_as_file_not_lines() {
+        let dir = repo_with_commit();
+        let p = dir.path();
+        let s = snap(p);
+        std::fs::write(p.join("data.bin"), [0u8, 1, 2, b'\n', 3, 0, 9]).unwrap();
+        let e = snap(p);
+        let st = stats(p, &s, &e);
+        assert_eq!(st.additions, 0);
+        assert_eq!(st.files, 1);
+    }
+
+    #[test]
+    fn snapshot_diff_works_in_linked_worktree() {
+        let dir = repo_with_commit();
+        let main = dir.path();
+        let wt_root = tempfile::tempdir().unwrap();
+        let wt_path = wt_root.path().join("linked");
+        add_worktree(
+            main.to_str().unwrap(),
+            "feature",
+            wt_path.to_str().unwrap(),
+        )
+        .expect("add worktree");
+
+        let s = snap(&wt_path);
+        // Edit the committed file inside the linked worktree.
+        std::fs::write(wt_path.join("initial.txt"), "hello\nmore\n").unwrap();
+        let e = snap(&wt_path);
+        let st = stats(&wt_path, &s, &e);
+        assert_eq!((st.additions, st.deletions, st.files), (1, 0, 1));
+    }
+
+    /// The two paths that decide a **Dirty workspace** must agree, or the same
+    /// Workspace would be dirty in the sidebar and clean in the Remove-worktree
+    /// confirmation (or the reverse) depending only on whether it happens to be
+    /// opened: a not-yet-opened Workspace is answered by `worktree_is_dirty`,
+    /// an opened one by the frontend classifying `compute_changed_files_sync`
+    /// rows (`lib/dirtyWorkspace.ts`). Nothing structurally ties the two
+    /// together, so pin them to each other here.
+    #[test]
+    fn dirtiness_agrees_between_the_status_walk_and_the_changed_file_sections() {
+        /// Dirtiness the way the frontend derives it: every section except
+        /// `against_base`, which is committed history.
+        fn dirty_from_sections(cwd: &std::path::Path) -> bool {
+            compute_changed_files_sync(cwd.to_str().unwrap(), None)
+                .unwrap()
+                .iter()
+                .any(|f| f.section != "against_base")
+        }
+        fn assert_agree(cwd: &std::path::Path, expected: bool, case: &str) {
+            let walk = worktree_is_dirty(cwd.to_str().unwrap());
+            let sections = dirty_from_sections(cwd);
+            assert_eq!(walk, expected, "{case}: status walk");
+            assert_eq!(sections, expected, "{case}: changed-file sections");
+        }
+
+        let dir = repo_with_commit();
+        let p = dir.path();
+        assert_agree(p, false, "clean");
+
+        std::fs::write(p.join("untracked.txt"), "x\n").unwrap();
+        assert_agree(p, true, "untracked file");
+        std::fs::remove_file(p.join("untracked.txt")).unwrap();
+
+        // An untracked file inside an untracked *directory*: the one place the
+        // two paths use different recursion settings.
+        std::fs::create_dir(p.join("nested")).unwrap();
+        std::fs::write(p.join("nested/deep.txt"), "x\n").unwrap();
+        assert_agree(p, true, "untracked directory");
+        std::fs::remove_dir_all(p.join("nested")).unwrap();
+
+        std::fs::write(p.join("initial.txt"), "changed\n").unwrap();
+        assert_agree(p, true, "unstaged edit");
+        run_git(p, &["add", "initial.txt"]);
+        assert_agree(p, true, "staged edit");
+        run_git(p, &["commit", "-m", "second"]);
+        assert_agree(p, false, "committed — ahead of nothing, and clean");
+
+        // Ignored files are not uncommitted work.
+        std::fs::write(p.join(".gitignore"), "ignored.txt\n").unwrap();
+        run_git(p, &["add", ".gitignore"]);
+        run_git(p, &["commit", "-m", "ignore"]);
+        std::fs::write(p.join("ignored.txt"), "x\n").unwrap();
+        assert_agree(p, false, "ignored file only");
+
+        // A typechange (file → symlink) reaches the two paths by different
+        // routes: a status bit on one side, a diff entry on the other.
+        std::fs::remove_file(p.join("initial.txt")).unwrap();
+        std::os::unix::fs::symlink("ignored.txt", p.join("initial.txt")).unwrap();
+        assert_agree(p, true, "typechange");
+        std::fs::remove_file(p.join("initial.txt")).unwrap();
+        run_git(p, &["checkout", "--", "initial.txt"]);
+        assert_agree(p, false, "typechange reverted");
+    }
+
+    /// A repository stopped mid-merge is dirty on both paths — the conflicted
+    /// state has no stage 0, so it is the case most likely to slip past one.
+    #[test]
+    fn a_conflicted_repository_is_dirty_on_both_paths() {
+        let dir = repo_with_commit();
+        let p = dir.path();
+        // `git init` picks master or main depending on the user's config.
+        let base = run_git(p, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .trim()
+            .to_string();
+        run_git(p, &["checkout", "-b", "feature"]);
+        std::fs::write(p.join("initial.txt"), "ours\n").unwrap();
+        run_git(p, &["commit", "-am", "ours"]);
+        run_git(p, &["checkout", &base]);
+        std::fs::write(p.join("initial.txt"), "theirs\n").unwrap();
+        run_git(p, &["commit", "-am", "theirs"]);
+        run_git(p, &["checkout", "feature"]);
+        // Expected to exit non-zero: stopping on the conflict is the point.
+        let _ = std::process::Command::new("git")
+            .args(["merge", &base])
+            .current_dir(p)
+            .output()
+            .unwrap();
+
+        assert!(worktree_is_dirty(p.to_str().unwrap()), "status walk");
+        let files = compute_changed_files_sync(p.to_str().unwrap(), None).unwrap();
+        assert!(
+            files.iter().any(|f| f.section == "conflicted"),
+            "changed-file sections: {files:#?}"
+        );
+    }
+}

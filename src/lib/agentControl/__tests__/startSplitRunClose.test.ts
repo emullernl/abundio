@@ -315,64 +315,6 @@ describe("agent start", () => {
 	});
 });
 
-describe("pane run", () => {
-	beforeEach(() => {
-		setLayout({
-			type: "split",
-			id: "s",
-			direction: "vertical",
-			ratio: 0.5,
-			first: { type: "terminal", id: "a", ptyId: "pty-a" },
-			second: { type: "terminal", id: "b", ptyId: "pty-b", spawnedBy: "a" },
-		});
-		terminals.set("b", {
-			ptyId: "pty-b",
-			shellIntegrationSeen: true,
-			term: {},
-		});
-		activity("pty-b", {});
-	});
-	const run = (command: string) =>
-		runRequest(caller, {
-			op: "pane.run",
-			target: { kind: "pane", value: 2 },
-			command,
-		});
-
-	it("types the command and Enter into an idle shell", async () => {
-		await expect(run("make test")).resolves.toEqual({ pane: "p2", sent: true });
-		expect(write).toHaveBeenCalledWith("pty-b", "make test\r");
-	});
-
-	it("refuses while a command runs", async () => {
-		activity("pty-b", { shellCommandRunning: true });
-		await expect(run("ls")).rejects.toMatchObject({ code: "busy" });
-		expect(write).not.toHaveBeenCalled();
-	});
-
-	it("refuses a shell with no integration seen", async () => {
-		terminals.set("b", {
-			ptyId: "pty-b",
-			shellIntegrationSeen: false,
-			term: {},
-		});
-		await expect(run("ls")).rejects.toMatchObject({ code: "state_unknown" });
-	});
-
-	it("runs in an idle shell the caller did not start", async () => {
-		setLayout({
-			type: "split",
-			id: "s",
-			direction: "vertical",
-			ratio: 0.5,
-			first: { type: "terminal", id: "a", ptyId: "pty-a" },
-			second: { type: "terminal", id: "b", ptyId: "pty-b" },
-		});
-		await expect(run("ls")).resolves.toEqual({ pane: "p2", sent: true });
-		expect(write).toHaveBeenCalledWith("pty-b", "ls\r");
-	});
-});
-
 describe("pane close", () => {
 	beforeEach(() => {
 		setLayout({

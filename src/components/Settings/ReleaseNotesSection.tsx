@@ -1,6 +1,6 @@
-import { open } from "@tauri-apps/plugin-shell";
 import { ChevronRight } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { openExternal } from "../../lib/desktop";
 import {
 	type ReleaseNotesEntry,
 	selectReleaseNotes,
@@ -21,7 +21,7 @@ import { ReleaseNotesMarkdown } from "./ReleaseNotesMarkdown";
 const RELEASES_URL = "https://github.com/emullernl/abundio/releases";
 
 function openReleases() {
-	open(RELEASES_URL).catch(() => {});
+	openExternal(RELEASES_URL).catch(() => {});
 }
 
 function LinkButton({

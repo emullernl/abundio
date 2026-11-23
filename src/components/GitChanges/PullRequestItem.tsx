@@ -1,4 +1,4 @@
-import { open } from "@tauri-apps/plugin-shell";
+import { openExternal } from "../../lib/desktop";
 import type { PullRequest } from "../../lib/types";
 import { usePrStore } from "../../stores/prStore";
 import { ExternalLink } from "../Icons";
@@ -89,7 +89,7 @@ export function PullRequestItem({ pr, showStatus }: Props) {
 	const unread = Boolean(pr.unreadThreadId);
 
 	const handleOpen = () => {
-		open(pr.url);
+		openExternal(pr.url);
 		if (pr.unreadThreadId) usePrStore.getState().markRead(pr.unreadThreadId);
 	};
 

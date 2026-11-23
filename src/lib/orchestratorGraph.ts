@@ -41,6 +41,8 @@ export interface GraphAgent {
 export interface GraphWorkspace {
 	id: string;
 	name: string;
+	/** The Host of a joined Workspace (ADR-0065); none for this computer's. */
+	host?: string;
 	agents: GraphAgent[];
 }
 
@@ -62,6 +64,8 @@ export interface GraphModelInput {
 	isAgentPty: (ptyId: string) => boolean;
 	/** The Orchestrator's own pane, left out of `helpers`. */
 	orchestratorPaneId: string | null;
+	/** A joined Workspace's Host name (its cluster says where it runs). */
+	hostNameOf?: (workspaceId: string) => string | null;
 }
 
 /** Live agent-mode panes of `ws`, in Tab then pane order. */
@@ -145,9 +149,11 @@ export function graphModel(input: GraphModelInput): GraphModel {
 		if (agents.length === 0) continue;
 		// Every Agent circles its Workspace directly, whatever its Tab or who
 		// started it; a helper sits next to the Agent that spawned it.
+		const host = input.hostNameOf?.(ws.id) ?? null;
 		clusters.push({
 			id: ws.id,
 			name: ws.name,
+			...(host ? { host } : {}),
 			agents: nestBySpawner(agents).map((a) => ({
 				...a,
 				depth: 0,
@@ -171,6 +177,8 @@ const AGENT_GAP = 16;
 /** A container's inner padding, and the height of its name. */
 const PAD = 14;
 const HEADER = 24;
+/** A joined Workspace's second title line: the Host it runs on. */
+export const HOST_LINE = 14;
 /** From the name down to the bus, and from the bus down to the Agents. */
 const BUS_GAP = 8;
 const DROP = 16;
@@ -229,16 +237,20 @@ function rowWidth(count: number): number {
 const CONTAINER_H = HEADER + BUS_GAP + DROP + AGENT_H + PAD;
 
 /** One container whose top-left corner is (`left`, `top`), with `ids` in a
- *  row inside it. Writes the Agents into `agents`/`busOf`. */
+ *  row inside it, its title a line taller for a joined Workspace's Host.
+ *  Writes the Agents into `agents`/`busOf`. */
 function container(
 	left: number,
 	top: number,
 	ids: string[],
 	agents: Record<string, Placed>,
 	busOf: Record<string, number>,
+	hosted = false,
 ): Container {
 	const width = rowWidth(ids.length);
-	const busY = top + HEADER + BUS_GAP;
+	const header = HEADER + (hosted ? HOST_LINE : 0);
+	const height = CONTAINER_H + (hosted ? HOST_LINE : 0);
+	const busY = top + header + BUS_GAP;
 	const agentY = busY + DROP + AGENT_H / 2;
 	ids.forEach((id, k) => {
 		agents[id] = {
@@ -251,9 +263,9 @@ function container(
 	});
 	return {
 		x: left + width / 2,
-		y: top + CONTAINER_H / 2,
+		y: top + height / 2,
 		width,
-		height: CONTAINER_H,
+		height,
 		busY,
 	};
 }
@@ -273,14 +285,16 @@ export function layoutGraph(model: GraphModel): GraphLayout {
 	const containers: Record<string, Container> = {};
 	let top = 0;
 	for (const ws of model.workspaces) {
-		containers[ws.id] = container(
+		const c = container(
 			left,
 			top,
 			ws.agents.map((a) => a.paneId),
 			agents,
 			busOf,
+			!!ws.host,
 		);
-		top += CONTAINER_H + STACK_GAP;
+		containers[ws.id] = c;
+		top += c.height + STACK_GAP;
 	}
 	const buses = Object.values(containers).map((c) => c.busY);
 	const orchY = buses.length

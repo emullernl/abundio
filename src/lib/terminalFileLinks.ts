@@ -1,8 +1,8 @@
-import { homeDir } from "@tauri-apps/api/path";
 import type { IDisposable, ILink, Terminal } from "@xterm/xterm";
 import { useExplorerStore } from "../stores/explorerStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import { homeDir } from "./desktop";
 import { containsPane, parseTabLayout } from "./paneTree";
 import { isWorkspaceFile } from "./workspaceFileIndex";
 

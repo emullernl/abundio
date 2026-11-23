@@ -4,6 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Abundio</title>
+    <!-- Painted before any script or stylesheet loads, so a window never
+         flashes white: the last theme's background (themes.ts applyTheme),
+         else the default theme's. -->
+    <style>
+      html, body { background: #0d1117; }
+    </style>
+    <script>
+      try {
+        var bg = localStorage.getItem("abundio-window-bg");
+        if (bg && /^#[0-9a-fA-F]{6}$/.test(bg)) {
+          document.documentElement.style.background = bg;
+        }
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

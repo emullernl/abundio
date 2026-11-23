@@ -1,6 +1,7 @@
 // **Session resume** (ADR-0050): the line typed to relaunch a pane's
 // remembered Agent on Workspace open or a Bundle restart.
 
+import { agentsForPane } from "../stores/hostAgentsStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { agentRelaunchCommandFor } from "./agents";
 import type { PaneNode } from "./types";
@@ -15,7 +16,8 @@ type TerminalNode = Extract<PaneNode, { type: "terminal" }>;
 export function relaunchCommandForPane(node: TerminalNode): string | undefined {
 	if (!node.agentId) return undefined;
 	const settings = useSettingsStore.getState();
-	return agentRelaunchCommandFor(settings.agents, node.agentId, {
+	// Relaunched as its own Host knows it (ADR-0064).
+	return agentRelaunchCommandFor(agentsForPane(node.id), node.agentId, {
 		sessionId: node.agentSessionId,
 		resume: settings.resumeAgentSessions,
 	});

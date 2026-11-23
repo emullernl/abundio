@@ -23,11 +23,11 @@ import {
 } from "../../lib/terminalManager";
 import { useAgentSignalsStore } from "../../stores/agentSignalsStore";
 import { useControlBadgeStore } from "../../stores/controlBadgeStore";
+import { useAgentsForPane } from "../../stores/hostAgentsStore";
 import {
 	type DotStatus,
 	usePtyActivityStore,
 } from "../../stores/ptyActivityStore";
-import { useSettingsStore } from "../../stores/settingsStore";
 import { AgentStatusIcon } from "../AgentStatusIcon";
 import { Terminal } from "../Icons";
 
@@ -297,11 +297,10 @@ export function TerminalTitleBar({
 	// Once it exits and detection clears, fall back to plain terminal title.
 	const effectiveAgentId = detectedAgentId;
 
-	const agentName = useSettingsStore((s) =>
-		effectiveAgentId
-			? s.agents.find((a) => a.id === effectiveAgentId)?.name
-			: undefined,
-	);
+	const paneAgents = useAgentsForPane(paneId);
+	const agentName = effectiveAgentId
+		? paneAgents.find((a) => a.id === effectiveAgentId)?.name
+		: undefined;
 
 	const title = agentName
 		? xtermTitle
