@@ -4,20 +4,24 @@
 
 ## Features
 
-- **GPU-accelerated terminals**: WebGL-powered rendering via xterm.js keeps the terminal smooth even under heavy output, with a canvas fallback when needed.
-- **Flexible pane management**: Split horizontally and vertically with unlimited recursive nesting, organize across tabs, and switch layouts without losing your place.
 - **First-class AI agents**: Auto-detects installed coding agents — Claude Code, Copilot CLI, Gemini, Codex, OpenCode, Qwen Code, Kimi Code, Grok Build, Mistral Vibe — or define your own custom agents, all with live activity status beside your shell.
-- **Fleet Console**: Every agent in every open workspace, in one live grid. Tiles are the real terminals — answer a waiting agent, fire a prompt, spotlight one, or start a new agent in any workspace without leaving it. ⌘⇧A toggles it.
+- **Overview bar**: Pinned across the top of every window: live counts of agents mid-turn, terminals running a command and PRs waiting on your review, rolled up from every workspace.
 - **Agents list**: Every running agent, in every open workspace, listed in the left sidebar with its live status and what it's doing. Click one to jump to its pane, step through them with ⌃⌘→ / ⌃⌘←, or right-click to rename, restart or open it in the Fleet Console.
+- **Fleet Console**: Every agent in every open workspace, in one live grid. Tiles are the real terminals — answer a waiting agent, fire a prompt, spotlight one, or start a new agent in any workspace without leaving it. ⌘⇧A toggles it.
 - **Navigator**: Press ⌘J to jump to any workspace, tab, agent, terminal or file window. Type to search the tree, filter to the agents that are waiting or failing with ⌘1–⌘5, and press Enter to land in that pane.
-- **Agent control**: Agents can drive the panes around them through the abundio command, taught by a skill Abundio installs for every watched agent. One agent can start a helper in a new pane or git worktree, prompt it and wait for its answer, run commands in an idle shell, and share the workspace notes — with a badge showing who is in control.
-- **Orchestrator**: One agent you can ask about all the others, in a view of its own. Ask who needs you, what everyone is doing or what got done today. A live map shows every open workspace and its agents, with a stream whenever the Orchestrator reads or drives one. Click an agent to peek at its terminal beside the map. ⌘⇧O opens it.
+- **Statistics**: Press ⌘⇧S for local, per-turn numbers on every agent: how long it worked, what it changed and when it waited on you. Export the rows as CSV.
 - **New task**: Describe a task or pick an open GitHub issue, and Abundio starts an agent on it with the prompt already sent — in its own git worktree on a branch named after the issue, in a new tab, or in an agent that's already open.
 - **Prompt actions**: Turn the prompts you send most into numbered buttons under every agent pane. Leave {{placeholders}} in a prompt and Abundio asks for the values first; fire with a click, ⌘1–⌘9 or the command palette.
-- **Editor & file explorer**: A Monaco-powered editor, a tree-view explorer with Nerd Font icons, image preview, and clickable file links straight from terminal output.
-- **Git, GitHub & worktrees**: A changed-files panel, branch selector, inline diff viewer, and a GitHub PR panel for reviewing open pull requests. Worktrees of a repo are grouped in the sidebar — create or remove them in-app on any branch, with optional per-repo setup commands run automatically.
+- **Agent control**: Agents can drive the panes around them through the abundio command, taught by a skill Abundio installs for every watched agent. One agent can start a helper in a new pane or git worktree, prompt it and wait for its answer, run commands in an idle shell, and share the workspace notes — with a badge showing who is in control.
+- **Orchestrator**: One agent you can ask about all the others, in a view of its own. Ask who needs you, what everyone is doing or what got done today. A live map shows every open workspace and its agents, with a stream whenever the Orchestrator reads or drives one. Click an agent to peek at its terminal beside the map. ⌘⇧O opens it.
 - **Workspaces & profiles**: Bind workspaces to project folders, persist pane layouts and scrollback across sessions, and group projects into named profiles.
+- **Remote hosts**: Put a whole profile on a Linux or Mac server you reach with your own ssh, and its agents keep working while this computer sleeps. Abundio checks the machine and installs its server in your home folder there: no root, no open ports.
 - **Encrypted environment variables**: Per-workspace environment bundles sealed with AES-256-GCM under a key in your OS keychain. One bundle is injected into every terminal in the workspace; the rest reach a single command through abundio-env run. Import an existing .env file, then delete it off disk.
+- **Git, GitHub & worktrees**: A changed-files panel, branch selector, inline diff viewer, and a GitHub PR panel for reviewing open pull requests. Worktrees of a repo are grouped in the sidebar — create or remove them in-app on any branch, with optional per-repo setup commands run automatically.
+- **Themes**: A dark and a light theme plus seventeen more. One pick re-skins the sidebar, the editor and the terminal's true-colour palette, live and per window.
+- **GPU-accelerated terminals**: WebGL-powered rendering via xterm.js keeps the terminal smooth even under heavy output, with a canvas fallback when needed.
+- **Flexible pane management**: Split horizontally and vertically with unlimited recursive nesting, organize across tabs, and switch layouts without losing your place.
+- **Editor & file explorer**: A Monaco-powered editor, a tree-view explorer with Nerd Font icons, image preview, and clickable file links straight from terminal output.
 - **Markdown & notes**: Live side-by-side markdown preview with Mermaid diagrams, plus a per-workspace notes editor for capturing ideas and context.
 - **Full-text search**: Search across every file in the project with cancellation support, then jump straight to files and definitions from the results.
 
