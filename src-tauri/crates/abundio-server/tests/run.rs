@@ -517,8 +517,10 @@ fn an_app_that_falls_behind_skips_ahead_to_the_screen() {
         &script,
         // Far more than every buffer between the server and the slow app can
         // hold (socket buffers alone are ~200 KB each way on stock Linux), so
-        // it surely falls behind: 40,000 lines once fit on a CI runner.
-        "while [ ! -f go ]; do sleep 0.1; done\ni=0\nwhile [ $i -lt 400000 ]; do echo \"flood line $i\"; i=$((i+1)); done\necho FLOOD-DONE\nwhile :; do sleep 1; done\n",
+        // it surely falls behind: 40,000 lines once fit on a CI runner. Made
+        // by seq and sed, not a shell loop, so it takes a fraction of a second
+        // and leaves the CPU to the tests running beside it.
+        "while [ ! -f go ]; do sleep 0.1; done\nseq 0 399999 | sed 's/^/flood line /'\necho FLOOD-DONE\nwhile :; do sleep 1; done\n",
     )
     .unwrap();
     let pty = call(
@@ -669,11 +671,11 @@ fn an_app_back_from_away_gets_its_panes_screens() {
         }),
     );
     let pty = pty.as_str().unwrap().to_string();
-    until("the pane never printed", 10, || {
+    until("the pane never printed", 30, || {
         call("pty_read_screen", serde_json::json!({ "ptyId": pty, "visible": true })).to_string().contains("screen-before")
     });
     call("pty_resync", serde_json::json!({ "ptyIds": [pty] }));
-    until("no snapshot came", 10, || {
+    until("no snapshot came", 30, || {
         frames
             .0
             .lock()
