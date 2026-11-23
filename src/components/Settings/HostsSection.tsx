@@ -23,6 +23,7 @@ import {
 	secondaryButtonClass,
 } from "../PromptActions/fieldStyles";
 import { HostChecklist } from "./HostChecklist";
+import { HostFootprintButton } from "./HostFootprintPopover";
 import { SectionLabel } from "./primitives";
 
 const REMOVING = "Removing the server…";
@@ -291,8 +292,23 @@ export function HostsSection() {
 							>
 								<div className="flex items-start gap-3">
 									<div className="flex flex-col flex-1 min-w-0">
-										<span style={{ fontSize: 13, color: "var(--fg-primary)" }}>
-											{h.name}
+										<span className="flex items-center" style={{ gap: 4 }}>
+											<span
+												style={{ fontSize: 13, color: "var(--fg-primary)" }}
+											>
+												{h.name}
+											</span>
+											<HostFootprintButton
+												hostName={h.name}
+												check={
+													checks[h.id] &&
+													checks[h.id] !== "checking" &&
+													!("error" in (checks[h.id] as object))
+														? (checks[h.id] as HostCheck)
+														: null
+												}
+												onCheck={() => void check(h.id)}
+											/>
 										</span>
 										<span
 											className="truncate"

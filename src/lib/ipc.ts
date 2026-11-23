@@ -414,6 +414,12 @@ export interface HostCheck {
 		agents: string[];
 		/** `gzip` is there, so Install uploads the server gzipped. */
 		gzip?: boolean;
+		/** The Host's home folder. */
+		home?: string;
+		/** `systemd` or `launchd`: the service Abundio set up there. */
+		service?: string | null;
+		/** Linux: whether the user lingers (their services run while logged out). */
+		linger?: boolean | null;
 	};
 	items: HostCheckItem[];
 	appVersion: string;
