@@ -13,6 +13,8 @@ export interface PrHostFacts {
 	remoteHostName: string | null;
 	/** The Profile's Workspace list has Workspaces on a Host. */
 	profileHasHostWorkspaces: boolean;
+	/** This Window's Profile, for the profile view's label. */
+	profileName?: string | null;
 }
 
 /** `block`: shown instead of the list; `note`: a line above it. */
@@ -34,9 +36,6 @@ export function prHostNote(
 			note: null,
 		};
 	}
-	if (scope === "profile" && f.profileHasHostWorkspaces) {
-		return { block: null, note: "Workspaces on Hosts are not included." };
-	}
 	return { block: null, note: null };
 }
 
@@ -46,4 +45,20 @@ export function trackedWorkspaces<T extends { joined?: { hostId: string } }>(
 	remoteWindow: boolean,
 ): T[] {
 	return remoteWindow ? [] : workspaces.filter((w) => !w.joined);
+}
+
+/** A PR view's label. With Workspaces on Hosts in the Window, the profile
+ *  view names its reach, `(<Profile> · this computer)`, since only this
+ *  computer's repositories are tracked; otherwise the plain `(Profile)`. */
+export function prViewLabel(
+	label: string,
+	scope: PrScope,
+	profileName: string | null,
+	hasHostWorkspaces: boolean,
+): string {
+	if (scope !== "profile" || !hasHostWorkspaces) return label;
+	return label.replace(
+		"(Profile)",
+		`(${profileName ?? "Profile"} · this computer)`,
+	);
 }

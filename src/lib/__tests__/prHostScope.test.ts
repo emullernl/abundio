@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { prHostNote, trackedWorkspaces } from "../prHostScope";
+import { prHostNote, prViewLabel, trackedWorkspaces } from "../prHostScope";
 
 const local = {
 	activeHostName: null,
@@ -14,7 +14,7 @@ describe("prHostNote", () => {
 		expect(prHostNote("repo", local)).toEqual({ block: null, note: null });
 	});
 
-	it("blocks the profile view of a remote Window, notes joined Workspaces", () => {
+	it("blocks the profile view of a remote Window; the label names joined ones' reach", () => {
 		const remote = { ...local, activeHostName: "box", remoteHostName: "box" };
 		expect(prHostNote("profile", remote).block).toContain(
 			"This profile is on box",
@@ -23,10 +23,7 @@ describe("prHostNote", () => {
 			...local,
 			profileHasHostWorkspaces: true,
 		});
-		expect(joined).toEqual({
-			block: null,
-			note: "Workspaces on Hosts are not included.",
-		});
+		expect(joined).toEqual({ block: null, note: null });
 	});
 
 	it("leaves the account-wide view alone", () => {
@@ -48,5 +45,19 @@ describe("trackedWorkspaces", () => {
 		const list = [{ id: "a" }, { id: "b", joined: { hostId: "box" } }];
 		expect(trackedWorkspaces(list, false).map((w) => w.id)).toEqual(["a"]);
 		expect(trackedWorkspaces(list, true)).toEqual([]);
+	});
+});
+
+describe("prViewLabel", () => {
+	it("names the profile view's reach when Workspaces on Hosts are shown", () => {
+		expect(
+			prViewLabel("My Open PRs (Profile)", "profile", "Default", true),
+		).toBe("My Open PRs (Default · this computer)");
+		expect(
+			prViewLabel("My Open PRs (Profile)", "profile", "Default", false),
+		).toBe("My Open PRs (Profile)");
+		expect(prViewLabel("My Open PRs (Repo)", "repo", "Default", true)).toBe(
+			"My Open PRs (Repo)",
+		);
 	});
 });

@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pr, settingsWindow } from "../../lib/ipc";
-import { type PrHostFacts, prHostNote } from "../../lib/prHostScope";
+import {
+	type PrHostFacts,
+	prHostNote,
+	prViewLabel,
+} from "../../lib/prHostScope";
 import type { GhStatus } from "../../lib/types";
 import { useProfileStore } from "../../stores/profileStore";
 import {
@@ -65,10 +69,14 @@ export function PullRequestsSection() {
 	const profileHasHostWorkspaces = useWorkspaceStore((s) =>
 		s.workspaces.some((w) => !!w.joined),
 	);
+	const profileName = useProfileStore(
+		(s) => s.profiles.find((p) => p.id === s.activeProfileId)?.name ?? null,
+	);
 	const hostFacts: PrHostFacts = {
 		activeHostName: joinedHostName ?? remoteHostName,
 		remoteHostName,
 		profileHasHostWorkspaces,
+		profileName,
 	};
 	const effReviewView: ReviewView =
 		noWorkspace && reviewView === "review-repo" ? "review-profile" : reviewView;
@@ -287,6 +295,13 @@ function PrSubPanel<V extends PrView>({
 	showPrStatus,
 }: PrSubPanelProps<V>) {
 	const hostNote = prHostNote(scope, hostFacts);
+	const viewLabel = (v: V) =>
+		prViewLabel(
+			PR_VIEW_LABELS[v],
+			scopeOf(v),
+			hostFacts.profileName ?? null,
+			hostFacts.profileHasHostWorkspaces,
+		);
 	const [dropdownOpen, setDropdownOpen] = useState(false);
 	const unread = unreadCount(section.prs);
 	const dropdownRef = useRef<HTMLDivElement>(null);
@@ -346,8 +361,12 @@ function PrSubPanel<V extends PrView>({
 							e.currentTarget.style.borderColor = "transparent";
 						}}
 					>
-						<span className="truncate" style={{ maxWidth: 160 }}>
-							{PR_VIEW_LABELS[activeView]}
+						<span
+							className="truncate"
+							style={{ maxWidth: 160 }}
+							title={viewLabel(activeView)}
+						>
+							{viewLabel(activeView)}
 						</span>
 						<ChevronDown size={10} />
 					</button>
@@ -396,7 +415,7 @@ function PrSubPanel<V extends PrView>({
 											e.currentTarget.style.backgroundColor = "transparent";
 									}}
 								>
-									{PR_VIEW_LABELS[view]}
+									{viewLabel(view)}
 								</button>
 							))}
 						</div>
@@ -533,10 +552,7 @@ function PrSubPanel<V extends PrView>({
 						<span className="animate-pulse">Loading repositories...</span>
 					</StatusMessage>
 				) : scope === "profile" && !hasProfileRepos ? (
-					<StatusMessage>
-						No GitHub repositories in this profile
-						{hostNote.note && <HostNoteLine text={hostNote.note} />}
-					</StatusMessage>
+					<StatusMessage>No GitHub repositories in this profile</StatusMessage>
 				) : section.loading && section.prs.length === 0 ? (
 					<StatusMessage>
 						<span className="animate-pulse">Loading pull requests...</span>
@@ -544,23 +560,9 @@ function PrSubPanel<V extends PrView>({
 				) : section.error && section.prs.length === 0 ? (
 					<StatusMessage>{section.error}</StatusMessage>
 				) : section.prs.length === 0 ? (
-					<StatusMessage>
-						No pull requests
-						{hostNote.note && <HostNoteLine text={hostNote.note} />}
-					</StatusMessage>
+					<StatusMessage>No pull requests</StatusMessage>
 				) : (
 					<div className="flex flex-col">
-						{hostNote.note && (
-							<div
-								style={{
-									padding: "4px 12px",
-									fontSize: 11,
-									color: "var(--fg-secondary)",
-								}}
-							>
-								{hostNote.note}
-							</div>
-						)}
 						{section.prs.map((pr) => (
 							<PullRequestItem
 								key={`${pr.repository || "local"}-${pr.number}`}
@@ -583,11 +585,5 @@ function StatusMessage({ children }: { children: React.ReactNode }) {
 		>
 			<div>{children}</div>
 		</div>
-	);
-}
-
-function HostNoteLine({ text }: { text: string }) {
-	return (
-		<span style={{ display: "block", marginTop: 4, fontSize: 11 }}>{text}</span>
 	);
 }
