@@ -16,6 +16,7 @@ import {
 	type RoutedCall,
 	routeCall,
 	sentByOwnerOf,
+	sentByOwnerOfPath,
 } from "./hostRouting";
 import type { HostSettings } from "./hostSettings";
 import type { LayoutOp } from "./layoutOps";
@@ -1146,8 +1147,13 @@ export const worktrees = {
 
 	/** Fires when a watched repo's worktree set changes on disk. */
 	onChanged: (callback: (commonDir: string) => void): Promise<UnlistenFn> =>
-		listen<{ commonDir: string }>("worktrees-changed", (event) =>
-			callback(event.payload.commonDir),
+		listen<{ commonDir: string; fromHost?: string }>(
+			"worktrees-changed",
+			(event) => {
+				// A Host speaks only for its own repositories (ADR-0065).
+				const p = event.payload;
+				if (sentByOwnerOfPath(p.fromHost, p.commonDir)) callback(p.commonDir);
+			},
 		),
 };
 
@@ -1259,8 +1265,12 @@ export const fs = {
 			paths: string[];
 			changedFiles: string[];
 			removedFiles: string[];
+			fromHost?: string;
 		}>("fs-change", (event) => {
-			if (event.payload.root === rootPath) {
+			if (
+				event.payload.root === rootPath &&
+				sentByOwnerOfPath(event.payload.fromHost, rootPath)
+			) {
 				callback({
 					paths: event.payload.paths,
 					changedFiles: event.payload.changedFiles,
@@ -1270,8 +1280,11 @@ export const fs = {
 		}),
 
 	onGitChange: (rootPath: string, callback: () => void): Promise<UnlistenFn> =>
-		listen<{ root: string }>("git-change", (event) => {
-			if (event.payload.root === rootPath) {
+		listen<{ root: string; fromHost?: string }>("git-change", (event) => {
+			if (
+				event.payload.root === rootPath &&
+				sentByOwnerOfPath(event.payload.fromHost, rootPath)
+			) {
 				callback();
 			}
 		}),

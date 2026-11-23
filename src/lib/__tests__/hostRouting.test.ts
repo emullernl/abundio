@@ -6,6 +6,7 @@ import {
 	resetRouting,
 	routeCall,
 	sentByOwnerOf,
+	sentByOwnerOfPath,
 	setJoinedWorkspace,
 	setOwnHost,
 	setRoutingLookups,
@@ -147,5 +148,22 @@ describe("sentByOwnerOf (ADR-0065: a Host speaks only for its own)", () => {
 		setOwnHost("box");
 		expect(sentByOwnerOf("box", "workspace", "unknown")).toBe(true);
 		expect(sentByOwnerOf(undefined, "workspace", "unknown")).toBe(false);
+	});
+});
+
+describe("sentByOwnerOfPath (file and git events, review of PR #280)", () => {
+	beforeEach(() => {
+		resetRouting();
+		setOwnHost(null);
+		joinOne();
+	});
+
+	it("lets a Host speak only for folders of its own Workspaces", () => {
+		expect(sentByOwnerOfPath("box", "/home/dev/app")).toBe(true);
+		expect(sentByOwnerOfPath(undefined, "/Users/me/app")).toBe(true);
+		// A Host naming this computer's folder, or one nobody holds.
+		expect(sentByOwnerOfPath("box", "/Users/me/app")).toBe(false);
+		expect(sentByOwnerOfPath("box", "/etc")).toBe(false);
+		expect(sentByOwnerOfPath(undefined, "/home/dev/app")).toBe(false);
 	});
 });

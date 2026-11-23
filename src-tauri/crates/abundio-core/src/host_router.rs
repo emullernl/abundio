@@ -307,17 +307,28 @@ impl HostListener for Listener {
         let tag = |map: &mut serde_json::Map<String, Value>| {
             map.insert("fromHost".into(), Value::String(self.host.clone()));
         };
+        // Every payload says where it came from: a Window takes one without
+        // the tag as its own backend's, so one that cannot be tagged is dropped.
         match &mut payload {
             Value::Object(map) => tag(map),
+            // A payload-free event (`profiles-changed`): the tag alone.
+            Value::Null => {
+                let mut map = serde_json::Map::new();
+                tag(&mut map);
+                payload = Value::Object(map);
+            }
             // A list of records (`status-updates`): each says where it came from.
-            Value::Array(items) => {
+            Value::Array(items) if items.iter().all(Value::is_object) => {
                 for item in items.iter_mut() {
                     if let Value::Object(map) = item {
                         tag(map);
                     }
                 }
             }
-            _ => {}
+            _ => {
+                log::warn!("[host] {} sent {name:?} with a payload that cannot be tagged; dropped", self.host);
+                return;
+            }
         }
         match client {
             Some(window) => {
@@ -783,8 +794,13 @@ mod tests {
         listener.event(None, "status-updates", serde_json::json!([{ "ptyId": "y" }]));
         let got = sink.0.lock().unwrap().clone();
         assert_eq!(got[0].2, serde_json::json!({ "profileId": "p", "fromHost": "box" }));
-        assert_eq!(got[1].2, Value::Null);
+        assert_eq!(got[1].2, serde_json::json!({ "fromHost": "box" }));
         assert_eq!(got[2].2, serde_json::json!([{ "ptyId": "y", "fromHost": "box" }]));
+        // What cannot say where it came from never reaches a Window.
+        let before = sink.0.lock().unwrap().len();
+        listener.event(None, "profiles-changed", serde_json::json!("text"));
+        listener.event(None, "status-updates", serde_json::json!([1, 2]));
+        assert_eq!(sink.0.lock().unwrap().len(), before);
     }
 
     /// Phase 10: a local Window joining Profiles on two Hosts is on both,

@@ -15,6 +15,7 @@
 
 import { create } from "zustand";
 import type { ParsedEnvEntry } from "../lib/dotenvParse";
+import { sentByOwnerOf } from "../lib/hostRouting";
 import type { EnvBundleMeta, EnvInjectedSummary, EnvVarMeta } from "../lib/ipc";
 import { env, listen } from "../lib/ipc";
 
@@ -414,10 +415,14 @@ export const useWorkspaceEnvStore = create<WorkspaceEnvState>((set, get) => ({
 // A spawn-time credential failure must surface even when the settings dialog is
 // closed, so the banner is not the only way to learn the feature is degraded.
 // Registered at module load, mirroring the other app-wide listeners.
-listen<{ workspaceId: string; reason: string }>(
+listen<{ workspaceId: string; reason: string; fromHost?: string }>(
 	"env-vars-unavailable",
 	(event) => {
-		useWorkspaceEnvStore.setState({ keyError: event.payload.reason });
+		// A Host speaks only for its own Workspaces (ADR-0065): its reason never
+		// reaches this computer's credential-store banner.
+		const p = event.payload;
+		if (!sentByOwnerOf(p.fromHost, "workspace", p.workspaceId)) return;
+		useWorkspaceEnvStore.setState({ keyError: p.reason });
 	},
 ).catch(() => {
 	// Not fatal: the dialog's own `env.list` also reports key availability.

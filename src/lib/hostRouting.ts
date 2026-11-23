@@ -275,6 +275,18 @@ export function sentByOwnerOf(
 	return from === (joinedWorkspaces.get(ws) ?? ownHost);
 }
 
+/** `sentByOwnerOf` for an event naming a folder (a file watch's root, a
+ *  repository's git folder): its owner is the Workspace holding the path,
+ *  and a path no Workspace holds is the Window's own backend's. */
+export function sentByOwnerOfPath(
+	fromHost: unknown,
+	path: string | null | undefined,
+): boolean {
+	const from = typeof fromHost === "string" ? fromHost : null;
+	const ws = path ? lookups?.workspaceOfPath(path) : undefined;
+	return from === ((ws ? joinedWorkspaces.get(ws) : null) ?? ownHost);
+}
+
 /** The Host of one thing, or `null` for the Window's own backend. */
 function hostOf(by: By, id: string): string | null {
 	// A Profile id names a Profile only within one backend (every database

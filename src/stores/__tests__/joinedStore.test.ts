@@ -39,6 +39,8 @@ vi.mock("../../lib/ipc", () => ({
 		list: vi.fn(() => Promise.resolve([{ id: "box", name: "Build box" }])),
 	},
 	listenToThisWindow: vi.fn(() => Promise.resolve(() => {})),
+	// The Host's Agent list follows its settings changes (hostAgentsStore).
+	listen: vi.fn(() => Promise.resolve(() => {})),
 	fileWindows: { close: vi.fn(() => Promise.resolve()) },
 	workspaces: {
 		list: vi.fn(() => Promise.resolve([])),

@@ -25,10 +25,15 @@ const SCRIPT: &str = r#"#!/bin/sh
 # its argument; it asks the Abundio app, which shows the prompt in a dialog,
 # and prints the answer. Rewritten on every start; edits are lost.
 [ -n "$ABUNDIO_ASKPASS_URL" ] && [ -n "$ABUNDIO_ASKPASS_TOKEN" ] || exit 1
-exec curl -sf --max-time 310 -X POST \
-  -H "X-Abundio-Askpass-Token: $ABUNDIO_ASKPASS_TOKEN" \
-  -H "X-Abundio-Askpass-Kind: ${SSH_ASKPASS_PROMPT:-}" \
-  --data-binary "$1" "$ABUNDIO_ASKPASS_URL"
+# The prompt goes on stdin (`@-`): as an argument, one starting with `@`
+# would make curl send a local file. The headers come from fd 3, so the
+# one-time token never shows in curl's argument list.
+printf '%s' "$1" | exec curl -sf --max-time 310 -X POST \
+  -H @/dev/fd/3 \
+  --data-binary @- "$ABUNDIO_ASKPASS_URL" 3<<ABUNDIO_HEADERS
+X-Abundio-Askpass-Token: $ABUNDIO_ASKPASS_TOKEN
+X-Abundio-Askpass-Kind: ${SSH_ASKPASS_PROMPT:-}
+ABUNDIO_HEADERS
 "#;
 
 /// Write the helper into `dir` (private to the user) and return its path.
@@ -154,6 +159,45 @@ impl Askpass {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A prompt is never read as a curl option, and the token never shows in
+    /// curl's arguments (review of PR #280).
+    #[cfg(unix)]
+    #[test]
+    fn a_prompt_starting_with_at_is_sent_as_text_and_the_token_stays_off_argv() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = write_script(&dir.path().join("askpass")).unwrap();
+        // A stand-in curl that records its arguments, stdin and fd 3.
+        let bin = dir.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let out = dir.path().join("out");
+        std::fs::write(
+            bin.join("curl"),
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{o}.args'\ncat > '{o}.stdin'\ncat <&3 > '{o}.headers'\n",
+                o = out.display()
+            ),
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(bin.join("curl"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let status = std::process::Command::new(&script)
+            .arg("@/etc/hosts")
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("ABUNDIO_ASKPASS_URL", "http://127.0.0.1:1/askpass")
+            .env("ABUNDIO_ASKPASS_TOKEN", "secret-token")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let read = |ext: &str| std::fs::read_to_string(format!("{}.{ext}", out.display())).unwrap();
+        assert_eq!(read("stdin"), "@/etc/hosts");
+        let args = read("args");
+        assert!(args.contains("@-") && !args.contains("@/etc/hosts"), "{args}");
+        assert!(!args.contains("secret-token"), "{args}");
+        assert!(read("headers").contains("X-Abundio-Askpass-Token: secret-token"));
+    }
 
     #[test]
     fn tells_a_host_key_question_from_a_password() {

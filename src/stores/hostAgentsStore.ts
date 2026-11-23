@@ -53,7 +53,14 @@ export const useHostAgentsStore = create<HostAgentsState>((set, get) => ({
 		const s = await joinedApi
 			.callOn<HostSettings | null>(hostId, "host_settings_get", {})
 			.catch(() => null);
-		if (!s) return;
+		// Only a Host settings record: anything else (an older server, an odd
+		// answer) leaves the list as it was.
+		if (
+			!s ||
+			typeof s.agentSwitches !== "object" ||
+			!Array.isArray(s.customAgents)
+		)
+			return;
 		set((state) => ({
 			settings: { ...state.settings, [hostId]: s },
 			byHost: { ...state.byHost, [hostId]: agentsFromHostSettings(s) },

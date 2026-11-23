@@ -1031,7 +1031,10 @@ async function onRequest(e: AgentControlRequestEvent): Promise<void> {
 	const named = [e.caller.workspaceId, e.target?.workspaceId].filter(
 		(id): id is string => !!id,
 	);
-	if (!named.every((id) => sentByOwnerOf(e.fromHost, "workspace", id))) {
+	if (
+		(e.fromHost && named.length === 0) ||
+		!named.every((id) => sentByOwnerOf(e.fromHost, "workspace", id))
+	) {
 		console.warn("[control] refused a request for another backend's Workspace");
 		await agentControl
 			.reply(

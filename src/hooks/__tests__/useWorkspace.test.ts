@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useJoinedStore } from "../../stores/joinedStore";
 import { useProfileStore } from "../../stores/profileStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { loadWindow } from "../useWorkspace";
@@ -6,6 +7,9 @@ import { loadWindow } from "../useWorkspace";
 describe("loadWindow", () => {
 	beforeEach(() => {
 		useWorkspaceStore.setState({ workspacesInitialized: false });
+		// Joined profiles load in the background; not what these tests are
+		// about, and they would reach for the Host list.
+		useJoinedStore.setState({ loadJoined: async () => {} });
 	});
 
 	it("shows a remote Window whose Host is not connected instead of loading forever", async () => {

@@ -140,6 +140,13 @@ impl HostClient {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = crossbeam_channel::bounded(1);
         self.pending.lock().map_err(|_| RequestError::ConnectionLost)?.insert(id, tx);
+        // The reader may have closed (and cleared `pending`) between the check
+        // above and the insert: then nobody would ever drop `tx`, and a wait
+        // with no timeout would hang forever.
+        if self.is_closed() {
+            self.pending.lock().ok().map(|mut p| p.remove(&id));
+            return Err(RequestError::ConnectionLost);
+        }
         let sent = self.send(Message::Request {
             id,
             client: client.to_string(),
