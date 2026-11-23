@@ -50,3 +50,68 @@ describe("removing the service (all platforms)", () => {
 		);
 	});
 });
+
+import { checkedAgo, hostSummary, problemItems } from "../hostSetup";
+
+describe("hostSummary (Settings ▸ Hosts' status line)", () => {
+	const check = (states: string[]) =>
+		({
+			probe: {
+				os: "Linux",
+				arch: "x86_64",
+				current: "3.1.0",
+				running: true,
+				panes: 0,
+			},
+			items: states.map((state, i) => ({
+				id: `i${i}`,
+				label: `Line ${i}`,
+				state,
+				fix: null,
+				action: null,
+			})),
+			appVersion: "3.1.0",
+		}) as unknown as import("../ipc").HostCheck;
+
+	it("says Ready, with the server and platform, when nothing needs doing", () => {
+		expect(hostSummary(check(["ok", "info"]), null)).toEqual({
+			tone: "ok",
+			state: "Ready",
+			detail: "Server 3.1.0 on Linux x86_64.",
+		});
+	});
+
+	it("names the first problem, and how many more, at its worst tone", () => {
+		const s = hostSummary(check(["ok", "warn", "error"]), null);
+		expect(s).toEqual({
+			tone: "error",
+			state: "Needs attention",
+			detail: "Line 1, and 1 more.",
+		});
+		expect(problemItems(check(["ok", "warn"]).items).map((i) => i.id)).toEqual([
+			"i1",
+		]);
+	});
+
+	it("shows what is running, and an unreachable Host's reason", () => {
+		expect(hostSummary(check(["ok"]), "Uploading the server…").tone).toBe(
+			"busy",
+		);
+		expect(hostSummary("checking", null).state).toBe("Checking…");
+		expect(
+			hostSummary({ error: "Channel error: Permission denied\nmore" }, null),
+		).toEqual({
+			tone: "error",
+			state: "Can't reach it",
+			detail: "Permission denied",
+		});
+		expect(hostSummary(undefined, null).tone).toBe("unknown");
+	});
+
+	it("says when it was checked", () => {
+		const now = 1_000_000_000;
+		expect(checkedAgo(now - 20_000, now)).toBe("Checked just now");
+		expect(checkedAgo(now - 5 * 60_000, now)).toBe("Checked 5 min ago");
+		expect(checkedAgo(now - 3 * 3_600_000, now)).toBe("Checked 3 h ago");
+	});
+});
