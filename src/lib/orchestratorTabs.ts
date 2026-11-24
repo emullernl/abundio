@@ -14,6 +14,7 @@ import {
 	type OrchestratorFileTab,
 	orchestrator as orchestratorApi,
 } from "./ipc";
+import type { PdfPosition } from "./pdfView";
 import { workWorkspaces } from "./workspaceKind";
 
 const store = () => useOrchestratorStore.getState();
@@ -88,6 +89,23 @@ export function setOrchestratorTabView(id: string, view: MarkdownView): void {
 		.setTabView(fallbackProfileId(), id, view)
 		.catch((e) =>
 			console.warn("[orchestrator] could not keep a tab's view", e),
+		);
+}
+
+/** Remember a PDF tab's page and zoom. */
+export function setOrchestratorTabPdfPosition(
+	id: string,
+	position: PdfPosition,
+): void {
+	store().set({
+		fileTabs: store().fileTabs.map((t) =>
+			t.id === id ? { ...t, pdfPosition: position } : t,
+		),
+	});
+	orchestratorApi
+		.setTabPdfPosition(fallbackProfileId(), id, position)
+		.catch((e) =>
+			console.warn("[orchestrator] could not keep a tab's PDF position", e),
 		);
 }
 

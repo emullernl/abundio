@@ -6,9 +6,11 @@ import {
 	findPreviewForSource,
 	parseTabLayout,
 	removeNode,
+	setFileNodePdfPosition,
 	setFileNodeView,
 	wrapInSplit,
 } from "./paneTree";
+import type { PdfPosition } from "./pdfView";
 import type { MarkdownView, PaneNode } from "./types";
 
 function makePreviewNode(sourcePaneId: string): PaneNode {
@@ -91,6 +93,24 @@ export function pruneNonMarkdownPreviews(tree: PaneNode): PaneNode {
 		if (next) result = next;
 	}
 	return result;
+}
+
+/** Remember a PDF File pane's page and zoom on its layout node. */
+export async function setPdfPositionForPane(
+	workspaceId: string,
+	paneId: string,
+	position: PdfPosition,
+): Promise<void> {
+	const ws = useWorkspaceStore.getState();
+	const workspace = ws.workspaces.find((w) => w.id === workspaceId);
+	if (!workspace) return;
+	for (const tab of workspace.tabs) {
+		const layout = parseTabLayout(tab.layoutJson);
+		if (!layout || !findNode(layout, paneId)) continue;
+		const next = setFileNodePdfPosition(layout, paneId, position);
+		if (next !== layout) await ws.updateLayout(tab.id, next);
+		return;
+	}
 }
 
 /**

@@ -20,6 +20,7 @@ import {
 	replaceNode,
 	setAgentId,
 	setAgentSessionId,
+	setFileNodePdfPosition,
 } from "../paneTree";
 import type { PaneNode } from "../types";
 
@@ -614,5 +615,42 @@ describe("setAgentId and the Agent session id", () => {
 
 	it("keeps the session when the same Agent is stamped again", () => {
 		expect(setAgentId(withSession, "a", "claude")).toBe(withSession);
+	});
+});
+
+describe("setFileNodePdfPosition", () => {
+	const file = (id: string): PaneNode => ({
+		type: "file",
+		id,
+		filePath: `/ws/${id}.pdf`,
+	});
+	const tree: PaneNode = {
+		type: "split",
+		id: "s",
+		direction: "vertical",
+		ratio: 0.5,
+		first: file("a"),
+		second: file("b"),
+	};
+
+	it("sets the position on that pane only", () => {
+		const next = setFileNodePdfPosition(tree, "b", { page: 4, zoom: 1.5 });
+		expect(next).not.toBe(tree);
+		const split = next as PaneNode & { type: "split" };
+		expect(split.first).toBe(tree.type === "split" ? tree.first : null);
+		expect(split.second).toMatchObject({ pdfPosition: { page: 4, zoom: 1.5 } });
+	});
+
+	it("returns the same tree when the position is unchanged", () => {
+		const once = setFileNodePdfPosition(tree, "a", {
+			page: 2,
+			zoom: "page-width",
+		});
+		expect(
+			setFileNodePdfPosition(once, "a", { page: 2, zoom: "page-width" }),
+		).toBe(once);
+		expect(setFileNodePdfPosition(tree, "zzz", { page: 2, zoom: 1 })).toBe(
+			tree,
+		);
 	});
 });

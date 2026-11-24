@@ -449,6 +449,14 @@ pub fn orchestrator_tab_set_view(
 ) -> Result<(), AbundioError> {
     store.set_orchestrator_tab_view(&profile_id, &id, view)
 }
+pub fn orchestrator_tab_set_pdf_position(
+    store: &WorkspaceStore,
+    profile_id: String,
+    id: String,
+    position: crate::pdf_position::PdfPosition,
+) -> Result<(), AbundioError> {
+    store.set_orchestrator_tab_pdf_position(&profile_id, &id, position)
+}
 pub fn orchestrator_tab_select(
     store: &WorkspaceStore,
     profile_id: String,
@@ -771,6 +779,40 @@ mod tests {
         ));
         assert!(matches!(
             store.set_orchestrator_tab_view("someone-else", &a.id, Source),
+            Err(AbundioError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn a_pdf_tabs_position_is_remembered() {
+        use crate::pdf_position::{PdfPosition, PdfZoom};
+        let store = test_store();
+        let ws = store.create("w", "/w", PID).unwrap().workspace.id;
+        let new = || NewOrchestratorTab {
+            workspace_id: ws.clone(),
+            kind: "file".into(),
+            path: "/w/a.pdf".into(),
+            commit_oid: None,
+            view: None,
+        };
+        let a = store.add_orchestrator_tab(PID, new()).unwrap();
+        assert_eq!(a.pdf_position, None);
+        let p = PdfPosition { page: 12, zoom: PdfZoom::Scale(0.5) };
+        store.set_orchestrator_tab_pdf_position(PID, &a.id, p.clone()).unwrap();
+        let (tabs, _) = store.orchestrator_tabs(PID).unwrap();
+        assert_eq!(tabs[0].pdf_position, Some(p.clone()));
+        // Opened again: the tab keeps its place.
+        assert_eq!(store.add_orchestrator_tab(PID, new()).unwrap().pdf_position, Some(p));
+        // Out of range, another Profile's, or no such tab: refused.
+        let bad = PdfPosition { page: 1, zoom: PdfZoom::Scale(99.0) };
+        assert!(store.set_orchestrator_tab_pdf_position(PID, &a.id, bad).is_err());
+        let ok = PdfPosition { page: 1, zoom: PdfZoom::Scale(1.0) };
+        assert!(matches!(
+            store.set_orchestrator_tab_pdf_position("someone-else", &a.id, ok.clone()),
+            Err(AbundioError::NotFound(_))
+        ));
+        assert!(matches!(
+            store.set_orchestrator_tab_pdf_position(PID, "nope", ok),
             Err(AbundioError::NotFound(_))
         ));
     }

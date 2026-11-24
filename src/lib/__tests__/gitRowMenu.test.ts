@@ -145,7 +145,7 @@ describe("gitRowMenuEntries", () => {
 		});
 
 		it("is absent on a file a File pane cannot show", () => {
-			for (const path of ["dist/app.zip", "fonts/a.woff2", "doc.pdf"]) {
+			for (const path of ["dist/app.zip", "fonts/a.woff2", "data.sqlite3"]) {
 				const got = ids(row(path, "M", "unstaged"));
 				for (const id of WINDOW_IDS) expect(got, path).not.toContain(id);
 			}

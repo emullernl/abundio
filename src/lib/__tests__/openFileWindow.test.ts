@@ -29,8 +29,14 @@ describe("fileWindowKindFor", () => {
 		}
 	});
 
+	it("gives pdf to PDFs, though search counts them as binary", () => {
+		for (const p of ["/r/a.pdf", "C:\\r\\Spec.PDF"]) {
+			expect(fileWindowKindFor(p), p).toBe("pdf");
+		}
+	});
+
 	it("gives nothing to known binary files", () => {
-		for (const p of ["/r/a.zip", "/r/a.pdf", "/r/a.woff2", "/r/a.sqlite"]) {
+		for (const p of ["/r/a.zip", "/r/a.docx", "/r/a.woff2", "/r/a.sqlite"]) {
 			expect(fileWindowKindFor(p), p).toBeNull();
 		}
 	});

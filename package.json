@@ -50,6 +50,7 @@
 		"lucide-react": "^1.17.0",
 		"mermaid": "^12.2.0",
 		"monaco-editor": "^0.55.1",
+		"pdfjs-dist": "6.5.438",
 		"react": "^19.2.6",
 		"react-dom": "^19.2.6",
 		"rehype-sanitize": "^6.0.0",

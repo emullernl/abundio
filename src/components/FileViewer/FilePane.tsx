@@ -42,6 +42,7 @@ import {
 	openFileWindow,
 } from "../../lib/openFileWindow";
 import { findPreviewForSource } from "../../lib/paneTree";
+import { isPdfPath, type PdfPosition } from "../../lib/pdfView";
 import { sc } from "../../lib/platform";
 import {
 	relativeToWorkspace,
@@ -56,6 +57,7 @@ import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { DiffViewer } from "../GitChanges/DiffViewer";
 import { PaneDropIndicator } from "../PaneDropIndicator";
+import { secondaryButtonClass } from "../PromptActions/fieldStyles";
 import {
 	type ContextMenuItem,
 	PaneContextMenu,
@@ -70,6 +72,7 @@ import { ConflictToolbar } from "./ConflictToolbar";
 import { FileChangeBanner } from "./FileChangeBanner";
 import { FilePaneTitleBar } from "./FilePaneTitleBar";
 import { ImageViewer } from "./ImageViewer";
+import { PdfView } from "./PdfView";
 import { RenderedMarkdownView } from "./RenderedMarkdownView";
 import { UnsupportedFile } from "./UnsupportedFile";
 
@@ -96,6 +99,10 @@ interface FilePaneProps {
 	markdownView?: MarkdownView;
 	/** Remember a new view (on the layout node, or the Orchestrator tab). */
 	onMarkdownViewChange?: (view: MarkdownView) => void;
+	/** A PDF's stored page and zoom; absent: the first page at fit width. */
+	pdfPosition?: PdfPosition | null;
+	/** Remember where a PDF is (on the layout node, or the Orchestrator tab). */
+	onPdfPositionChange?: (position: PdfPosition) => void;
 }
 
 // A print asked for from the source view waits for the rendered document to
@@ -120,6 +127,8 @@ export function FilePane({
 	embedded,
 	markdownView,
 	onMarkdownViewChange,
+	pdfPosition,
+	onPdfPositionChange,
 }: FilePaneProps) {
 	const registerFilePane = useExplorerStore((s) => s.registerFilePane);
 	const keyOverrides = useKeybindingOverrides();
@@ -370,8 +379,11 @@ export function FilePane({
 		[paneId],
 	);
 	useEffect(() => {
-		if (view === "source" && findOpen) setFindOpen(false);
-	}, [view, findOpen, setFindOpen]);
+		// A PDF has its own find; only text closes it in the source.
+		if (paneState?.fileType === "text" && view === "source" && findOpen) {
+			setFindOpen(false);
+		}
+	}, [paneState?.fileType, view, findOpen, setFindOpen]);
 
 	// A jump to a line (search result, terminal link, `file open --line`)
 	// means the source. The editor takes the line once it is shown.
@@ -523,6 +535,10 @@ export function FilePane({
 		paneState.fileType === "diff" ? diffRealPathOf(paneState.filePath) : null;
 	const isCommitDiff = parseCommitDiffKey(paneState.filePath) != null;
 	const isStandaloneDiff = paneState.diffSource === "file";
+	// A PDF has no text diff (its bytes would show as noise): say so, and
+	// offer the file itself.
+	const isPdfDiff =
+		diffRealPath != null && !isStandaloneDiff && isPdfPath(diffRealPath);
 	const isPatchFile =
 		paneState.fileType === "text" &&
 		isUnifiedDiffFile(paneState.filePath, paneState.content ?? "");
@@ -857,7 +873,33 @@ export function FilePane({
 							section again.
 						</div>
 					)}
+				{isPdfDiff && (
+					<div
+						className="absolute inset-0 flex flex-col items-center justify-center text-center gap-3"
+						style={{
+							color: "var(--fg-secondary)",
+							fontSize: 13,
+							padding: "0 24px",
+							backgroundColor: "var(--bg-primary)",
+						}}
+					>
+						<span>
+							{paneState.fileName} is a binary file, so it has no diff.
+						</span>
+						{openPlainFileFromDiff && (
+							<button
+								type="button"
+								onClick={openPlainFileFromDiff}
+								className={secondaryButtonClass}
+								style={{ padding: "4px 12px", fontSize: 12 }}
+							>
+								Open PDF
+							</button>
+						)}
+					</div>
+				)}
 				{paneState.fileType === "diff" &&
+					!isPdfDiff &&
 					paneState.diffOriginal != null &&
 					paneState.diffModified != null &&
 					diffRealPath != null && (
@@ -891,6 +933,19 @@ export function FilePane({
 						mime={paneState.mime ?? "image/png"}
 						fileName={paneState.fileName}
 					/>
+				)}
+				{paneState.fileType === "pdf" && (
+					<div className="absolute inset-0 flex flex-col">
+						<PdfView
+							content={paneState.content ?? ""}
+							position={pdfPosition}
+							onPositionChange={onPdfPositionChange}
+							findOpen={findOpen}
+							onOpenFind={() => setFindOpen(true)}
+							onCloseFind={() => setFindOpen(false)}
+							focused={isFocused}
+						/>
+					</div>
 				)}
 				{paneState.fileType === "binary" && (
 					<UnsupportedFile fileName={paneState.fileName} size={0} />

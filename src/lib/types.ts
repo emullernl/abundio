@@ -1,3 +1,5 @@
+import type { PdfPosition } from "./pdfView";
+
 // ── Pane layout tree (recursive) ──
 
 /** Which view a markdown file shows, one at a time: rendered (read-only)
@@ -35,6 +37,9 @@ export type PaneNode =
 			/** A markdown file's view (ADR-0061). Absent: follow the
 			 *  **Open markdown rendered** setting. */
 			markdownView?: MarkdownView;
+			/** A PDF's page and zoom (docs/plans/pdf-viewer.md). Absent: the
+			 *  first page at fit width. */
+			pdfPosition?: PdfPosition;
 	  }
 	| {
 			// A live markdown preview bound to a file pane (its "source pane").
@@ -180,7 +185,7 @@ export interface DirEntry {
 }
 
 export interface FileContent {
-	fileType: "text" | "image" | "binary";
+	fileType: "text" | "image" | "pdf" | "binary";
 	content: string | null;
 	mime: string | null;
 	size: number;

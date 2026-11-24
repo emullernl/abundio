@@ -52,7 +52,7 @@ export function clickOpensFileWindow(
 
 /**
  * What a pane shows, as a File window target: the window shows what the pane
- * shows. A text or image File pane gives its file; a Preview pane gives its
+ * shows. A text, image or PDF File pane gives its file; a Preview pane gives its
  * source file; a live diff pane gives its diff; a Commit diff pane gives that
  * commit's diff. `null` for a binary pane, a terminal, or an unknown id.
  */
@@ -83,6 +83,8 @@ export function fileWindowTargetForPane(
 			};
 		case "image":
 			return { kind: "image", filePath: pane.filePath };
+		case "pdf":
+			return { kind: "pdf", filePath: pane.filePath };
 		case "diff": {
 			// A `.diff`/`.patch` file shown as a diff is still a file on disk.
 			if (pane.diffSource === "file") {

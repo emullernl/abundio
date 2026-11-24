@@ -45,6 +45,7 @@ pub mod migrations;
 pub mod orchestrator;
 pub mod owner_map;
 pub mod pane_facts;
+pub mod pdf_position;
 pub mod process_monitor;
 pub mod profile_store;
 pub mod prompt_actions;

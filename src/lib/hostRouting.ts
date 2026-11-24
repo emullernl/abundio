@@ -230,6 +230,7 @@ export const HOST_ROUTES: Record<string, Route> = {
 	orchestrator_tab_remove: profile(),
 	orchestrator_tab_select: profile(),
 	orchestrator_tab_set_view: profile(),
+	orchestrator_tab_set_pdf_position: profile(),
 	orchestrator_tabs_list: profile(),
 };
 

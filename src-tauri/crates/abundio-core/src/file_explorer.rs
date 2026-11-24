@@ -9,6 +9,9 @@ use std::path::Path;
 use crate::error::AbundioError;
 
 const MAX_FILE_SIZE: u64 = 5 * 1024 * 1024; // 5 MB
+/// PDFs are often bigger than other files a pane shows (manuals, specs), and
+/// are still read whole, as base64 (docs/plans/pdf-viewer.md).
+pub const MAX_PDF_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
 const DEFAULT_MAX_FILES: usize = 50_000;
 
 #[derive(Serialize)]
@@ -33,7 +36,7 @@ pub struct FileEntry {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileContent {
-	pub file_type: String, // "text" | "image" | "binary"
+	pub file_type: String, // "text" | "image" | "pdf" | "binary"
 	pub content: Option<String>,
 	pub mime: Option<String>,
 	pub size: u64,
@@ -67,6 +70,12 @@ fn extension_to_mime(ext: &str) -> Option<&'static str> {
 
 pub fn is_image_ext(ext: &str) -> bool {
 	extension_to_mime(ext).is_some()
+}
+
+/// A PDF, shown by the app's own viewer. `pdf` is also in `BINARY_EXTS`, so
+/// anything that skips binary files (search) still skips it.
+pub fn is_pdf_ext(ext: &str) -> bool {
+	ext == "pdf"
 }
 
 pub fn is_binary_ext(ext: &str) -> bool {
@@ -136,7 +145,9 @@ pub fn fs_read_file(path: String) -> Result<FileContent, AbundioError> {
 				.map(|e| e.to_string_lossy().to_lowercase())
 				.unwrap_or_default();
 
-			if ext.is_empty() || is_binary_ext(&ext) {
+			// A PDF with the executable bit (common on FAT and NTFS mounts)
+			// is still a PDF.
+			if ext.is_empty() || (is_binary_ext(&ext) && !is_pdf_ext(&ext)) {
 				return Ok(FileContent {
 					file_type: "binary".to_string(),
 					content: None,
@@ -168,6 +179,25 @@ pub fn fs_read_file(path: String) -> Result<FileContent, AbundioError> {
 			file_type: "image".to_string(),
 			content: Some(b64),
 			mime: Some(extension_to_mime(&ext).unwrap_or("application/octet-stream").to_string()),
+			size,
+		});
+	}
+
+	// PDFs, before the binary check that also lists them
+	if is_pdf_ext(&ext) {
+		if size > MAX_PDF_SIZE {
+			return Ok(FileContent {
+				file_type: "binary".to_string(),
+				content: None,
+				mime: None,
+				size,
+			});
+		}
+		let bytes = fs::read(file_path)?;
+		return Ok(FileContent {
+			file_type: "pdf".to_string(),
+			content: Some(base64::engine::general_purpose::STANDARD.encode(&bytes)),
+			mime: Some("application/pdf".to_string()),
 			size,
 		});
 	}
@@ -458,6 +488,45 @@ mod tests {
 	fn has_null_bytes_false() {
 		assert!(!has_null_bytes(b"hello"));
 		assert!(!has_null_bytes(b""));
+	}
+
+	#[test]
+	fn a_pdf_is_read_as_pdf() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let path = tmp.path().join("Doc.PDF");
+		fs::write(&path, b"%PDF-1.7\n\0binary").unwrap();
+		let read = fs_read_file(path.to_string_lossy().into_owned()).unwrap();
+		assert_eq!(read.file_type, "pdf");
+		assert_eq!(read.mime.as_deref(), Some("application/pdf"));
+		let bytes = base64::engine::general_purpose::STANDARD
+			.decode(read.content.unwrap())
+			.unwrap();
+		assert_eq!(bytes, b"%PDF-1.7\n\0binary");
+		// Search still treats it as binary.
+		assert!(is_binary_ext("pdf"));
+	}
+
+	#[test]
+	fn a_pdf_over_the_limit_is_binary() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let path = tmp.path().join("big.pdf");
+		let f = fs::File::create(&path).unwrap();
+		f.set_len(MAX_PDF_SIZE + 1).unwrap();
+		let read = fs_read_file(path.to_string_lossy().into_owned()).unwrap();
+		assert_eq!(read.file_type, "binary");
+		assert!(read.content.is_none());
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn an_executable_pdf_is_still_a_pdf() {
+		use std::os::unix::fs::PermissionsExt;
+		let tmp = tempfile::TempDir::new().unwrap();
+		let path = tmp.path().join("x.pdf");
+		fs::write(&path, b"%PDF-1.4").unwrap();
+		fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+		let read = fs_read_file(path.to_string_lossy().into_owned()).unwrap();
+		assert_eq!(read.file_type, "pdf");
 	}
 
 	fn make_file(dir: &Path, rel: &str, body: &str) {
