@@ -1,6 +1,6 @@
 [package]
 name = "abundio-server"
-version = "4.0.0"
+version = "4.1.0"
 description = "Abundio on a Host with no window: Workspaces, PTYs and Agents a desktop Client connects to over SSH"
 authors = ["Emil Müller"]
 edition = "2021"
