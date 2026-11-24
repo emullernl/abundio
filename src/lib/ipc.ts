@@ -591,6 +591,12 @@ export const orchestrator = {
 		invoke<void>("orchestrator_tab_select", { profileId, id }),
 	setTabView: (profileId: string, id: string, view: MarkdownView) =>
 		invoke<void>("orchestrator_tab_set_view", { profileId, id, view }),
+	setTabPdfPosition: (profileId: string, id: string, position: PdfPosition) =>
+		invoke<void>("orchestrator_tab_set_pdf_position", {
+			profileId,
+			id,
+			position,
+		}),
 	/** The Profile's **Orchestrator folder** (ADR-0059). */
 	folder: (profileId: string) =>
 		invoke<OrchestratorFolder>("orchestrator_folder_get", { profileId }),
@@ -620,12 +626,14 @@ export interface OrchestratorFileTab {
 	commitOid: string | null;
 	/** A markdown file's view (ADR-0061); null: follow the setting. */
 	view: MarkdownView | null;
+	/** A PDF's page and zoom; null: the first page at fit width. */
+	pdfPosition?: PdfPosition | null;
 }
 
 /** `view` on a tab already open replaces its own (`file open --preview`). */
 export type NewOrchestratorFileTab = Omit<
 	OrchestratorFileTab,
-	"id" | "commitOid" | "view"
+	"id" | "commitOid" | "view" | "pdfPosition"
 > & { commitOid?: string | null; view?: MarkdownView | null };
 
 /** See `workspaces.folderCheck`. */

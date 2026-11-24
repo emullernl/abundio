@@ -151,5 +151,6 @@ export const HOST_API_COMMANDS: ReadonlySet<string> = new Set([
 	"orchestrator_tab_remove",
 	"orchestrator_tab_select",
 	"orchestrator_tab_set_view",
+	"orchestrator_tab_set_pdf_position",
 	"orchestrator_tabs_list",
 ]);

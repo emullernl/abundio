@@ -642,6 +642,10 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
             let a = a!(c, raw, { profile_id: String, id: String, view: crate::workspace_store::MarkdownView });
             json(orch::orchestrator_tab_set_view(host.workspaces, a.profile_id, a.id, a.view)?)?
         }
+        "orchestrator_tab_set_pdf_position" => {
+            let a = a!(c, raw, { profile_id: String, id: String, position: crate::pdf_position::PdfPosition });
+            json(orch::orchestrator_tab_set_pdf_position(host.workspaces, a.profile_id, a.id, a.position)?)?
+        }
         // ── Agent control: the Window's side of a call ──
         "agent_control_reply" => {
             let a = a!(c, raw, { id: String, reply: Value });

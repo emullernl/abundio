@@ -9,9 +9,11 @@ import {
 import {
 	openOrchestratorFile,
 	requestCloseOrchestratorTab,
+	setOrchestratorTabPdfPosition,
 	setOrchestratorTabView,
 	tabPaneId,
 } from "../../lib/orchestratorTabs";
+import type { PdfPosition } from "../../lib/pdfView";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useOrchestratorStore } from "../../stores/orchestratorStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
@@ -170,6 +172,10 @@ function TabBody({
 		(view: MarkdownView) => setOrchestratorTabView(tab.id, view),
 		[tab.id],
 	);
+	const onPdfPositionChange = useCallback(
+		(position: PdfPosition) => setOrchestratorTabPdfPosition(tab.id, position),
+		[tab.id],
+	);
 	const onOpenMarkdownLink = useCallback(
 		(path: string) => {
 			// A tab already showing the file keeps its own view; a new one
@@ -209,6 +215,8 @@ function TabBody({
 			embedded={{ onClose, closeLabel: "Close Tab", onOpenMarkdownLink }}
 			markdownView={tab.view ?? undefined}
 			onMarkdownViewChange={onMarkdownViewChange}
+			pdfPosition={tab.pdfPosition}
+			onPdfPositionChange={onPdfPositionChange}
 		/>
 	);
 }

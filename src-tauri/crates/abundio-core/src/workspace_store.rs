@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
 use crate::error::AbundioError;
+use crate::pdf_position::PdfPosition;
 
 /// The name of a new Workspace's first Tab. Same literal as `FIRST_TAB_NAME`
 /// in `src/lib/tabName.ts`; change both together.
@@ -47,6 +48,10 @@ pub struct OrchestratorTab {
     /// A markdown file's view (ADR-0061): `rendered`, `source`, or `None`
     /// to follow the "Open markdown rendered" setting.
     pub view: Option<MarkdownView>,
+    /// A PDF's page and zoom (docs/plans/pdf-viewer.md); `None`: the first
+    /// page at fit width.
+    #[serde(default)]
+    pub pdf_position: Option<PdfPosition>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -587,7 +592,7 @@ impl WorkspaceStore {
     ) -> Result<(Vec<OrchestratorTab>, Option<String>), AbundioError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, workspace_id, kind, path, commit_oid, view FROM orchestrator_tabs
+            "SELECT id, workspace_id, kind, path, commit_oid, view, pdf_position FROM orchestrator_tabs
              WHERE profile_id = ?1 ORDER BY position ASC, created_at ASC",
         )?;
         let tabs = stmt
@@ -599,6 +604,7 @@ impl WorkspaceStore {
                     path: r.get(3)?,
                     commit_oid: r.get(4)?,
                     view: tab_view(r.get(5)?),
+                    pdf_position: PdfPosition::from_stored(r.get(6)?),
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -631,15 +637,15 @@ impl WorkspaceStore {
         if owner.as_deref() != Some(profile_id) {
             return Err(AbundioError::NotFound(format!("Workspace not found: {}", tab.workspace_id)));
         }
-        let existing: Option<(String, Option<String>)> = conn
+        let existing: Option<(String, Option<String>, Option<String>)> = conn
             .query_row(
-                "SELECT id, view FROM orchestrator_tabs WHERE profile_id = ?1 AND workspace_id = ?2
+                "SELECT id, view, pdf_position FROM orchestrator_tabs WHERE profile_id = ?1 AND workspace_id = ?2
                    AND kind = ?3 AND path = ?4 AND COALESCE(commit_oid, '') = COALESCE(?5, '')",
                 rusqlite::params![profile_id, tab.workspace_id, tab.kind, tab.path, tab.commit_oid],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()?;
-        if let Some((id, stored)) = existing {
+        if let Some((id, stored, pdf_position)) = existing {
             let view = match tab.view {
                 Some(view) => {
                     conn.execute(
@@ -657,6 +663,7 @@ impl WorkspaceStore {
                 path: tab.path,
                 commit_oid: tab.commit_oid,
                 view,
+                pdf_position: PdfPosition::from_stored(pdf_position),
             });
         }
         let id = uuid::Uuid::new_v4().to_string();
@@ -686,7 +693,27 @@ impl WorkspaceStore {
             path: tab.path,
             commit_oid: tab.commit_oid,
             view: tab.view,
+            pdf_position: None,
         })
+    }
+
+    /// Remembers a PDF tab's page and zoom.
+    pub fn set_orchestrator_tab_pdf_position(
+        &self,
+        profile_id: &str,
+        id: &str,
+        position: PdfPosition,
+    ) -> Result<(), AbundioError> {
+        let json = position.checked()?.to_json();
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE orchestrator_tabs SET pdf_position = ?3 WHERE profile_id = ?1 AND id = ?2",
+            rusqlite::params![profile_id, id, json],
+        )?;
+        if changed == 0 {
+            return Err(AbundioError::NotFound(format!("Orchestrator tab not found: {id}")));
+        }
+        Ok(())
     }
 
     /// Remembers a file tab's markdown view (ADR-0061).

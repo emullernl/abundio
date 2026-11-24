@@ -1292,7 +1292,8 @@ mod tests {
         assert_eq!(kind_for_path(Path::new("a.PNG")), Some(FileWindowKind::Image));
         assert_eq!(kind_for_path(Path::new("a.svg")), Some(FileWindowKind::Image));
         assert_eq!(kind_for_path(Path::new("a.zip")), None);
-        assert_eq!(kind_for_path(Path::new("a.pdf")), None);
+        assert_eq!(kind_for_path(Path::new("a.docx")), None);
+        assert_eq!(kind_for_path(Path::new("a.pdf")), Some(FileWindowKind::Pdf));
     }
 
     #[test]

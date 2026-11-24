@@ -183,6 +183,7 @@ const HOST = [
 	"orchestrator_tab_remove",
 	"orchestrator_tab_select",
 	"orchestrator_tab_set_view",
+	"orchestrator_tab_set_pdf_position",
 	"orchestrator_tabs_list",
 	"pane_facts_report",
 	"profile_create",
