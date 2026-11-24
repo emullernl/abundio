@@ -6,9 +6,13 @@
  * `/terminal-setup` configures elsewhere), and zsh's line editor inserts a
  * literal new line for it too.
  *
- * Applies on the normal screen, and on the alternate screen only in an
- * agent-mode pane: full-screen programs that are not Agents (vim, lazygit)
- * would read ESC + CR as "leave insert mode, then Enter".
+ * Applies always in an agent-mode pane, whichever screen the Agent draws on.
+ * Outside agent mode it applies only at the shell's prompt: a program the
+ * shell is running may read the leading ESC as "cancel" (clack and inquirer
+ * prompts, `read -p`, REPLs), and full-screen programs (vim, lazygit) as
+ * "leave insert mode, then Enter". Those keep a plain Enter. A shell without
+ * shell integration never reports a running command, so there it applies
+ * outside the alternate screen.
  */
 
 export const SHIFT_ENTER_SEQUENCE = "\x1b\r";
@@ -28,6 +32,8 @@ export interface ShiftEnterContext {
 	alternateScreen: boolean;
 	/** The pane's PTY is in agent mode. */
 	agentMode: boolean;
+	/** Shell integration reports a command running (not at the prompt). */
+	commandRunning: boolean;
 }
 
 /** The bytes to send for this keypress, or null to leave it to xterm. */
@@ -39,6 +45,8 @@ export function shiftEnterSequence(
 	if (event.altKey || event.ctrlKey || event.metaKey) return null;
 	// An input method is composing: Enter commits the composition.
 	if (event.isComposing) return null;
-	if (ctx.alternateScreen && !ctx.agentMode) return null;
+	if (!ctx.agentMode && (ctx.alternateScreen || ctx.commandRunning)) {
+		return null;
+	}
 	return SHIFT_ENTER_SEQUENCE;
 }

@@ -1368,7 +1368,7 @@ export async function createTerminal(
 		// the input bookkeeping matches a typed key.
 		const newline = shiftEnterSequence(event, {
 			alternateScreen,
-			agentMode: isPaneAgentMode(managed.ptyId),
+			...paneInputContext(managed.ptyId),
 		});
 		if (newline !== null) {
 			event.preventDefault();
@@ -1419,12 +1419,19 @@ export async function createTerminal(
 	return managed;
 }
 
-/** Whether this PTY is in agent mode, as the activity store has it. */
-function isPaneAgentMode(ptyId: string | null | undefined): boolean {
-	if (!ptyId) return false;
-	return (
-		usePtyActivityStore.getState().activities[ptyId]?.detectionMode === "agent"
-	);
+/** Whether this PTY is in agent mode and whether its shell is running a
+ *  command, as the activity store has them. */
+function paneInputContext(ptyId: string | null | undefined): {
+	agentMode: boolean;
+	commandRunning: boolean;
+} {
+	const entry = ptyId
+		? usePtyActivityStore.getState().activities[ptyId]
+		: undefined;
+	return {
+		agentMode: entry?.detectionMode === "agent",
+		commandRunning: entry?.shellCommandRunning ?? false,
+	};
 }
 
 /** Run the deferred PTY init (listener registration + spawn) if it hasn't

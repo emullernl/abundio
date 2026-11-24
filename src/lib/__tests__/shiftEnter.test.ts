@@ -14,7 +14,11 @@ const ev = (partial: Partial<ShiftEnterKeyEvent>): ShiftEnterKeyEvent => ({
 	...partial,
 });
 
-const normal = { alternateScreen: false, agentMode: false };
+const normal = {
+	alternateScreen: false,
+	agentMode: false,
+	commandRunning: false,
+};
 
 describe("shiftEnterSequence", () => {
 	it("sends ESC + CR, the same as Option/Alt+Enter", () => {
@@ -22,19 +26,40 @@ describe("shiftEnterSequence", () => {
 		expect(shiftEnterSequence(ev({}), normal)).toBe("\x1b\r");
 	});
 
-	it("applies on the normal screen whether or not an Agent runs", () => {
-		expect(
-			shiftEnterSequence(ev({}), { alternateScreen: false, agentMode: true }),
-		).toBe("\x1b\r");
+	it("applies at the shell prompt and in agent mode", () => {
+		expect(shiftEnterSequence(ev({}), { ...normal, agentMode: true })).toBe(
+			"\x1b\r",
+		);
 	});
 
 	it("applies on the alternate screen only in agent mode", () => {
 		expect(
-			shiftEnterSequence(ev({}), { alternateScreen: true, agentMode: true }),
+			shiftEnterSequence(ev({}), {
+				...normal,
+				alternateScreen: true,
+				agentMode: true,
+			}),
 		).toBe("\x1b\r");
 		expect(
-			shiftEnterSequence(ev({}), { alternateScreen: true, agentMode: false }),
+			shiftEnterSequence(ev({}), { ...normal, alternateScreen: true }),
 		).toBeNull();
+	});
+
+	it("leaves a running non-Agent command a plain Enter", () => {
+		// clack / inquirer prompts and `read -p` read the leading ESC as cancel.
+		expect(
+			shiftEnterSequence(ev({}), { ...normal, commandRunning: true }),
+		).toBeNull();
+	});
+
+	it("applies in agent mode even though the Agent is the running command", () => {
+		expect(
+			shiftEnterSequence(ev({}), {
+				...normal,
+				agentMode: true,
+				commandRunning: true,
+			}),
+		).toBe("\x1b\r");
 	});
 
 	it("leaves plain Enter to xterm", () => {
