@@ -31,7 +31,8 @@ export function startHostSettingsMirror(): () => void {
 			s.agentHooksEnabled === prev.agentHooksEnabled &&
 			s.agentSkillEnabled === prev.agentSkillEnabled &&
 			s.shellPath === prev.shellPath &&
-			s.terminalScrollback === prev.terminalScrollback
+			s.terminalScrollback === prev.terminalScrollback &&
+			s.declinedWatchOffers === prev.declinedWatchOffers
 		) {
 			return;
 		}

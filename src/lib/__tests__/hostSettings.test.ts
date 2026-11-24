@@ -27,6 +27,7 @@ describe("hostSettingsFromApp", () => {
 			agentSkillEnabled: false,
 			shellPath: "/bin/zsh",
 			terminalScrollback: 5000,
+			declinedWatchOffers: ["codex"],
 		});
 		expect(s).toEqual({
 			agentSwitches: { claude: true, opencode: false },
@@ -35,6 +36,7 @@ describe("hostSettingsFromApp", () => {
 			agentSkillEnabled: false,
 			shellPath: "/bin/zsh",
 			scrollback: 5000,
+			declinedAgents: ["codex"],
 		});
 	});
 });

@@ -16,6 +16,9 @@ export interface HostSettings {
 	shellPath: string | null;
 	/** `null`: the app's default. */
 	scrollback: number | null;
+	/** Built-in Agents answered *Never* in a **Watch offer**. Missing from
+	 *  an older Host's record. */
+	declinedAgents?: string[];
 }
 
 /** This computer's Host settings as the app kept them until now, in its own
@@ -26,6 +29,7 @@ export function hostSettingsFromApp(app: {
 	agentSkillEnabled: boolean;
 	shellPath: string | null;
 	terminalScrollback: number;
+	declinedWatchOffers: string[];
 }): HostSettings {
 	const agentSwitches: Record<string, boolean> = {};
 	for (const a of app.agents) if (a.builtin) agentSwitches[a.id] = a.enabled;
@@ -36,5 +40,6 @@ export function hostSettingsFromApp(app: {
 		agentSkillEnabled: app.agentSkillEnabled,
 		shellPath: app.shellPath,
 		scrollback: app.terminalScrollback,
+		declinedAgents: app.declinedWatchOffers,
 	};
 }

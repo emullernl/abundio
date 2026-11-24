@@ -171,6 +171,7 @@ import {
 	useTabCloseConfirmStore,
 } from "./stores/tabCloseConfirmStore";
 import { useUpdateStore } from "./stores/updateStore";
+import { startWatchOffers } from "./stores/watchOfferStore";
 import { useWindowUiStore } from "./stores/windowUiStore";
 import { useWorkspaceGitStore } from "./stores/workspaceGitStore";
 import { useWorkspaceStore } from "./stores/workspaceStore";
@@ -961,6 +962,7 @@ export function App() {
 
 	// The Agents a typed command can start, for Rust's shell integration.
 	useEffect(() => startAgentCommandsSync(), []);
+	useEffect(() => startWatchOffers(), []);
 	// This computer's Host settings follow its app settings (ADR-0064).
 	useEffect(() => startHostSettingsMirror(), []);
 

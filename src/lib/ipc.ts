@@ -238,8 +238,63 @@ export const statusApi = {
 /** The Agents a command typed at a prompt can start, for Rust's shell
  *  integration (`lib/agentCommandsSync.ts`). */
 export const agentCommandsApi = {
-	set: (list: { id: string; command: string; enabled: boolean }[]) =>
-		invoke<void>("agent_commands_set", { list }),
+	/** The Agent list, and what the **Watch offer** reads: the Status Hooks
+	 *  setting and the Agents declined with *Never*. */
+	set: (
+		list: { id: string; command: string; enabled: boolean }[],
+		offer?: { hooksEnabled: boolean; declined: string[] },
+	) =>
+		invoke<void>("agent_commands_set", {
+			list,
+			...(offer
+				? { hooksEnabled: offer.hooksEnabled, declined: offer.declined }
+				: {}),
+		}),
+};
+
+/** A **Watch offer** (docs/plans/watch-offer.md): Rust offers to Watch an
+ *  Agent typed at a pane's prompt, or to restart one whose hooks it just
+ *  wrote. */
+export interface WatchOfferEvent {
+	ptyId: string;
+	agentId: string;
+	kind: "watch" | "restart";
+}
+
+export const watchOfferApi = {
+	/** Raised for one of this Window's PTYs. */
+	onOffer: (cb: (e: WatchOfferEvent) => void) =>
+		listenToThisWindow<WatchOfferEvent & { fromHost?: string }>(
+			"watch-offer",
+			(e) => {
+				if (
+					sentByOwnerOf(e.payload.fromHost, "pty", e.payload.ptyId, {
+						unknownOk: true,
+					})
+				)
+					cb(e.payload);
+			},
+		),
+	/** Answered somewhere (any Window, any Client of the Host). */
+	onClosed: (cb: (agentId: string, watched: boolean) => void) =>
+		listen<{ agentId: string; watched?: boolean }>("watch-offer-closed", (e) =>
+			cb(e.payload.agentId, !!e.payload.watched),
+		),
+	/** Close every banner for `agentId`; `snooze` (*Not now*) also stops
+	 *  offering it until the Host starts again, and `watched` (Enable) turns
+	 *  the other panes' banners into a restart offer. Sent to the pane's
+	 *  Host. */
+	close: (
+		paneId: string,
+		agentId: string,
+		opts: { snooze?: boolean; watched?: boolean },
+	) =>
+		invoke<void>("watch_offer_close", {
+			paneId,
+			agentId,
+			snooze: !!opts.snooze,
+			watched: !!opts.watched,
+		}),
 };
 
 /** How the desktop reaches a remote Host (Rust's `host_router::HostTarget`). */

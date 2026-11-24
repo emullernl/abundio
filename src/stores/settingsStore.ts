@@ -89,6 +89,11 @@ interface SettingsState {
 	/** **Session resume** (ADR-0050): relaunched Agents reopen their last
 	 *  conversation instead of starting fresh. */
 	resumeAgentSessions: boolean;
+	/** Built-in Agents answered *Never* in a **Watch offer**: this computer's
+	 *  Host settings (`declinedAgents`), mirrored into its database. */
+	declinedWatchOffers: string[];
+	/** *Never* for one Agent's **Watch offer**. */
+	declineWatchOffer: (agentId: string) => void;
 	/** **Workspace restore** (ADR-0052): a Profile reopens the Workspaces it
 	 *  had Opened, and its Active one, whenever it opens in a Window. */
 	reopenWorkspacesOnOpen: boolean;
@@ -266,6 +271,7 @@ export const PERSISTED_KEYS = [
 	"smartImageDrop",
 	"appIconBadgeEnabled",
 	"resumeAgentSessions",
+	"declinedWatchOffers",
 	"reopenWorkspacesOnOpen",
 	"showActionBar",
 	"agentsListGrouped",
@@ -326,6 +332,7 @@ const PERSISTED_DEFAULTS: {
 	smartImageDrop: boolean;
 	appIconBadgeEnabled: boolean;
 	resumeAgentSessions: boolean;
+	declinedWatchOffers: string[];
 	reopenWorkspacesOnOpen: boolean;
 	showActionBar: boolean;
 	agentsListGrouped: boolean;
@@ -369,6 +376,7 @@ const PERSISTED_DEFAULTS: {
 		smartImageDrop: true,
 		appIconBadgeEnabled: true,
 		resumeAgentSessions: true,
+		declinedWatchOffers: [],
 		reopenWorkspacesOnOpen: true,
 		showActionBar: true,
 		agentsListGrouped: true,
@@ -506,6 +514,11 @@ const PERSISTED_DEFAULTS: {
 				typeof s.resumeAgentSessions === "boolean"
 					? s.resumeAgentSessions
 					: defaults.resumeAgentSessions,
+			declinedWatchOffers: Array.isArray(s.declinedWatchOffers)
+				? s.declinedWatchOffers.filter(
+						(id: unknown): id is string => typeof id === "string",
+					)
+				: defaults.declinedWatchOffers,
 			reopenWorkspacesOnOpen:
 				typeof s.reopenWorkspacesOnOpen === "boolean"
 					? s.reopenWorkspacesOnOpen
@@ -712,6 +725,7 @@ export const useSettingsStore = create<SettingsState>()(
 			smartImageDrop: PERSISTED_DEFAULTS.smartImageDrop,
 			appIconBadgeEnabled: PERSISTED_DEFAULTS.appIconBadgeEnabled,
 			resumeAgentSessions: PERSISTED_DEFAULTS.resumeAgentSessions,
+			declinedWatchOffers: PERSISTED_DEFAULTS.declinedWatchOffers,
 			reopenWorkspacesOnOpen: PERSISTED_DEFAULTS.reopenWorkspacesOnOpen,
 			showActionBar: PERSISTED_DEFAULTS.showActionBar,
 			agentsListGrouped: PERSISTED_DEFAULTS.agentsListGrouped,
@@ -821,6 +835,10 @@ export const useSettingsStore = create<SettingsState>()(
 			},
 			matchAgentsToInstalled: async (installed) => {
 				if (installed.size === 0) return "empty-scan";
+				// The toggles now describe the machine again, so every Watch
+				// offer answered *Never* may be asked again.
+				if (get().declinedWatchOffers.length > 0)
+					set({ declinedWatchOffers: [] });
 				const before = get().agents;
 				const after = seedWatchedFromInstalled(before, installed);
 				// Identity, not deep equality: seedWatchedFromInstalled returns the
@@ -916,6 +934,12 @@ export const useSettingsStore = create<SettingsState>()(
 				set({ appIconBadgeEnabled }),
 			setResumeAgentSessions: (resumeAgentSessions) =>
 				set({ resumeAgentSessions }),
+			declineWatchOffer: (agentId) =>
+				set((s) =>
+					s.declinedWatchOffers.includes(agentId)
+						? s
+						: { declinedWatchOffers: [...s.declinedWatchOffers, agentId] },
+				),
 			setReopenWorkspacesOnOpen: (reopenWorkspacesOnOpen) =>
 				set({ reopenWorkspacesOnOpen }),
 			setShowActionBar: (showActionBar) => set({ showActionBar }),
