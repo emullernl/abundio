@@ -2,8 +2,9 @@
  * Print a PDF (docs/plans/pdf-viewer.md). Each page is drawn by pdf.js at
  * print resolution into an image, the images go into a print-only element,
  * and the webview's own print dialog prints them — the way `markdownPrint.ts`
- * prints rendered markdown. One page per sheet, sized as the PDF's first page,
- * with no margin: the PDF carries its own.
+ * prints rendered markdown. One page per sheet: @page asks for the PDF's first
+ * page size with no margin (the PDF carries its own), and each page fills the
+ * printable width whatever paper the dialog picks.
  */
 
 const PRINT_DIV_ID = "abundio-pdf-print";
@@ -30,15 +31,18 @@ export function pdfPrintCss(widthPt: number, heightPt: number): string {
   }
   body > *:not(#${PRINT_DIV_ID}) { display: none !important; }
   #${PRINT_DIV_ID} { display: block !important; }
+  /* No fixed sheet size: the print dialog may use other paper and margins
+     than @page asks for (WebKit does), and a sheet a hair taller than the
+     printable area spills a blank sheet after every page. Each page takes
+     the printable width; its height follows. */
   #${PRINT_DIV_ID} > div {
-    width: ${widthPt}pt;
-    height: ${heightPt}pt;
-    overflow: hidden;
+    break-inside: avoid;
+    page-break-inside: avoid;
     break-after: page;
     page-break-after: always;
   }
   #${PRINT_DIV_ID} > div:last-child { break-after: auto; page-break-after: auto; }
-  #${PRINT_DIV_ID} img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  #${PRINT_DIV_ID} img { width: 100%; height: auto; display: block; }
 }`;
 }
 

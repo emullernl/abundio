@@ -44,10 +44,18 @@ function fakeDoc(numPages: number, onRender?: (n: number) => void) {
 }
 
 describe("pdfPrintCss", () => {
-	it("sizes the sheet as the page, with no margin", () => {
+	it("asks for the page's size with no margin", () => {
+		expect(pdfPrintCss(612, 792)).toContain(
+			"@page { size: 612pt 792pt; margin: 0; }",
+		);
+	});
+
+	it("never fixes a sheet's height, so a page cannot spill onto a blank sheet", () => {
 		const css = pdfPrintCss(612, 792);
-		expect(css).toContain("@page { size: 612pt 792pt; margin: 0; }");
-		expect(css).toContain("break-after: page");
+		const sheetRule = css.slice(css.indexOf("> div {"));
+		expect(sheetRule).not.toMatch(/height:\s*792pt/);
+		expect(css).toContain("break-inside: avoid");
+		expect(css).toContain("width: 100%; height: auto");
 	});
 });
 
