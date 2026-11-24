@@ -894,8 +894,8 @@ export const git = {
 	/** Fetch the remote the current branch's Upstream lives on (ADR-0066).
 	 *  Never throws for a network failure: that is a `failed` outcome. Every
 	 *  Workspace of the repository gets a fresh bundle afterwards. */
-	fetchUpstream: (cwd: string) =>
-		invoke<FetchOutcome>("git_fetch_upstream", { cwd }),
+	fetchUpstream: (cwd: string, background = false) =>
+		invoke<FetchOutcome>("git_fetch_upstream", { cwd, background }),
 
 	/** Fetch, then fast-forward to the Upstream, or say why not (ADR-0066). */
 	pullFf: (cwd: string) => invoke<PullOutcome>("git_pull_ff", { cwd }),

@@ -97,7 +97,7 @@ export function upstreamTooltip(
 	}
 	lines.push(
 		opts.lastMs === null
-			? "Not checked yet."
+			? "Not checked yet. A repository nobody has fetched in is checked only by hand (Check for incoming commits)."
 			: `Last checked ${ago(opts.lastMs, opts.now)}.`,
 	);
 	if (opts.error) lines.push(`Last check failed: ${opts.error}`);

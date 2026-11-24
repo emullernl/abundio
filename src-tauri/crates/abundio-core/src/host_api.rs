@@ -416,8 +416,9 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
             Value::Null
         }
         "git_fetch_upstream" => {
-            let cwd = a!(c, raw, { cwd: String }).cwd;
-            let outcome = crate::git_upstream::fetch_upstream(&cwd)?;
+            let a = a!(c, raw, { cwd: String, background: Option<bool> });
+            let outcome =
+                crate::git_upstream::fetch_upstream(&a.cwd, a.background.unwrap_or(false))?;
             if let crate::git_upstream::FetchOutcome::Fetched { common_dir } = &outcome {
                 host.git.refresh_repo(common_dir);
             }

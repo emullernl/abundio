@@ -41,12 +41,24 @@ describe("checkIncoming", () => {
 	it("remembers a failure for the tooltip, quietly", async () => {
 		fetchUpstream.mockResolvedValue({ kind: "failed", message: "offline" });
 		await checkIncoming("w1");
-		expect(fetchUpstream).toHaveBeenCalledWith("/repo");
+		expect(fetchUpstream).toHaveBeenCalledWith("/repo", false);
 		const s = useIncomingStore.getState();
 		expect(s.errorById.w1).toBe("offline");
 		expect(s.lastAttemptById.w1).toBeGreaterThan(0);
 		expect(s.checking.has("w1")).toBe(false);
 		expect(s.dialog).toBeNull();
+	});
+	it("passes a background check on to Rust", async () => {
+		fetchUpstream.mockResolvedValue({ kind: "skipped" });
+		await checkIncoming("w1", { background: true });
+		expect(fetchUpstream).toHaveBeenCalledWith("/repo", true);
+		expect(useIncomingStore.getState().errorById.w1).toBeUndefined();
+	});
+	it("does not clear checking under a running Pull", async () => {
+		useIncomingStore.setState({ pulling: new Set(["w1"]) });
+		fetchUpstream.mockResolvedValue({ kind: "fetched" });
+		await checkIncoming("w1");
+		expect(useIncomingStore.getState().checking.has("w1")).toBe(true);
 	});
 	it("clears the failure on success", async () => {
 		useIncomingStore.setState({ errorById: { w1: "offline" } });
@@ -73,6 +85,7 @@ describe("pullWorkspace", () => {
 		expect(pullFf).toHaveBeenCalledWith("/repo");
 		expect(useIncomingStore.getState().dialog).toBeNull();
 		expect(useIncomingStore.getState().pulling.has("w1")).toBe(false);
+		expect(useIncomingStore.getState().checking.has("w1")).toBe(false);
 	});
 	it("shows why a Pull was refused", async () => {
 		const outcome = {

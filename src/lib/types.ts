@@ -329,6 +329,8 @@ export interface UpstreamState {
 export type FetchOutcome =
 	| { kind: "fetched" }
 	| { kind: "noUpstream" }
+	/** A background check of a repository never fetched in: not run. */
+	| { kind: "skipped" }
 	| { kind: "failed"; message: string };
 
 export type PullRefusedReason =

@@ -22,12 +22,17 @@ use crate::git_core::HistoryCommit;
 
 /// At most this many Incoming commits are listed; the count is always true.
 pub const INCOMING_LIST_CAP: usize = 50;
-/// How long a fetch's result is reused by the next caller for the same
+/// How long a successful fetch is reused by the next caller for the same
 /// repository and remote, so a Worktree set is fetched once, and a Pull right
-/// after a check does not fetch twice.
+/// after a check does not fetch twice. A failure is never reused: the next
+/// try may be the one after the user unlocked their ssh agent.
 const FETCH_REUSE: Duration = Duration::from_secs(10);
-/// A fetch or merge that takes longer than this is killed.
-const GIT_TIMEOUT: Duration = Duration::from_secs(60);
+/// A fetch that takes longer than this is killed. Generous: a first fetch of
+/// a busy remote over a slow link takes minutes.
+const FETCH_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+/// The fast-forward itself is local, but a `post-merge` hook (an install
+/// step) runs inside it.
+const MERGE_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -173,7 +178,8 @@ fn quiet_git(cwd: &Path) -> Command {
     let mut cmd = Command::new("git");
     cmd.current_dir(cwd)
         .stdin(Stdio::null())
-        .stdout(Stdio::piped())
+        // Nothing reads stdout; a hook may print a lot to it.
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GCM_INTERACTIVE", "never")
@@ -196,9 +202,12 @@ fn quiet_git(cwd: &Path) -> Command {
     cmd
 }
 
-/// Run to completion or kill at the timeout. Ok(stderr) on success,
-/// Err(message) otherwise.
-fn run(mut cmd: Command) -> Result<String, String> {
+/// Run to completion or kill at `timeout`. Ok(stderr) on success,
+/// Err(message) otherwise. stderr is drained on its own thread while this one
+/// watches the clock: a hook that prints more than the pipe holds would
+/// otherwise block git on its write until the timeout killed it.
+fn run(mut cmd: Command, timeout: Duration) -> Result<String, String> {
+    use std::io::Read;
     let mut child = cmd.spawn().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             "git not found".to_string()
@@ -206,25 +215,37 @@ fn run(mut cmd: Command) -> Result<String, String> {
             format!("could not run git: {e}")
         }
     })?;
+    let reader = child.stderr.take().map(|mut e| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = e.read_to_end(&mut buf);
+            buf
+        })
+    });
     let start = Instant::now();
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if start.elapsed() > GIT_TIMEOUT => {
+            Ok(Some(status)) => break status,
+            Ok(None) if start.elapsed() > timeout => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err("git timed out".to_string());
+                return Err(format!(
+                    "git timed out after {} min",
+                    timeout.as_secs().div_ceil(60)
+                ));
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(50)),
             Err(e) => return Err(format!("git: {e}")),
         }
-    }
-    let out = child.wait_with_output().map_err(|e| format!("git: {e}"))?;
-    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-    if out.status.success() {
+    };
+    let stderr = reader
+        .and_then(|h| h.join().ok())
+        .map(|b| String::from_utf8_lossy(&b).trim().to_string())
+        .unwrap_or_default();
+    if status.success() {
         Ok(stderr)
     } else if stderr.is_empty() {
-        Err(format!("git exited with {}", out.status))
+        Err(format!("git exited with {status}"))
     } else {
         Err(stderr)
     }
@@ -243,6 +264,9 @@ pub enum FetchOutcome {
     },
     /// No Upstream to fetch: detached HEAD, or a branch that tracks nothing.
     NoUpstream,
+    /// A background check of a repository nobody has fetched in yet: left
+    /// alone until the user checks or pulls by hand (ADR-0066).
+    Skipped,
     Failed {
         message: String,
     },
@@ -256,12 +280,21 @@ fn fetch_slots() -> &'static DashMap<String, FetchSlot> {
 
 /// Fetch the remote the current branch's Upstream lives on. One fetch at a
 /// time per (repository, remote); a caller within `FETCH_REUSE` of the last
-/// one gets its result instead of fetching again.
-pub fn fetch_upstream(cwd: &str) -> Result<FetchOutcome, AbundioError> {
+/// successful one gets its result instead of fetching again.
+///
+/// `background` is a fetch nobody asked for (the timer, window focus). It runs
+/// only in a repository that has fetched before (it has a FETCH_HEAD), so a
+/// folder from an untrusted source does not get its `.git/config` acted on
+/// just by being opened as a Workspace. Every fetch also turns hooks and
+/// fsmonitor off, which a fetch has no use for.
+pub fn fetch_upstream(cwd: &str, background: bool) -> Result<FetchOutcome, AbundioError> {
     let repo = open(cwd)?;
     let Some((_, _, remote, _)) = upstream_of(&repo) else {
         return Ok(FetchOutcome::NoUpstream);
     };
+    if background && last_fetched(&repo).is_none() {
+        return Ok(FetchOutcome::Skipped);
+    }
     let common = std::fs::canonicalize(repo.commondir()).unwrap_or(repo.commondir().into());
     drop(repo);
     let key = format!("{}\n{remote}", common.display());
@@ -273,14 +306,27 @@ pub fn fetch_upstream(cwd: &str) -> Result<FetchOutcome, AbundioError> {
         }
     }
     // Git writes FETCH_HEAD, which is what `last_fetched` reads, as it does
-    // for a fetch typed in a terminal.
+    // for a fetch typed in a terminal. `--` so a remote name can never be
+    // read as an option.
     let mut cmd = quiet_git(Path::new(cwd));
-    cmd.args(["fetch", "--quiet", &remote]);
-    let outcome = match run(cmd) {
+    cmd.args([
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "core.fsmonitor=false",
+        "fetch",
+        "--quiet",
+        "--",
+        &remote,
+    ]);
+    let outcome = match run(cmd, FETCH_TIMEOUT) {
         Ok(_) => FetchOutcome::Fetched { common_dir: common },
         Err(message) => FetchOutcome::Failed { message },
     };
-    *guard = Some((Instant::now(), outcome.clone()));
+    *guard = match outcome {
+        FetchOutcome::Fetched { .. } => Some((Instant::now(), outcome.clone())),
+        _ => None,
+    };
     Ok(outcome)
 }
 
@@ -426,31 +472,37 @@ fn pull_blocker(cwd: &str) -> Result<Option<PullOutcome>, AbundioError> {
 /// Workspaces afterwards, whatever the outcome: the fetch alone may have moved
 /// their counts.
 pub fn pull_ff(cwd: &str) -> Result<PullOutcome, AbundioError> {
-    if let FetchOutcome::Failed { message } = fetch_upstream(cwd)? {
+    if let FetchOutcome::Failed { message } = fetch_upstream(cwd, false)? {
         return Ok(PullOutcome::FetchFailed { message });
     }
     if let Some(blocked) = pull_blocker(cwd)? {
         return Ok(blocked);
     }
     let repo = open(cwd)?;
-    let (_, name, _, _) =
+    let (_, name, _, tip) =
         upstream_of(&repo).ok_or_else(|| AbundioError::Git("no upstream".into()))?;
     let head = repo.head().ok().and_then(|h| h.target());
     drop(repo);
     let mut cmd = quiet_git(Path::new(cwd));
     cmd.args(["merge", "--ff-only", "--quiet", "@{u}"]);
-    match run(cmd) {
-        Ok(_) => {
-            let repo = open(cwd)?;
-            let count = match (head, repo.head().ok().and_then(|h| h.target())) {
-                (Some(a), Some(b)) => repo.graph_ahead_behind(b, a).map(|(n, _)| n).unwrap_or(0),
-                _ => 0,
-            };
-            Ok(PullOutcome::Pulled {
-                count,
-                upstream: name,
-            })
-        }
+    let result = run(cmd, MERGE_TIMEOUT);
+    // The branch moving is what counts. A `post-merge` hook runs after the
+    // fast-forward, so a hook that fails or runs past the timeout must not
+    // turn a done Pull into a "failed" one.
+    let repo = open(cwd)?;
+    let now = repo.head().ok().and_then(|h| h.target());
+    if result.is_ok() || (now.is_some() && now != head && now == Some(tip)) {
+        let count = match (head, now) {
+            (Some(a), Some(b)) => repo.graph_ahead_behind(b, a).map(|(n, _)| n).unwrap_or(0),
+            _ => 0,
+        };
+        return Ok(PullOutcome::Pulled {
+            count,
+            upstream: name,
+        });
+    }
+    match result {
+        Ok(_) => unreachable!("handled above"),
         Err(message) => {
             // Our own check missed something git saw (a race with an Agent,
             // or a case like a case-only rename): report git's file list.
@@ -607,7 +659,7 @@ mod tests {
         git(&w.mine, &["checkout", "-q", "--detach"]);
         assert_eq!(compute_upstream_sync(s(&w.mine)).unwrap(), None);
         assert_eq!(
-            fetch_upstream(s(&w.mine)).unwrap(),
+            fetch_upstream(s(&w.mine), false).unwrap(),
             FetchOutcome::NoUpstream
         );
     }
@@ -619,7 +671,7 @@ mod tests {
         push_from_theirs(&w, "c.txt", "c\n");
         assert_eq!(state(&w.mine).incoming, 0);
         assert!(matches!(
-            fetch_upstream(s(&w.mine)).unwrap(),
+            fetch_upstream(s(&w.mine), false).unwrap(),
             FetchOutcome::Fetched { .. }
         ));
         let st = state(&w.mine);
@@ -781,7 +833,7 @@ mod tests {
             &w.mine,
             &["remote", "set-url", "origin", "/nonexistent/remote.git"],
         );
-        match fetch_upstream(s(&w.mine)).unwrap() {
+        match fetch_upstream(s(&w.mine), false).unwrap() {
             FetchOutcome::Failed { message } => assert!(!message.is_empty()),
             other => panic!("expected a failure, got {other:?}"),
         }
@@ -793,6 +845,92 @@ mod tests {
         let linked = w.mine.parent().unwrap().join("linked");
         git(&w.mine, &["worktree", "add", "-q", "-b", "wt", s(&linked)]);
         assert_eq!(common_dir(s(&w.mine)), common_dir(s(&linked)));
+    }
+
+    #[test]
+    fn a_failed_fetch_is_not_reused() {
+        let w = world();
+        let url = git(&w.mine, &["remote", "get-url", "origin"]);
+        git(
+            &w.mine,
+            &["remote", "set-url", "origin", "/nonexistent/remote.git"],
+        );
+        assert!(matches!(
+            fetch_upstream(s(&w.mine), false).unwrap(),
+            FetchOutcome::Failed { .. }
+        ));
+        git(&w.mine, &["remote", "set-url", "origin", &url]);
+        assert!(matches!(
+            fetch_upstream(s(&w.mine), false).unwrap(),
+            FetchOutcome::Fetched { .. }
+        ));
+    }
+
+    #[test]
+    fn a_background_check_skips_a_repository_never_fetched_in() {
+        let w = world();
+        // A fresh clone has no FETCH_HEAD.
+        assert_eq!(
+            fetch_upstream(s(&w.mine), true).unwrap(),
+            FetchOutcome::Skipped
+        );
+        assert!(matches!(
+            fetch_upstream(s(&w.mine), false).unwrap(),
+            FetchOutcome::Fetched { .. }
+        ));
+        push_from_theirs(&w, "c.txt", "c\n");
+        // Forget the reusable result, so the next call really fetches.
+        let key = format!("{}\norigin", common_dir(s(&w.mine)).unwrap().display());
+        *fetch_slots().get(&key).unwrap().lock().unwrap() = None;
+        // Fetched once by hand, so the background may fetch now.
+        assert!(matches!(
+            fetch_upstream(s(&w.mine), true).unwrap(),
+            FetchOutcome::Fetched { .. }
+        ));
+        assert_eq!(state(&w.mine).incoming, 1);
+    }
+
+    #[test]
+    fn a_fetch_runs_no_hooks() {
+        let w = world();
+        let marker = w.mine.join("hook-ran");
+        let hook = w.mine.join(".git/hooks/reference-transaction");
+        std::fs::write(&hook, format!("#!/bin/sh\ntouch '{}'\n", marker.display())).unwrap();
+        make_executable(&hook);
+        push_from_theirs(&w, "c.txt", "c\n");
+        assert!(matches!(
+            fetch_upstream(s(&w.mine), false).unwrap(),
+            FetchOutcome::Fetched { .. }
+        ));
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn a_noisy_failing_post_merge_hook_still_reports_the_pull() {
+        let w = world();
+        let hook = w.mine.join(".git/hooks/post-merge");
+        // About 200 KB on each of stdout and stderr: past any pipe buffer.
+        std::fs::write(
+            &hook,
+            "#!/bin/sh\ni=0\nwhile [ $i -lt 4000 ]; do\n  echo 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'\n  echo 'yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy' >&2\n  i=$((i+1))\ndone\nexit 1\n",
+        )
+        .unwrap();
+        make_executable(&hook);
+        push_from_theirs(&w, "c.txt", "c\n");
+        let start = Instant::now();
+        assert!(matches!(
+            pull(&w.mine),
+            PullOutcome::Pulled { count: 1, .. }
+        ));
+        assert!(start.elapsed() < Duration::from_secs(30));
+    }
+
+    fn make_executable(p: &Path) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
     }
 
     #[test]

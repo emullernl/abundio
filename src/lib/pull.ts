@@ -9,6 +9,7 @@ import { useIncomingStore } from "../stores/incomingStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { pullOutcomeNotice } from "./incomingCommits";
 import { git } from "./ipc";
+import type { PullOutcome } from "./types";
 
 function folderOf(workspaceId: string): string | null {
 	return (
@@ -18,15 +19,20 @@ function folderOf(workspaceId: string): string | null {
 }
 
 /** Fetch the Workspace's Upstream. Quiet: a failure is only remembered for
- *  the tooltip. The fresh counts arrive with the next scheduler bundle. */
-export async function checkIncoming(workspaceId: string): Promise<void> {
+ *  the tooltip. The fresh counts arrive with the next scheduler bundle.
+ *  `background` (the timer, window focus) leaves a repository nobody has
+ *  fetched in yet alone (ADR-0066). */
+export async function checkIncoming(
+	workspaceId: string,
+	opts: { background?: boolean } = {},
+): Promise<void> {
 	const cwd = folderOf(workspaceId);
 	const store = useIncomingStore.getState();
 	if (!cwd || store.checking.has(workspaceId)) return;
 	store.startCheck(workspaceId);
 	let error: string | null = null;
 	try {
-		const outcome = await git.fetchUpstream(cwd);
+		const outcome = await git.fetchUpstream(cwd, opts.background ?? false);
 		if (outcome.kind === "failed") error = outcome.message;
 	} catch (e) {
 		error = e instanceof Error ? e.message : String(e);
@@ -49,28 +55,24 @@ export async function pullWorkspace(
 	if (!cwd) return;
 	store.setPulling(workspaceId, true);
 	store.startCheck(workspaceId);
+	let outcome: PullOutcome;
 	try {
-		const outcome = await git.pullFf(cwd);
-		useIncomingStore
-			.getState()
-			.endCheck(
-				workspaceId,
-				outcome.kind === "fetchFailed" ? outcome.message : null,
-			);
-		if (pullOutcomeNotice(outcome)) {
-			useIncomingStore
-				.getState()
-				.setDialog({ kind: "outcome", workspaceId, outcome });
-		}
+		outcome = await git.pullFf(cwd);
 	} catch (e) {
-		const message = e instanceof Error ? e.message : String(e);
-		useIncomingStore.getState().endCheck(workspaceId, null);
-		useIncomingStore.getState().setDialog({
-			kind: "outcome",
-			workspaceId,
-			outcome: { kind: "failed", message },
-		});
-	} finally {
-		useIncomingStore.getState().setPulling(workspaceId, false);
+		outcome = {
+			kind: "failed",
+			message: e instanceof Error ? e.message : String(e),
+		};
+	}
+	// Pulling first: a check that ends while a Pull runs leaves `checking`
+	// set (see `endCheck`), so this one must be the Pull's own.
+	const after = useIncomingStore.getState();
+	after.setPulling(workspaceId, false);
+	after.endCheck(
+		workspaceId,
+		outcome.kind === "fetchFailed" ? outcome.message : null,
+	);
+	if (pullOutcomeNotice(outcome)) {
+		after.setDialog({ kind: "outcome", workspaceId, outcome });
 	}
 }

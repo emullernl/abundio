@@ -42,7 +42,9 @@ export function useIncomingSync() {
 		if (minutes <= 0) return;
 		const run = (maxAgeMs: number | null) => {
 			if (maxAgeMs === null) return;
-			for (const id of dueWorkspaces(maxAgeMs)) void checkIncoming(id);
+			for (const id of dueWorkspaces(maxAgeMs)) {
+				void checkIncoming(id, { background: true });
+			}
 		};
 		const tick = () => run(checkIntervalMs(minutes, isAppWindowFocused()));
 		const timer = setInterval(tick, TICK_MS);

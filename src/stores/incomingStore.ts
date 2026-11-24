@@ -85,7 +85,11 @@ export const useIncomingStore = create<IncomingState>((set) => ({
 		})),
 	endCheck: (workspaceId, error) =>
 		set((s) => ({
-			checking: toggled(s.checking, workspaceId, false),
+			// A Pull fetches too: a check ending under it keeps the flag on
+			// until the Pull ends.
+			checking: s.pulling.has(workspaceId)
+				? s.checking
+				: toggled(s.checking, workspaceId, false),
 			errorById: error
 				? { ...s.errorById, [workspaceId]: error }
 				: without(s.errorById, workspaceId),

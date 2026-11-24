@@ -27,7 +27,7 @@ ADR: `docs/adr/0066-incoming-commits-fetch-in-the-background-and-pull-only-fast-
 - **Busy Agents** — if an Agent in the Workspace is Working, Pull asks to confirm, every time.
 - **Mechanism** — `git` CLI for fetch and pull only; libgit2 stays for everything else. Prompts off
   (`GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never`, `SSH_ASKPASS_REQUIRE=never`, ssh `BatchMode`
-  unless the user configured their own ssh command), stdin closed, 60 s timeout. On a Host it runs
+  unless the user configured their own ssh command), stdin closed, timeouts of 5 min (fetch) and 2 min (merge). On a Host it runs
   there, through `host_api`.
 - **When to fetch** — Opened workspaces only, once per repository (a Worktree set is fetched once),
   only the Upstream's remote:
@@ -86,3 +86,4 @@ One branch (`incoming-commits`), ordered commits.
 - The setting lives in Settings ▸ GitHub, under "Incoming Commits".
 - Not yet verified in the running app against an ssh remote (the build sandbox has no ssh network);
   the tests use a local bare remote.
+- After the PR review: a background fetch skips a repository with no `FETCH_HEAD` (never fetched in), every fetch runs with hooks and fsmonitor off, a failed fetch is never reused, stderr is drained while git runs (a noisy hook can no longer stall it), and a Pull whose branch moved counts as done even if a `post-merge` hook failed.

@@ -27,10 +27,11 @@ export function IncomingChip({
 	const attempt = useIncomingStore((s) => s.lastAttemptById[workspaceId]);
 	// Only the Active workspace's operation is mirrored; for another one Pull
 	// itself refuses and says why.
+	const isActive = useWorkspaceStore(
+		(s) => s.activeWorkspaceId === workspaceId,
+	);
 	const operation = useGitChangesStore((s) =>
-		useWorkspaceStore.getState().activeWorkspaceId === workspaceId
-			? s.operationInProgress
-			: null,
+		isActive ? s.operationInProgress : null,
 	);
 	if (!upstream) return null;
 	const { incoming, outgoing } = upstream;
@@ -65,13 +66,14 @@ export function IncomingChip({
 						void pullWorkspace(workspaceId);
 					}}
 					onMouseDown={(e) => e.stopPropagation()}
-					className={`rounded transition-colors ${pullable ? "cursor-pointer hover:bg-[color-mix(in_srgb,var(--success)_18%,transparent)]" : "cursor-default"} ${pulling ? "animate-pulse" : ""}`}
+					// The hover lives in classes: an inline background would
+					// defeat it (CLAUDE.md).
+					className={`rounded transition-colors bg-transparent cursor-pointer disabled:cursor-default enabled:hover:bg-[color-mix(in_srgb,var(--success)_18%,transparent)] ${pulling ? "animate-pulse" : ""}`}
 					style={{
 						padding: "2px 4px",
 						color: diverged ? "var(--warning)" : "var(--success)",
 						border:
 							"1px solid color-mix(in srgb, currentColor 30%, transparent)",
-						background: "transparent",
 					}}
 				>
 					↓{incoming}
