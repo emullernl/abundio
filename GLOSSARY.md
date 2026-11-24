@@ -493,6 +493,20 @@ _Avoid_: branch commits, my commits, unpushed (a different fact — an Ahead com
 **Shared history**: The part of a Workspace's history its base branch also has — the base as the branch last saw it, not the base's current tip. Commits that landed on the base after the branch left it are not in the Workspace and are not shown. Drawn below the **Commits** divider on a grey rail; the rows themselves are full-strength and fully usable.
 _Avoid_: main history (the base is not always main), old commits, merged commits.
 
+**Upstream**: The remote branch a Workspace's current branch tracks (git's `@{u}`, e.g. `origin/feature-x` for `feature-x`). Only as fresh as the last fetch. A branch with no upstream (never pushed, detached HEAD) has no **Incoming** or **Outgoing commits**. Not the base branch: the base is what the branch is compared against for **Ahead commits**; the Upstream is where the branch itself is shared.
+_Avoid_: remote (a remote is the whole repository, `origin`), tracking branch, base.
+
+**Incoming commits**: The commits on a Workspace's **Upstream** that its HEAD does not have (`HEAD..@{u}`): what someone else pushed to this branch. Shown as ↓N.
+_Avoid_: behind (reads as the opposite of **Ahead commits**, which are measured against the base), new commits, remote changes.
+
+**Outgoing commits**: The commits in a Workspace's HEAD that its **Upstream** does not have (`@{u}..HEAD`): what a push would send. Shown as ↑N. A different fact from **Ahead commits**: an Ahead commit may already be pushed, and an Outgoing commit may already be on the base.
+_Avoid_: unpushed, ahead (taken by **Ahead commits**), local commits.
+
+**Diverged**: A branch with both **Incoming** and **Outgoing commits**. It cannot be brought up to date by moving it forward; joining the two lines needs a merge or a rebase, which Abundio leaves to the user.
+
+**Pull**: Bringing a Workspace's branch up to its **Upstream** by moving it forward to include the **Incoming commits**, after a fresh fetch. Only ever a fast-forward: never a merge, a rebase or a stash. Refused, with the reason, when the branch is **Diverged**, when a merge or rebase is in progress, or when an incoming change touches a file with uncommitted edits. Uncommitted edits to other files are kept.
+_Avoid_: sync, update, get latest.
+
 **Commit diff pane**: A read-only diff **File pane** showing one file as a single commit changed it — the commit's first parent against the commit. Frozen history: never re-read from disk, never touched by the file watcher. Keyed by commit and path, so it opens **alongside** — never replaces — the live working-tree diff pane for the same file, and the same file at two commits gives two panes. One reopened from a saved layout fetches its content once; if the commit is no longer in the repository (rebased away, garbage-collected) the pane says so rather than staying blank.
 _Avoid_: history diff, commit view.
 
