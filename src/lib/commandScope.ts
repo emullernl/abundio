@@ -33,6 +33,7 @@ const DESKTOP = [
 	"file_window_open",
 	"file_window_set_dirty",
 	"file_window_set_view",
+	"file_window_set_pdf_position",
 	"file_windows_close",
 	"file_windows_dirty",
 	"file_windows_list",

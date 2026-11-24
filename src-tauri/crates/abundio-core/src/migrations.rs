@@ -94,6 +94,10 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         "025_joined_profiles",
         include_str!("../migrations/025_joined_profiles.sql"),
     ),
+    (
+        "026_pdf_position",
+        include_str!("../migrations/026_pdf_position.sql"),
+    ),
 ];
 
 pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {

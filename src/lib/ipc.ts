@@ -21,6 +21,7 @@ import {
 import type { HostSettings } from "./hostSettings";
 import type { LayoutOp } from "./layoutOps";
 import type { LayoutState } from "./layoutSync";
+import type { PdfPosition } from "./pdfView";
 import type { StatusOp, StatusUpdate } from "./statusSync";
 import type {
 	AgentHookEvent,
@@ -1782,7 +1783,7 @@ export const env = {
 export type { MarkdownView };
 
 /** What a **File window** shows (ADR-0049). */
-export type FileWindowKind = "text" | "image" | "diff" | "commit-diff";
+export type FileWindowKind = "text" | "image" | "pdf" | "diff" | "commit-diff";
 
 /** What to open in a File window. Text and image paths are absolute; diff
  *  paths are Workspace-relative, as git and diff panes spell them. */
@@ -1795,6 +1796,7 @@ export type FileWindowTarget =
 			view?: MarkdownView;
 	  }
 	| { kind: "image"; filePath: string }
+	| { kind: "pdf"; filePath: string }
 	| { kind: "diff"; filePath: string; diffSection: string }
 	| { kind: "commit-diff"; filePath: string; commitOid: string };
 
@@ -1808,6 +1810,8 @@ export interface FileWindowInfo {
 	commitOid: string | null;
 	diffSection: string | null;
 	view: MarkdownView;
+	/** A PDF window's remembered page and zoom; `null`: none yet. */
+	pdfPosition: PdfPosition | null;
 }
 
 /** One open File window, as the Navigator lists it. */
@@ -1841,6 +1845,9 @@ export const fileWindows = {
 
 	setView: (view: MarkdownView) =>
 		invoke<void>("file_window_set_view", { view }),
+
+	setPdfPosition: (position: PdfPosition) =>
+		invoke<void>("file_window_set_pdf_position", { position }),
 
 	setDirty: (dirty: boolean) =>
 		invoke<void>("file_window_set_dirty", { dirty }),

@@ -28,6 +28,7 @@ pub use abundio_core::status_machine;
 pub use abundio_core::layout_ops;
 pub use abundio_core::layout_store;
 pub use abundio_core::pane_facts;
+pub use abundio_core::pdf_position;
 pub use abundio_core::control_host;
 pub use abundio_core::control_local;
 pub use abundio_core::control_protocol;
@@ -1713,6 +1714,7 @@ pub fn run() {
             file_windows::file_window_open,
             file_windows::file_window_info,
             file_windows::file_window_set_view,
+            file_windows::file_window_set_pdf_position,
             file_windows::file_window_set_dirty,
             file_windows::file_window_forget,
             file_windows::file_windows_dirty,

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CodeEditor } from "./components/FileViewer/CodeEditor";
 import { FileChangeBanner } from "./components/FileViewer/FileChangeBanner";
 import { ImageViewer } from "./components/FileViewer/ImageViewer";
+import { PdfView } from "./components/FileViewer/PdfView";
 import { RenderedMarkdownView } from "./components/FileViewer/RenderedMarkdownView";
 import { FileWindowToolbar } from "./components/FileWindow/FileWindowToolbar";
 import "./components/FileWindow/FileWindow.css";
@@ -83,6 +84,8 @@ export function FileWindowApp() {
 	switch (info.kind) {
 		case "image":
 			return <ImageWindow info={info} />;
+		case "pdf":
+			return <PdfWindow info={info} />;
 		case "diff":
 		case "commit-diff":
 			return <DiffWindow info={info} />;
@@ -580,6 +583,71 @@ function ImageWindow({ info }: { info: FileWindowInfo }) {
 						content={image.content}
 						mime={image.mime}
 						fileName={name}
+					/>
+				) : null}
+			</div>
+		</Shell>
+	);
+}
+
+/** A PDF File window: read-only, re-read when the file changes, and back at
+ *  the page and zoom it was last at (docs/plans/pdf-viewer.md). */
+function PdfWindow({ info }: { info: FileWindowInfo }) {
+	const [content, setContent] = useState<string | null>(null);
+	const [error, setError] = useState<string | null>(null);
+	const [findOpen, setFindOpen] = useState(false);
+	useReadOnlyWindowChrome();
+
+	useEffect(() => {
+		registerAction("search-in-terminal", () => setFindOpen(true));
+		return () => unregisterAction("search-in-terminal");
+	}, []);
+
+	const load = useCallback(() => {
+		fsApi
+			.readFile(info.filePath)
+			.then((file) => {
+				if (file.fileType !== "pdf" || !file.content) {
+					setError(
+						file.size > 0 && file.fileType === "binary"
+							? "It is larger than this window can show."
+							: "It is not a PDF this window can show.",
+					);
+					return;
+				}
+				setError(null);
+				setContent(file.content);
+			})
+			.catch((e) => setError(String(e)));
+	}, [info.filePath]);
+	useEffect(load, [load]);
+
+	useFolderChanges(info.rootFolder, true, (change) => {
+		if (change.removedFiles.some((f) => samePath(f, info.filePath))) {
+			setError("The file was deleted.");
+		} else if (change.changedFiles.some((f) => samePath(f, info.filePath))) {
+			load();
+		}
+	});
+
+	const name = fileNameOf(info.filePath);
+	return (
+		<Shell>
+			<FileWindowToolbar fileName={name} workspaceName={info.workspaceName} />
+			<div className="flex-1 min-h-0 flex flex-col">
+				{error ? (
+					<Notice>This PDF could not be shown. {error}</Notice>
+				) : content ? (
+					<PdfView
+						content={content}
+						position={info.pdfPosition}
+						onPositionChange={(p) => {
+							fileWindows.setPdfPosition(p).catch(() => {});
+						}}
+						findOpen={findOpen}
+						onOpenFind={() => setFindOpen(true)}
+						onCloseFind={() => setFindOpen(false)}
+						focused
 					/>
 				) : null}
 			</div>

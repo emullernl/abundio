@@ -23,6 +23,7 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, Webvi
 use uuid::Uuid;
 
 use crate::error::AbundioError;
+use crate::pdf_position::PdfPosition;
 use crate::window_frame::PlacementTracker;
 use crate::window_placement::Remembered;
 pub use crate::workspace_store::MarkdownView;
@@ -42,6 +43,8 @@ pub enum FileWindowKind {
     Text,
     /// An image, read-only.
     Image,
+    /// A PDF, read-only (docs/plans/pdf-viewer.md).
+    Pdf,
     /// A file's live working-tree diff, read-only.
     Diff,
     /// One file as one commit changed it. Frozen history, read-only.
@@ -59,6 +62,7 @@ impl FileWindowKind {
         match self {
             FileWindowKind::Text => "text",
             FileWindowKind::Image => "image",
+            FileWindowKind::Pdf => "pdf",
             FileWindowKind::Diff => "diff",
             FileWindowKind::CommitDiff => "commit-diff",
             // Never written: `validate_target` refuses it before any upsert.
@@ -72,6 +76,7 @@ impl FileWindowKind {
         match s {
             "text" => FileWindowKind::Text,
             "image" => FileWindowKind::Image,
+            "pdf" => FileWindowKind::Pdf,
             "diff" => FileWindowKind::Diff,
             "commit-diff" => FileWindowKind::CommitDiff,
             _ => FileWindowKind::Unknown,
@@ -145,6 +150,9 @@ pub fn kind_for_path(path: &Path) -> Option<FileWindowKind> {
         .unwrap_or_default();
     if crate::file_explorer::is_image_ext(&ext) {
         Some(FileWindowKind::Image)
+    } else if crate::file_explorer::is_pdf_ext(&ext) {
+        // Before the binary check, which also lists `pdf`.
+        Some(FileWindowKind::Pdf)
     } else if crate::file_explorer::is_binary_ext(&ext) {
         None
     } else {
@@ -185,7 +193,7 @@ fn valid_oid(oid: &str) -> bool {
 ///   needs a commit id, and a live diff a known section.
 pub fn validate_target(root_folder: &str, target: &FileWindowTarget) -> Result<String, AbundioError> {
     match target.kind {
-        FileWindowKind::Text | FileWindowKind::Image => {
+        FileWindowKind::Text | FileWindowKind::Image | FileWindowKind::Pdf => {
             let root = Path::new(root_folder).canonicalize()?;
             let path = Path::new(&target.file_path).canonicalize()?;
             if !path.starts_with(&root) {
@@ -282,7 +290,10 @@ pub fn window_title(row: &FileWindowRow, workspace_name: &str) -> String {
         .unwrap_or(&row.file_path)
         .to_string();
     let shown = match row.kind {
-        FileWindowKind::Text | FileWindowKind::Image | FileWindowKind::Unknown => file_name,
+        FileWindowKind::Text
+        | FileWindowKind::Image
+        | FileWindowKind::Pdf
+        | FileWindowKind::Unknown => file_name,
         FileWindowKind::Diff => format!("{file_name} (diff)"),
         FileWindowKind::CommitDiff => {
             let oid = row.commit_oid.as_deref().unwrap_or("");
@@ -476,6 +487,31 @@ impl FileWindowStore {
         Ok(())
     }
 
+    /// A PDF window's remembered page and zoom; `None` when it has none or
+    /// the stored value is unreadable.
+    pub fn pdf_position(&self, label: &str) -> Result<Option<PdfPosition>, AbundioError> {
+        let conn = self.conn.lock().unwrap();
+        let json: Option<String> = conn
+            .query_row(
+                "SELECT pdf_position FROM file_windows WHERE label = ?1",
+                params![label],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(PdfPosition::from_stored(json))
+    }
+
+    pub fn set_pdf_position(&self, label: &str, position: PdfPosition) -> Result<(), AbundioError> {
+        let json = position.checked()?.to_json();
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE file_windows SET pdf_position = ?1 WHERE label = ?2",
+            params![json, label],
+        )?;
+        Ok(())
+    }
+
     pub fn set_view(&self, label: &str, view: MarkdownView) -> Result<(), AbundioError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -634,6 +670,8 @@ pub struct FileWindowInfo {
     pub commit_oid: Option<String>,
     pub diff_section: Option<String>,
     pub view: MarkdownView,
+    /// A PDF window's remembered page and zoom.
+    pub pdf_position: Option<PdfPosition>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -714,6 +752,11 @@ pub async fn file_window_info(
     let meta = store
         .workspace_meta(&row.workspace_id)?
         .ok_or_else(|| AbundioError::NotFound(format!("workspace {}", row.workspace_id)))?;
+    let pdf_position = if row.kind == FileWindowKind::Pdf {
+        store.pdf_position(&row.label)?
+    } else {
+        None
+    };
     Ok(FileWindowInfo {
         workspace_id: row.workspace_id,
         workspace_name: meta.name,
@@ -724,6 +767,7 @@ pub async fn file_window_info(
         commit_oid: row.commit_oid,
         diff_section: row.diff_section,
         view: row.view,
+        pdf_position,
     })
 }
 
@@ -734,6 +778,16 @@ pub async fn file_window_set_view(
     view: MarkdownView,
 ) -> Result<(), AbundioError> {
     store.set_view(window.label(), view)
+}
+
+/// Remembers where the calling PDF window is.
+#[tauri::command]
+pub async fn file_window_set_pdf_position(
+    window: WebviewWindow,
+    store: State<'_, FileWindowStore>,
+    position: PdfPosition,
+) -> Result<(), AbundioError> {
+    store.set_pdf_position(window.label(), position)
 }
 
 #[tauri::command]
@@ -1162,6 +1216,41 @@ mod tests {
             crate::file_explorer::BINARY_EXTS.iter().map(|e| e.to_string()).collect();
         assert_eq!(ts_images, rust_images, "image extensions differ");
         assert_eq!(ts_binary, rust_binary, "binary extensions differ");
+        assert!(ts.contains(r#"const PDF_EXTENSION = "pdf";"#), "PDF extension differs");
+        assert!(crate::file_explorer::is_pdf_ext("pdf"));
+    }
+
+    #[test]
+    fn a_pdf_gets_a_pdf_window() {
+        assert_eq!(kind_for_path(Path::new("a.pdf")), Some(FileWindowKind::Pdf));
+        assert_eq!(kind_for_path(Path::new("Spec.PDF")), Some(FileWindowKind::Pdf));
+        assert_eq!(FileWindowKind::from_str("pdf"), FileWindowKind::Pdf);
+        let dir = tempfile::tempdir().unwrap();
+        let pdf = dir.path().join("a.pdf");
+        std::fs::write(&pdf, "%PDF").unwrap();
+        let root = dir.path().to_str().unwrap();
+        let t = FileWindowTarget { kind: FileWindowKind::Pdf, ..text(pdf.to_str().unwrap()) };
+        assert!(validate_target(root, &t).is_ok());
+        // Not as text, and a PDF window is not for other files.
+        assert!(validate_target(root, &text(pdf.to_str().unwrap())).is_err());
+        let md = dir.path().join("a.md");
+        std::fs::write(&md, "x").unwrap();
+        let t = FileWindowTarget { kind: FileWindowKind::Pdf, ..text(md.to_str().unwrap()) };
+        assert!(validate_target(root, &t).is_err());
+    }
+
+    #[test]
+    fn a_pdf_position_is_kept_and_checked() {
+        let s = store_with(&["ws-1"]);
+        let row = s
+            .upsert("ws-1", &FileWindowTarget { kind: FileWindowKind::Pdf, ..text("/ws/a.pdf") }, "/ws/a.pdf")
+            .unwrap();
+        assert_eq!(s.pdf_position(&row.label).unwrap(), None);
+        let p = PdfPosition { page: 7, zoom: crate::pdf_position::PdfZoom::Scale(1.25) };
+        s.set_pdf_position(&row.label, p.clone()).unwrap();
+        assert_eq!(s.pdf_position(&row.label).unwrap(), Some(p));
+        let bad = PdfPosition { page: 0, zoom: crate::pdf_position::PdfZoom::Scale(1.0) };
+        assert!(s.set_pdf_position(&row.label, bad).is_err());
     }
 
     #[test]

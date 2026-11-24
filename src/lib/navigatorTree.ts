@@ -82,7 +82,7 @@ export type NavRow =
 export interface NavFileWindow {
 	label: string;
 	workspaceId: string;
-	kind: "text" | "image" | "diff" | "commit-diff";
+	kind: "text" | "image" | "pdf" | "diff" | "commit-diff";
 	filePath: string;
 	commitOid: string | null;
 }

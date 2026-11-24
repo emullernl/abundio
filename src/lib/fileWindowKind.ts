@@ -23,6 +23,8 @@ const BINARY_EXTENSIONS = new Set(
 	).split(" "),
 );
 
+const PDF_EXTENSION = "pdf";
+
 function extensionOf(path: string): string {
 	const slash = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
 	const name = slash >= 0 ? path.slice(slash + 1) : path;
@@ -30,13 +32,17 @@ function extensionOf(path: string): string {
 	return dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
 }
 
-/** The kind of File window a file on disk gets, from its name: an image, or
- *  text unless its extension is a known binary one. `null` means it has no
+/** The kind of File window a file on disk gets, from its name: an image, a
+ *  PDF, or text unless its extension is a known binary one. `null` means it has no
  *  File window, so menus leave the item out. A file whose *bytes* turn out to
  *  be binary is only found when the window reads it, as with a File pane. */
-export function fileWindowKindFor(path: string): "text" | "image" | null {
+export function fileWindowKindFor(
+	path: string,
+): "text" | "image" | "pdf" | null {
 	const ext = extensionOf(path);
 	if (IMAGE_EXTENSIONS.has(ext)) return "image";
+	// Before the binary check, which also lists `pdf` (search skips it).
+	if (ext === PDF_EXTENSION) return "pdf";
 	if (BINARY_EXTENSIONS.has(ext)) return null;
 	return "text";
 }
