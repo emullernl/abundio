@@ -281,7 +281,7 @@ fn apply_host_settings(host: &ServerHost) {
         host.ptys.set_scrollback(n);
     }
     // A typed line starts its own Agents, whatever an app sends.
-    host.agents.set(settings.agent_commands());
+    settings.apply_to(&host.agents);
     let agents = settings.enabled_builtins();
     if host.hooks_guard.claim() {
         log::info!("hook provisioning from Host settings: enabled={}, agents={agents:?}", settings.agent_hooks_enabled);

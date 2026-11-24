@@ -49,6 +49,9 @@ pub struct HostSettings {
     /// Lines of scrollback each pane keeps; `None`: the app's default.
     #[serde(default)]
     pub scrollback: Option<usize>,
+    /// Built-in Agents the user answered *Never* for in a **Watch offer**.
+    #[serde(default)]
+    pub declined_agents: Vec<String>,
 }
 
 fn yes() -> bool {
@@ -65,6 +68,7 @@ impl HostSettings {
             agent_skill_enabled: true,
             shell_path: None,
             scrollback: None,
+            declined_agents: Vec::new(),
         }
     }
 
@@ -85,6 +89,13 @@ impl HostSettings {
             })
         });
         builtins.chain(custom).collect()
+    }
+
+    /// Hand these settings to the Host's typed-command matching: the Agent
+    /// list and what the **Watch offer** reads.
+    pub fn apply_to(&self, agents: &crate::shell_integration::AgentCommands) {
+        agents.set(self.agent_commands());
+        agents.set_offer_settings(self.agent_hooks_enabled, &self.declined_agents);
     }
 
     /// The built-in Agents switched on, for hooks and skill provisioning.

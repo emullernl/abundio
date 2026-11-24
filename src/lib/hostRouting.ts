@@ -102,6 +102,8 @@ export const HOST_ROUTES: Record<string, Route> = {
 	status_apply: { split: "ops", item: field("pty", "ptyId") },
 	status_byte_threshold_set: own,
 	agent_commands_set: own,
+	// The pane whose banner was answered: its Host made the offer.
+	watch_offer_close: pane(),
 	pane_facts_report: { split: "reports", item: field("pane", "paneId") },
 	// Layouts and Tabs
 	layout_apply: { by: "tab", arg: "tabId" },
