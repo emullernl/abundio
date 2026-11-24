@@ -62,6 +62,7 @@ import { ParameterDialog } from "./ParameterDialog";
 import { PromptActionPopover } from "./PromptActionPopover";
 import { SearchBar } from "./SearchBar";
 import { type FleetSlotInfo, TerminalTitleBar } from "./TerminalTitleBar";
+import { WatchOfferBanner } from "./WatchOfferBanner";
 
 /** What to tell the user when a send was refused. `waiting` should not reach
  *  the dialog — the bar disables its buttons — but a palette entry can still
@@ -661,6 +662,7 @@ export function TerminalSlot({
 					setContextMenu((open) => (open ? null : anchor))
 				}
 			/>
+			<WatchOfferBanner paneId={paneId} />
 			{debugMeterEnabled && <DebugActivityMeter paneId={paneId} />}
 			<TerminalLoader paneId={paneId} />
 			<div

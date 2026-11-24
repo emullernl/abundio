@@ -220,6 +220,7 @@ const HOST = [
 	// The door to the host commands above for a local Profile (phase 7b).
 	"host_call",
 	"agent_commands_set",
+	"watch_offer_close",
 	"status_byte_threshold_set",
 	"tab_create",
 	"tab_delete",

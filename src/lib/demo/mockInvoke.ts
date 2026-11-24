@@ -458,6 +458,7 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 			return true;
 		case "agent_hooks_provision":
 		case "agent_hooks_provision_startup":
+		case "watch_offer_close":
 			return undefined;
 		case "ensure_agent_hooks":
 			// Demo never touches the filesystem; pretend nothing needed provisioning.

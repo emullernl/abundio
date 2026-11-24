@@ -12,6 +12,7 @@
 //! by `fixtures/shellIntegration.json`. The Window still strips the
 //! sequences before xterm.js draws, and keeps the running command and folder.
 
+use std::collections::HashSet;
 use std::sync::RwLock;
 
 use serde::{Deserialize, Serialize};
@@ -186,26 +187,194 @@ pub fn builtin_agents() -> Vec<AgentCommand> {
 }
 
 /// The Agents a typed command is matched against: the built-ins until a
-/// Window reports the user's list (custom Agents, disabled ones).
-pub struct AgentCommands(RwLock<Vec<AgentCommand>>);
+/// Window reports the user's list (custom Agents, disabled ones). Also what
+/// the **Watch offer** needs to know (docs/plans/watch-offer.md): whether
+/// hooks are on, which Agents the user declined (*Never*, Host settings) and
+/// which they put off until the next start (*Not now*, memory only).
+pub struct AgentCommands {
+    list: RwLock<Vec<AgentCommand>>,
+    offers: RwLock<OfferState>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct OfferState {
+    hooks_enabled: bool,
+    declined: HashSet<String>,
+    snoozed: HashSet<String>,
+    /// Agents whose hooks were found written (or written) since the list or
+    /// the settings last changed: a typed start of one needs no disk work.
+    provisioned: HashSet<String>,
+}
+
+/// Commands that run the next word as the command (`env FOO=1 codex`,
+/// `npx codex`): the Agent may follow them.
+const WRAPPERS: &[&str] = &["env", "npx", "bunx", "pnpx", "exec", "command", "nohup", "time", "sudo"];
+
+/// The command a typed line runs, lowercased: its first word after any
+/// `NAME=value` assignments, wrappers and their options, without its folder
+/// (`/opt/bin/codex`, `@openai/codex`). Only a line whose command *is* the
+/// Agent starts it: `brew install codex` or `git commit -m "codex"` do not,
+/// though they name it.
+pub fn command_word(text: &str) -> Option<String> {
+    let mut after_wrapper = false;
+    for word in text.split_whitespace() {
+        let is_assignment = word.contains('=') && !word.starts_with('-') && !word.starts_with('=');
+        if is_assignment || (after_wrapper && word.starts_with('-')) {
+            continue;
+        }
+        let lower = word.to_lowercase();
+        let base = lower.rsplit(['/', '\\']).next().unwrap_or(&lower).to_string();
+        if WRAPPERS.contains(&base.as_str()) {
+            after_wrapper = true;
+            continue;
+        }
+        return Some(base);
+    }
+    None
+}
+
+/// What a typed command asks of the Host besides its status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Offer {
+    /// A built-in Agent that is not Watched: offer to Watch it.
+    Watch(String),
+    /// A Watched built-in, hooks on: make sure its hooks are written (a
+    /// mid-session install), and offer a restart if they were not.
+    Provision(String),
+}
 
 impl Default for AgentCommands {
     fn default() -> Self {
-        Self(RwLock::new(builtin_agents()))
+        Self {
+            list: RwLock::new(builtin_agents()),
+            offers: RwLock::new(OfferState { hooks_enabled: true, ..OfferState::default() }),
+        }
     }
+}
+
+fn is_builtin(id: &str) -> bool {
+    crate::host_settings::BUILTIN_AGENT_IDS.contains(&id)
 }
 
 impl AgentCommands {
     pub fn set(&self, agents: Vec<AgentCommand>) {
-        if let Ok(mut a) = self.0.write() {
+        if let Ok(mut a) = self.list.write() {
             *a = agents;
+        }
+        // A switch may have moved, and hooks with it: look again.
+        if let Ok(mut o) = self.offers.write() {
+            o.provisioned.clear();
+        }
+    }
+
+    /// The Host settings the Watch offer reads: the Status Hooks setting and
+    /// the declined Agents.
+    pub fn set_offer_settings(&self, hooks_enabled: bool, declined: &[String]) {
+        if let Ok(mut o) = self.offers.write() {
+            o.hooks_enabled = hooks_enabled;
+            o.declined = declined.iter().cloned().collect();
+            o.provisioned.clear();
+        }
+    }
+
+    /// *Not now*: no Watch offer for `agent_id` until this Host starts again.
+    pub fn snooze(&self, agent_id: &str) {
+        if let Ok(mut o) = self.offers.write() {
+            o.snoozed.insert(agent_id.to_string());
+        }
+    }
+
+    /// `agent_id`'s hooks are known to be written: its next typed start
+    /// needs no check.
+    pub fn mark_provisioned(&self, agent_id: &str) {
+        if let Ok(mut o) = self.offers.write() {
+            o.provisioned.insert(agent_id.to_string());
         }
     }
 
     /// The Agent `text` starts, if any.
     pub fn matching(&self, text: &str) -> Option<String> {
-        let a = self.0.read().ok()?;
+        let a = self.list.read().ok()?;
         match_agent(text, &a).map(|a| a.id.clone())
+    }
+
+    /// What typing `text` asks of the Host, if anything: a Watched built-in
+    /// to provision (unless already known provisioned), or an un-Watched one
+    /// to offer (not declined, not snoozed). Only when the line's command is
+    /// the Agent ([`command_word`]), since a banner the user sees, and a
+    /// restart that kills what the line runs, must not follow a mere
+    /// mention. Custom Agents never: the user added them on purpose.
+    pub fn offer_for(&self, text: &str) -> Option<Offer> {
+        let word = command_word(text)?;
+        let list = self.list.read().ok()?;
+        let o = self.offers.read().ok()?;
+        let a = list
+            .iter()
+            .filter(|a| is_builtin(&a.id))
+            .find(|a| a.command.to_lowercase() == word)?;
+        if a.enabled {
+            return (o.hooks_enabled && !o.provisioned.contains(&a.id)).then(|| Offer::Provision(a.id.clone()));
+        }
+        (!o.declined.contains(&a.id) && !o.snoozed.contains(&a.id)).then(|| Offer::Watch(a.id.clone()))
+    }
+}
+
+/// Told to a PTY's Windows: offer to Watch its Agent, or to restart it.
+pub const WATCH_OFFER_EVENT: &str = "watch-offer";
+/// Told to every Client: the offer for this Agent is answered.
+pub const WATCH_OFFER_CLOSED_EVENT: &str = "watch-offer-closed";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WatchOffer {
+    pub pty_id: String,
+    pub agent_id: String,
+    /// `"watch"`: the Agent is not Watched. `"restart"`: its hooks were just
+    /// written and the running Agent has not read them.
+    pub kind: &'static str,
+}
+
+/// Raise the Watch offers `commands` call for, and write the hooks of a
+/// Watched built-in typed at the prompt (on a thread of its own: it is disk
+/// work, and the shell's reports must not wait for it).
+fn handle_offers(
+    pty: &str,
+    commands: &[ShellCommand],
+    agents: &std::sync::Arc<AgentCommands>,
+    status: &crate::status_store::StatusStore,
+    events: &crate::event_sink::Events,
+) {
+    use crate::event_sink::EventsExt;
+    for c in commands {
+        let ShellCommand::CommandStart { command_text: Some(text) } = c else { continue };
+        match agents.offer_for(text) {
+            Some(Offer::Watch(agent_id)) => {
+                let offer = WatchOffer { pty_id: pty.to_string(), agent_id, kind: "watch" };
+                for watcher in status.watchers(pty) {
+                    events.to_client(&watcher, WATCH_OFFER_EVENT, &offer);
+                }
+            }
+            Some(Offer::Provision(agent_id)) => {
+                let watchers = status.watchers(pty);
+                let (pty, events, agents) = (pty.to_string(), events.clone(), agents.clone());
+                std::thread::spawn(move || match crate::agent_hooks::ensure_agent_hooks(&agent_id, true) {
+                    Ok(true) => {
+                        agents.mark_provisioned(&agent_id);
+                        log::info!("[watch offer] wrote {agent_id}'s hooks on a typed start");
+                        let offer = WatchOffer { pty_id: pty, agent_id, kind: "restart" };
+                        for watcher in watchers {
+                            events.to_client(&watcher, WATCH_OFFER_EVENT, &offer);
+                        }
+                    }
+                    Ok(false) => agents.mark_provisioned(&agent_id),
+                    // No restart offer: with no curl the hooks never fire, and
+                    // a broken config is still broken. The next start tries
+                    // again.
+                    Err(e) => log::warn!("[watch offer] cannot write {agent_id}'s hooks: {e}"),
+                });
+            }
+            None => {}
+        }
     }
 }
 
@@ -220,6 +389,7 @@ pub fn listen(
     use crate::event_sink::EventsExt;
     ptys.on_shell(std::sync::Arc::new(move |pty: &str, commands: Vec<ShellCommand>| {
         let config = crate::status_machine::StatusConfig::default();
+        handle_offers(pty, &commands, &agents, &status, &events);
         let updates = status.shell_commands(pty, &commands, &agents, crate::hook_apply::now_ms(), &config);
         if !updates.is_empty() {
             for watcher in status.watchers(pty) {
@@ -286,6 +456,108 @@ mod tests {
     #[test]
     fn knows_the_windows_built_in_agents() {
         assert_eq!(builtin_agents(), fixture().builtins);
+    }
+
+    fn commands(watched: &[&str]) -> AgentCommands {
+        let a = AgentCommands::default();
+        let mut list: Vec<AgentCommand> = builtin_agents()
+            .into_iter()
+            .map(|mut b| {
+                b.enabled = watched.contains(&b.id.as_str());
+                b
+            })
+            .collect();
+        list.push(AgentCommand { id: "custom-1".into(), command: "mycli".into(), enabled: false });
+        a.set(list);
+        a
+    }
+
+    #[test]
+    fn offers_to_watch_an_unwatched_built_in_typed_at_the_prompt() {
+        let a = commands(&["claude"]);
+        assert_eq!(a.offer_for("codex --full-auto"), Some(Offer::Watch("codex".into())));
+        assert_eq!(a.offer_for("/opt/bin/gemini"), Some(Offer::Watch("gemini".into())));
+        assert_eq!(a.offer_for("ls -la"), None);
+        assert_eq!(a.offer_for("codexify"), None);
+        assert_eq!(a.offer_for("FOO=1 env -i BAR=2 codex"), Some(Offer::Watch("codex".into())));
+        assert_eq!(a.offer_for("npx -y @openai/codex"), Some(Offer::Watch("codex".into())));
+        assert_eq!(a.offer_for(""), None);
+    }
+
+    #[test]
+    fn a_line_that_only_names_the_agent_is_not_an_offer() {
+        let a = commands(&["claude"]);
+        for line in [
+            "brew install codex",
+            "npm i -g @openai/codex",
+            "which gemini",
+            "man qwen",
+            "git commit -m \"fix codex bug\"",
+            "brew upgrade claude",
+        ] {
+            assert_eq!(a.offer_for(line), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn a_provisioned_agent_is_checked_once_until_something_changes() {
+        let a = commands(&["claude"]);
+        a.mark_provisioned("claude");
+        assert_eq!(a.offer_for("claude"), None);
+        a.set_offer_settings(true, &[]);
+        assert_eq!(a.offer_for("claude"), Some(Offer::Provision("claude".into())));
+        a.mark_provisioned("claude");
+        a.set(builtin_agents());
+        assert_eq!(a.offer_for("claude"), Some(Offer::Provision("claude".into())));
+    }
+
+    #[test]
+    fn finds_the_command_word() {
+        assert_eq!(command_word("  /opt/bin/Codex --x"), Some("codex".into()));
+        assert_eq!(command_word("A=1 B=2"), None);
+        assert_eq!(command_word("sudo -E time qwen"), Some("qwen".into()));
+        assert_eq!(command_word(""), None);
+    }
+
+    #[test]
+    fn never_offers_a_custom_agent() {
+        assert_eq!(commands(&[]).offer_for("mycli run"), None);
+    }
+
+    #[test]
+    fn a_declined_or_snoozed_agent_is_not_offered() {
+        let a = commands(&[]);
+        a.set_offer_settings(true, &["codex".to_string()]);
+        assert_eq!(a.offer_for("codex"), None);
+        a.snooze("gemini");
+        assert_eq!(a.offer_for("gemini"), None);
+        assert_eq!(a.offer_for("qwen"), Some(Offer::Watch("qwen".into())));
+        // A new Host settings write keeps the snooze: it lasts until the next start.
+        a.set_offer_settings(true, &[]);
+        assert_eq!(a.offer_for("gemini"), None);
+        assert_eq!(a.offer_for("codex"), Some(Offer::Watch("codex".into())));
+    }
+
+    #[test]
+    fn the_offer_still_shows_with_hooks_off() {
+        let a = commands(&[]);
+        a.set_offer_settings(false, &[]);
+        assert_eq!(a.offer_for("codex"), Some(Offer::Watch("codex".into())));
+    }
+
+    #[test]
+    fn a_watched_built_in_is_provisioned_only_with_hooks_on() {
+        let a = commands(&["claude"]);
+        assert_eq!(a.offer_for("claude"), Some(Offer::Provision("claude".into())));
+        a.set_offer_settings(false, &[]);
+        assert_eq!(a.offer_for("claude"), None);
+    }
+
+    #[test]
+    fn a_watched_custom_agent_is_not_provisioned() {
+        let a = commands(&[]);
+        a.set(vec![AgentCommand { id: "custom-1".into(), command: "mycli".into(), enabled: true }]);
+        assert_eq!(a.offer_for("mycli"), None);
     }
 
     #[test]

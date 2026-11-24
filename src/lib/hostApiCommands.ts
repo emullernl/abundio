@@ -26,6 +26,7 @@ export const HOST_API_COMMANDS: ReadonlySet<string> = new Set([
 	"status_apply",
 	"status_byte_threshold_set",
 	"agent_commands_set",
+	"watch_offer_close",
 	"pane_facts_report",
 	// Layouts and Tabs
 	"layout_apply",

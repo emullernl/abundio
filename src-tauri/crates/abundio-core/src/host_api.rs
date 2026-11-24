@@ -208,7 +208,29 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
             Value::Null
         }
         "agent_commands_set" => {
-            host.agents.set(a!(c, raw, { list: Vec<crate::shell_integration::AgentCommand> }).list);
+            let a = a!(c, raw, {
+                list: Vec<crate::shell_integration::AgentCommand>,
+                hooks_enabled: Option<bool>,
+                declined: Option<Vec<String>>,
+            });
+            host.agents.set(a.list);
+            if let Some(hooks) = a.hooks_enabled {
+                host.agents.set_offer_settings(hooks, &a.declined.unwrap_or_default());
+            }
+            Value::Null
+        }
+        // ── Watch offer (docs/plans/watch-offer.md) ──
+        "watch_offer_close" => {
+            // `watched`: the answer was Enable, so the other panes running
+            // the Agent are offered a restart instead.
+            let a = a!(c, raw, { agent_id: String, snooze: bool, watched: Option<bool> });
+            if a.snooze {
+                host.agents.snooze(&a.agent_id);
+            }
+            host.events.broadcast(
+                crate::shell_integration::WATCH_OFFER_CLOSED_EVENT,
+                serde_json::json!({ "agentId": a.agent_id, "watched": a.watched.unwrap_or(false) }),
+            );
             Value::Null
         }
         "pane_facts_report" => {
@@ -517,7 +539,7 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
         "host_settings_set" => {
             let settings = a!(c, raw, { settings: crate::host_settings::HostSettings }).settings;
             crate::host_settings::set(host.workspaces, &settings)?;
-            host.agents.set(settings.agent_commands());
+            settings.apply_to(host.agents);
             if let Some(n) = settings.scrollback {
                 host.ptys.set_scrollback(n);
             }

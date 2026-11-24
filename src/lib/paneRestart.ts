@@ -252,6 +252,41 @@ export async function restartPaneWithTask(
 }
 
 /**
+ * Restart from a **Watch offer**: respawn one pane's PTY and start its Agent
+ * afresh, so it reads the hooks just written. Never a resume: with no hooks
+ * until now there is no session id to resume by. In the pane's live folder
+ * when known, else the Workspace's; the scrollback stays.
+ */
+export async function restartPaneWithAgent(
+	paneId: string,
+	agentId: string,
+	command: string,
+): Promise<void> {
+	const act = usePtyActivityStore.getState();
+	const ptyId = act.panePtyMap[paneId];
+	const store = useWorkspaceStore.getState();
+	const workspace = store.findWorkspaceForPane(paneId);
+	const cwd = (ptyId && act.cwds[ptyId]) || workspace?.rootFolder || ".";
+	store.stampAgentOnPane(paneId, agentId);
+	if (livePtyIdByPane()[paneId] !== undefined) {
+		await restartPanePty(paneId, {
+			cwd,
+			agentCommand: command,
+			preserveScrollback: true,
+		});
+		return;
+	}
+	const tab = workspace?.tabs.find((t) => {
+		const layout = parseTabLayout(t.layoutJson);
+		return layout ? containsPane(layout, paneId) : false;
+	});
+	restartUnmountedPane(
+		{ paneId, ptyId: ptyId ?? "", tabId: tab?.id ?? "" },
+		command,
+	);
+}
+
+/**
  * An unmounted pane has a PTY but no xterm instance. Kill the process and clear
  * the layout's ptyId so the next mount takes the ordinary cold-start path.
  *
