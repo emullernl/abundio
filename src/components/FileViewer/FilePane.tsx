@@ -42,7 +42,7 @@ import {
 	openFileWindow,
 } from "../../lib/openFileWindow";
 import { findPreviewForSource } from "../../lib/paneTree";
-import type { PdfPosition } from "../../lib/pdfView";
+import { isPdfPath, type PdfPosition } from "../../lib/pdfView";
 import { sc } from "../../lib/platform";
 import {
 	relativeToWorkspace,
@@ -57,6 +57,7 @@ import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { DiffViewer } from "../GitChanges/DiffViewer";
 import { PaneDropIndicator } from "../PaneDropIndicator";
+import { secondaryButtonClass } from "../PromptActions/fieldStyles";
 import {
 	type ContextMenuItem,
 	PaneContextMenu,
@@ -534,6 +535,10 @@ export function FilePane({
 		paneState.fileType === "diff" ? diffRealPathOf(paneState.filePath) : null;
 	const isCommitDiff = parseCommitDiffKey(paneState.filePath) != null;
 	const isStandaloneDiff = paneState.diffSource === "file";
+	// A PDF has no text diff (its bytes would show as noise): say so, and
+	// offer the file itself.
+	const isPdfDiff =
+		diffRealPath != null && !isStandaloneDiff && isPdfPath(diffRealPath);
 	const isPatchFile =
 		paneState.fileType === "text" &&
 		isUnifiedDiffFile(paneState.filePath, paneState.content ?? "");
@@ -868,7 +873,33 @@ export function FilePane({
 							section again.
 						</div>
 					)}
+				{isPdfDiff && (
+					<div
+						className="absolute inset-0 flex flex-col items-center justify-center text-center gap-3"
+						style={{
+							color: "var(--fg-secondary)",
+							fontSize: 13,
+							padding: "0 24px",
+							backgroundColor: "var(--bg-primary)",
+						}}
+					>
+						<span>
+							{paneState.fileName} is a binary file, so it has no diff.
+						</span>
+						{openPlainFileFromDiff && (
+							<button
+								type="button"
+								onClick={openPlainFileFromDiff}
+								className={secondaryButtonClass}
+								style={{ padding: "4px 12px", fontSize: 12 }}
+							>
+								Open PDF
+							</button>
+						)}
+					</div>
+				)}
 				{paneState.fileType === "diff" &&
+					!isPdfDiff &&
 					paneState.diffOriginal != null &&
 					paneState.diffModified != null &&
 					diffRealPath != null && (
