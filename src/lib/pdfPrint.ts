@@ -3,8 +3,8 @@
  * print resolution into an image, the images go into a print-only element,
  * and the webview's own print dialog prints them — the way `markdownPrint.ts`
  * prints rendered markdown. One page per sheet: @page asks for the PDF's first
- * page size with no margin (the PDF carries its own), and each page fills the
- * printable width whatever paper the dialog picks.
+ * page size with no margin (the PDF carries its own), and each page is fitted
+ * inside one sheet whatever paper the dialog picks.
  */
 
 const PRINT_DIV_ID = "abundio-pdf-print";
@@ -21,8 +21,8 @@ export function pdfPrintCss(widthPt: number, heightPt: number): string {
 	return `
 @page { size: ${widthPt}pt ${heightPt}pt; margin: 0; }
 @media print {
-  html, body {
-    height: auto !important;
+  html, body, #${PRINT_DIV_ID} {
+    height: 100% !important;
     min-height: 0 !important;
     overflow: visible !important;
     background: #fff !important;
@@ -31,18 +31,25 @@ export function pdfPrintCss(widthPt: number, heightPt: number): string {
   }
   body > *:not(#${PRINT_DIV_ID}) { display: none !important; }
   #${PRINT_DIV_ID} { display: block !important; }
-  /* No fixed sheet size: the print dialog may use other paper and margins
-     than @page asks for (WebKit does), and a sheet a hair taller than the
-     printable area spills a blank sheet after every page. Each page takes
-     the printable width; its height follows. */
+  /* Each sheet is exactly one page tall, and its page image is fitted
+     inside it (pdf.js's own print layout). Sizing the image by width alone
+     left it a fraction of a point too tall, and WebKit then added a blank
+     sheet after every page. Checked in WebKit's print path with A4, Letter
+     and landscape pages, with and without margins. */
   #${PRINT_DIV_ID} > div {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     break-inside: avoid;
     page-break-inside: avoid;
     break-after: page;
     page-break-after: always;
   }
   #${PRINT_DIV_ID} > div:last-child { break-after: auto; page-break-after: auto; }
-  #${PRINT_DIV_ID} img { width: 100%; height: auto; display: block; }
+  #${PRINT_DIV_ID} img { max-width: 100%; max-height: 100%; display: block; }
 }`;
 }
 

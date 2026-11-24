@@ -50,12 +50,13 @@ describe("pdfPrintCss", () => {
 		);
 	});
 
-	it("never fixes a sheet's height, so a page cannot spill onto a blank sheet", () => {
-		const css = pdfPrintCss(612, 792);
-		const sheetRule = css.slice(css.indexOf("> div {"));
-		expect(sheetRule).not.toMatch(/height:\s*792pt/);
-		expect(css).toContain("break-inside: avoid");
-		expect(css).toContain("width: 100%; height: auto");
+	it("fits each page inside one page-tall sheet", () => {
+		// Sizing by width alone left the image a hair too tall, and WebKit
+		// printed a blank sheet after every page.
+		const css = pdfPrintCss(594.96, 841.92);
+		expect(css).toMatch(/> div \{[^}]*height: 100%;/);
+		expect(css).toContain("max-width: 100%; max-height: 100%");
+		expect(css).not.toContain("height: auto");
 	});
 });
 
