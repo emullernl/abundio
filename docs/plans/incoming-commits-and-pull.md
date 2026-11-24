@@ -78,3 +78,11 @@ One branch (`incoming-commits`), ordered commits.
   diverged / no upstream), fetch moves the counts, pull fast-forwards, pull keeps unrelated dirty
   files, pull refuses on overlap (tracked and untracked), on Diverged, mid-merge, detached.
 - TS: the pure timer rules, the outcome → dialog text mapping, chip label / tooltip helpers.
+
+## As built
+
+- The refusal dialog lists the blocking files as text, with a "Show Git changes" button, rather than
+  making each file clickable.
+- The setting lives in Settings ▸ GitHub, under "Incoming Commits".
+- Not yet verified in the running app against an ssh remote (the build sandbox has no ssh network);
+  the tests use a local bare remote.

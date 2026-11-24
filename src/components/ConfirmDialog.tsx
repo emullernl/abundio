@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertTriangle } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useEscapeKey } from "../hooks/useEscapeKey";
 
@@ -14,6 +14,8 @@ interface ConfirmDialogProps {
 	/** One button only: a notice to acknowledge, not a choice. Escape and
 	 *  the backdrop still dismiss it through `onCancel`. */
 	hideCancel?: boolean;
+	/** Shown under the message, e.g. a list of files. */
+	details?: ReactNode;
 }
 
 function ConfirmDialogBody({
@@ -24,6 +26,7 @@ function ConfirmDialogBody({
 	onConfirm,
 	onCancel,
 	hideCancel = false,
+	details,
 }: ConfirmDialogProps) {
 	const confirmRef = useRef<HTMLButtonElement>(null);
 
@@ -98,6 +101,7 @@ function ConfirmDialogBody({
 						>
 							{message}
 						</p>
+						{details}
 					</div>
 
 					{/* Actions */}

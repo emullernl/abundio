@@ -119,6 +119,10 @@ interface SettingsState {
 	prPollEnabled: boolean;
 	/** Focused-cadence PR poll interval in minutes (1–30). */
 	prPollIntervalMinutes: number;
+	/** How often to fetch Opened workspaces' Upstreams for **Incoming
+	 *  commits**, in minutes; 0 is Off (no timer, no focus fetch). A Window in
+	 *  the background checks every 2 h instead. See ADR-0066. */
+	incomingCheckMinutes: number;
 	/** The **Task template**: wraps a free-text Task (`{{input}}`). */
 	taskTemplate: string;
 	/** The **Issue template**: wraps an Issue task (`{{number}}` etc.). */
@@ -202,6 +206,7 @@ interface SettingsState {
 	setUpdateSnoozedUntil: (until: number | null) => void;
 	setPrPollEnabled: (enabled: boolean) => void;
 	setPrPollIntervalMinutes: (minutes: number) => void;
+	setIncomingCheckMinutes: (minutes: number) => void;
 	setTaskTemplate: (template: string) => void;
 	setIssueTemplate: (template: string) => void;
 	setTaskDestination: (destination: TaskDestinationPreference) => void;
@@ -271,6 +276,7 @@ export const PERSISTED_KEYS = [
 	"updateSnoozedUntil",
 	"prPollEnabled",
 	"prPollIntervalMinutes",
+	"incomingCheckMinutes",
 	"taskTemplate",
 	"issueTemplate",
 	"taskDestination",
@@ -330,6 +336,7 @@ const PERSISTED_DEFAULTS: {
 	updateSnoozedUntil: number | null;
 	prPollEnabled: boolean;
 	prPollIntervalMinutes: number;
+	incomingCheckMinutes: number;
 	taskTemplate: string;
 	issueTemplate: string;
 	taskDestination: TaskDestinationPreference;
@@ -372,6 +379,7 @@ const PERSISTED_DEFAULTS: {
 		updateSnoozedUntil: null as number | null,
 		prPollEnabled: true,
 		prPollIntervalMinutes: 5,
+		incomingCheckMinutes: 30,
 		taskTemplate: DEFAULT_TASK_TEMPLATE,
 		issueTemplate: DEFAULT_ISSUE_TEMPLATE,
 		taskDestination: "worktree" as TaskDestinationPreference,
@@ -536,6 +544,11 @@ const PERSISTED_DEFAULTS: {
 				typeof s.prPollIntervalMinutes === "number"
 					? s.prPollIntervalMinutes
 					: defaults.prPollIntervalMinutes,
+			incomingCheckMinutes:
+				typeof s.incomingCheckMinutes === "number" &&
+				s.incomingCheckMinutes >= 0
+					? s.incomingCheckMinutes
+					: defaults.incomingCheckMinutes,
 			taskTemplate:
 				typeof s.taskTemplate === "string"
 					? s.taskTemplate
@@ -709,6 +722,7 @@ export const useSettingsStore = create<SettingsState>()(
 			updateSnoozedUntil: PERSISTED_DEFAULTS.updateSnoozedUntil,
 			prPollEnabled: PERSISTED_DEFAULTS.prPollEnabled,
 			prPollIntervalMinutes: PERSISTED_DEFAULTS.prPollIntervalMinutes,
+			incomingCheckMinutes: PERSISTED_DEFAULTS.incomingCheckMinutes,
 			taskTemplate: PERSISTED_DEFAULTS.taskTemplate,
 			issueTemplate: PERSISTED_DEFAULTS.issueTemplate,
 			taskDestination: PERSISTED_DEFAULTS.taskDestination,
@@ -930,6 +944,8 @@ export const useSettingsStore = create<SettingsState>()(
 				);
 				set({ prPollEnabled });
 			},
+			setIncomingCheckMinutes: (minutes) =>
+				set({ incomingCheckMinutes: Math.max(0, Math.round(minutes)) }),
 			setPrPollIntervalMinutes: (minutes) => {
 				const prPollIntervalMinutes = Math.min(
 					30,

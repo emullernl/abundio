@@ -23,6 +23,7 @@ import { useWindowUiStore } from "../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { Folder, GitBranch, Grid, Terminal } from "./Icons";
+import { IncomingChip } from "./IncomingChip";
 import { InjectedBundlePill } from "./WorkspaceEnv/InjectedBundlePill";
 
 function Separator() {
@@ -402,6 +403,11 @@ export function StatusBar() {
 							<>
 								<Separator />
 								<BranchSegment label={branch} />
+								<IncomingChip
+									workspaceId={workspace.id}
+									showOutgoing
+									fontSize={11}
+								/>
 							</>
 						)}
 						{tab && (

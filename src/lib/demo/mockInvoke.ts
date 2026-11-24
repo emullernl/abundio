@@ -264,6 +264,17 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		// ── Git ──
 		case "git_fetch_bundle":
 			return fixtures.gitBundleForCwd(String(args.cwd ?? ""));
+		case "git_fetch_upstream":
+			return { kind: "noUpstream" };
+		case "git_pull_ff":
+			return {
+				kind: "refused",
+				reason: "noUpstream",
+				files: [],
+				upstream: null,
+				outgoing: 0,
+				incoming: 0,
+			};
 		case "git_changed_files":
 			return fixtures.gitBundleForCwd(String(args.cwd ?? "")).changedFiles;
 		case "git_branch_info":

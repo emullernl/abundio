@@ -11,17 +11,25 @@ import {
 } from "../../lib/commitHistory";
 import { openExternal } from "../../lib/desktop";
 import { gitRowMenuEntries } from "../../lib/gitRowMenu";
+import {
+	canPull,
+	isDiverged,
+	lastCheckedMs,
+	upstreamTooltip,
+} from "../../lib/incomingCommits";
 import { fs as fsApi, git } from "../../lib/ipc";
 import { withoutLocalOnly } from "../../lib/localOnlyEntries";
 import {
 	openFileWindow,
 	openFileWindowForPath,
 } from "../../lib/openFileWindow";
+import { checkIncoming, pullWorkspace } from "../../lib/pull";
 import { resolveWorkspacePath } from "../../lib/resolveWorkspacePath";
-import type { CommitFile, HistoryCommit } from "../../lib/types";
+import type { CommitFile, HistoryCommit, UpstreamState } from "../../lib/types";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useGitChangesStore } from "../../stores/gitChangesStore";
 import { useHostOfWorkspace } from "../../stores/hostAgentsStore";
+import { useIncomingStore } from "../../stores/incomingStore";
 import { useWindowUiStore } from "../../stores/windowUiStore";
 import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -186,6 +194,9 @@ function CommitsBody() {
 	const slug = commitHistory?.githubSlug ?? null;
 	const currentBranch = useGitChangesStore((s) => s.currentBranch);
 	const error = useGitChangesStore((s) => s.error);
+	const upstream = useIncomingStore((s) =>
+		activeWorkspaceId ? s.upstreamById[activeWorkspaceId] : undefined,
+	);
 	const now = useNowSecs();
 
 	const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
@@ -396,7 +407,78 @@ function CommitsBody() {
 
 	return (
 		<>
+			{upstream && (
+				<IncomingHeader workspaceId={activeWorkspaceId} upstream={upstream} />
+			)}
 			<ul style={{ paddingTop: 4, listStyle: "none" }}>
+				{upstream?.incomingCommits.map((commit) => {
+					const isOpen = expanded.has(commit.oid);
+					const fileList = files[commit.oid];
+					return (
+						<li key={`in-${commit.oid}`}>
+							<CommitRow
+								commit={commit}
+								isHead={false}
+								incoming
+								isOpen={isOpen}
+								isMenuTarget={menu?.commit.oid === commit.oid && !menu.file}
+								now={now}
+								onToggle={() => toggleCommit(commit.oid)}
+								onContextMenu={(x, y, fromKeyboard) =>
+									setMenu({ x, y, commit, fromKeyboard })
+								}
+							/>
+							{isOpen &&
+								(fileList === "loading" || fileList === undefined ? (
+									<RailLine muted incoming>
+										<span className="animate-pulse">Loading files…</span>
+									</RailLine>
+								) : fileList === "error" ? (
+									<RailLine muted incoming>
+										Could not read this commit's files
+									</RailLine>
+								) : fileList.length === 0 ? (
+									<RailLine muted incoming>
+										No file changes
+									</RailLine>
+								) : (
+									fileList.map((f) => (
+										<CommitFileRow
+											key={f.path}
+											file={f}
+											shared={false}
+											incoming
+											isMenuTarget={
+												menu?.commit.oid === commit.oid &&
+												menu.file?.path === f.path
+											}
+											onOpen={() => openFileDiff(commit, f)}
+											onContextMenu={(x, y, fromKeyboard) =>
+												setMenu({ x, y, commit, file: f, fromKeyboard })
+											}
+										/>
+									))
+								))}
+						</li>
+					);
+				})}
+				{upstream && upstream.incoming > upstream.incomingCommits.length && (
+					<li>
+						<RailLine muted incoming>
+							…and {upstream.incoming - upstream.incomingCommits.length} more
+						</RailLine>
+					</li>
+				)}
+				{upstream && upstream.incomingCommits.length > 0 && currentBranch && (
+					<li>
+						<Divider
+							label={currentBranch}
+							title={`Below: ${currentBranch} as it is here. Above: commits on ${upstream.name} it does not have yet`}
+							above="incoming"
+							below={commitHistory.commits[0]?.shared ? "shared" : "ahead"}
+						/>
+					</li>
+				)}
 				{commitHistory.commits.map((commit, i) => {
 					const isOpen = expanded.has(commit.oid);
 					const fileList = files[commit.oid];
@@ -410,7 +492,14 @@ function CommitsBody() {
 						!commitHistory.commits[i - 1].shared;
 					return (
 						<li key={commit.oid}>
-							{divider && <BaseDivider base={base} />}
+							{divider && (
+								<Divider
+									label={base}
+									title={`Below: history ${base} also has, as this branch last saw it`}
+									above="ahead"
+									below="shared"
+								/>
+							)}
 							<CommitRow
 								commit={commit}
 								isHead={i === 0}
@@ -482,6 +571,8 @@ function CommitsBody() {
 }
 
 const AHEAD_RAIL = "color-mix(in srgb, var(--accent) 35%, var(--border))";
+const INCOMING_COLOR = "var(--success)";
+const INCOMING_RAIL = "color-mix(in srgb, var(--success) 45%, var(--border))";
 const SHARED_RAIL = "var(--border)";
 const SHARED_NODE = "color-mix(in srgb, var(--fg-secondary) 55%, transparent)";
 /** `--border` alone vanishes against the sidebar's glow at 1px. */
@@ -494,10 +585,13 @@ function Rail({
 	top = 0,
 	bottom = 0,
 	shared = false,
+	incoming = false,
 }: {
 	top?: number;
 	bottom?: number;
 	shared?: boolean;
+	/** **Incoming commits**: dashed, because they are not on this branch yet. */
+	incoming?: boolean;
 }) {
 	return (
 		<span
@@ -507,8 +601,10 @@ function Rail({
 				left: RAIL_X,
 				top,
 				bottom,
-				width: 1,
-				backgroundColor: shared ? SHARED_RAIL : AHEAD_RAIL,
+				width: 0,
+				borderLeft: incoming
+					? `1px dashed ${INCOMING_RAIL}`
+					: `1px solid ${shared ? SHARED_RAIL : AHEAD_RAIL}`,
 			}}
 		/>
 	);
@@ -520,13 +616,19 @@ function CommitNode({
 	isHead,
 	isMerge,
 	shared,
+	incoming = false,
 }: {
 	isHead: boolean;
 	isMerge: boolean;
 	shared: boolean;
+	incoming?: boolean;
 }) {
 	const size = isMerge ? 7 : 8;
-	const color = shared ? SHARED_NODE : "var(--accent)";
+	const color = incoming
+		? INCOMING_COLOR
+		: shared
+			? SHARED_NODE
+			: "var(--accent)";
 	return (
 		<span
 			aria-hidden
@@ -549,6 +651,7 @@ function CommitNode({
 function CommitRow({
 	commit,
 	isHead,
+	incoming = false,
 	isOpen,
 	isMenuTarget,
 	now,
@@ -557,6 +660,7 @@ function CommitRow({
 }: {
 	commit: HistoryCommit;
 	isHead: boolean;
+	incoming?: boolean;
 	isOpen: boolean;
 	isMenuTarget: boolean;
 	now: number;
@@ -601,11 +705,16 @@ function CommitRow({
 				e.currentTarget.style.backgroundColor = "transparent";
 			}}
 		>
-			<Rail top={isHead ? ROW_HEIGHT / 2 : 0} shared={commit.shared} />
+			<Rail
+				top={isHead ? ROW_HEIGHT / 2 : 0}
+				shared={commit.shared}
+				incoming={incoming}
+			/>
 			<CommitNode
 				isHead={isHead}
 				isMerge={commit.isMerge}
 				shared={commit.shared}
+				incoming={incoming}
 			/>
 			<span
 				className="flex-shrink-0 transition-opacity opacity-40 group-hover:opacity-80"
@@ -660,12 +769,14 @@ function CommitRow({
 function CommitFileRow({
 	file,
 	shared,
+	incoming = false,
 	isMenuTarget,
 	onOpen,
 	onContextMenu,
 }: {
 	file: CommitFile;
 	shared: boolean;
+	incoming?: boolean;
 	/** The row the Row menu is open on: a ring, like a Git changes row. */
 	isMenuTarget: boolean;
 	onOpen: () => void;
@@ -729,7 +840,7 @@ function CommitFileRow({
 				e.currentTarget.style.backgroundColor = "transparent";
 			}}
 		>
-			<Rail shared={shared} />
+			<Rail shared={shared} incoming={incoming} />
 			<span
 				className="flex-shrink-0 inline-flex items-center justify-center rounded font-bold"
 				style={{
@@ -778,10 +889,12 @@ function RailLine({
 	children,
 	muted,
 	shared = false,
+	incoming = false,
 }: {
 	children: React.ReactNode;
 	muted?: boolean;
 	shared?: boolean;
+	incoming?: boolean;
 }) {
 	return (
 		<div
@@ -794,23 +907,45 @@ function RailLine({
 				fontStyle: muted ? "italic" : undefined,
 			}}
 		>
-			<Rail shared={shared} />
+			<Rail shared={shared} incoming={incoming} />
 			{children}
 		</div>
 	);
 }
 
-/** The boundary between the **Ahead commits** and the **Shared history**,
- *  named after the base. The rail changes colour across it. */
-function BaseDivider({ base }: { base: string }) {
+type Tone = "incoming" | "ahead" | "shared";
+
+/** A boundary in the list, named after what lies below it: between the
+ *  **Incoming commits** and this branch (named after the branch), or between
+ *  the **Ahead commits** and the **Shared history** (named after the base).
+ *  The rail changes across it. */
+function Divider({
+	label,
+	title,
+	above,
+	below,
+}: {
+	label: string;
+	title: string;
+	above: Tone;
+	below: Tone;
+}) {
 	return (
 		<div
 			className="relative flex items-center gap-2"
 			style={{ height: 22, paddingLeft: GUTTER, paddingRight: 10 }}
-			title={`Below: history ${base} also has, as this branch last saw it`}
+			title={title}
 		>
-			<Rail bottom={11} />
-			<Rail top={11} shared />
+			<Rail
+				bottom={11}
+				shared={above === "shared"}
+				incoming={above === "incoming"}
+			/>
+			<Rail
+				top={11}
+				shared={below === "shared"}
+				incoming={below === "incoming"}
+			/>
 			<span
 				aria-hidden
 				className="flex-1"
@@ -823,12 +958,118 @@ function BaseDivider({ base }: { base: string }) {
 					fontFamily: "var(--font-mono)",
 				}}
 			>
-				{base}
+				{label}
 			</span>
 			<span
 				aria-hidden
 				style={{ width: 16, height: 1, backgroundColor: DIVIDER_LINE }}
 			/>
+		</div>
+	);
+}
+
+const headerButtonClass =
+	"flex-shrink-0 rounded transition-colors cursor-pointer disabled:cursor-default disabled:opacity-50 enabled:hover:bg-[var(--bg-tertiary)]";
+
+/** Above the list when the branch has an **Upstream**: the Incoming and
+ *  Outgoing counts, **Pull**, and Check now (ADR-0066). */
+function IncomingHeader({
+	workspaceId,
+	upstream,
+}: {
+	workspaceId: string;
+	upstream: UpstreamState;
+}) {
+	const checking = useIncomingStore((s) => s.checking.has(workspaceId));
+	const pulling = useIncomingStore((s) => s.pulling.has(workspaceId));
+	const error = useIncomingStore((s) => s.errorById[workspaceId] ?? null);
+	const attempt = useIncomingStore((s) => s.lastAttemptById[workspaceId]);
+	const operation = useGitChangesStore((s) => s.operationInProgress);
+	useNowSecs(); // keeps "checked N min ago" current
+	const lastMs = lastCheckedMs(attempt, upstream);
+	const tooltip = upstreamTooltip(upstream, {
+		lastMs,
+		error,
+		operationInProgress: operation,
+		now: Date.now(),
+	});
+	const diverged = isDiverged(upstream);
+	const pullable = canPull(upstream, operation);
+	const { incoming, outgoing } = upstream;
+	const text = diverged
+		? `Diverged from ${upstream.name}`
+		: incoming > 0
+			? `${incoming} incoming from ${upstream.name}`
+			: `Up to date with ${upstream.name}`;
+	return (
+		<div
+			className="flex items-center gap-1.5"
+			title={tooltip}
+			style={{
+				height: 28,
+				padding: "0 8px 0 10px",
+				borderBottom: "1px solid var(--border)",
+				fontSize: 11,
+				color: "var(--fg-secondary)",
+			}}
+		>
+			{incoming > 0 && (
+				<span
+					style={{ color: INCOMING_COLOR, fontVariantNumeric: "tabular-nums" }}
+				>
+					↓{incoming}
+				</span>
+			)}
+			{outgoing > 0 && (
+				<span
+					style={{ color: "var(--accent)", fontVariantNumeric: "tabular-nums" }}
+				>
+					↑{outgoing}
+				</span>
+			)}
+			<span className="truncate flex-1 min-w-0">{text}</span>
+			{error && (
+				<span
+					role="img"
+					aria-label="Last check failed"
+					style={{ color: "var(--warning)" }}
+				>
+					!
+				</span>
+			)}
+			<button
+				type="button"
+				className={headerButtonClass}
+				disabled={checking || pulling}
+				onClick={() => void checkIncoming(workspaceId)}
+				title="Check for incoming commits"
+				aria-label="Check for incoming commits"
+				style={{ padding: "2px 5px", color: "var(--fg-secondary)" }}
+			>
+				<span
+					className={checking ? "inline-block animate-spin" : "inline-block"}
+				>
+					⟳
+				</span>
+			</button>
+			{incoming > 0 && !diverged && (
+				<button
+					type="button"
+					className={headerButtonClass}
+					disabled={!pullable || pulling}
+					onClick={() => void pullWorkspace(workspaceId)}
+					title={tooltip}
+					style={{
+						padding: "2px 8px",
+						fontSize: 11,
+						fontWeight: 500,
+						color: INCOMING_COLOR,
+						border: `1px solid color-mix(in srgb, ${INCOMING_COLOR} 40%, transparent)`,
+					}}
+				>
+					{pulling ? "Pulling…" : "Pull"}
+				</button>
+			)}
 		</div>
 	);
 }

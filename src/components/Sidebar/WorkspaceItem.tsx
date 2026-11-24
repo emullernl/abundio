@@ -15,6 +15,7 @@ import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { DirtyEdge, DirtyRing } from "../DirtyMarker";
 import { ChevronRight, GitBranch, X } from "../Icons";
+import { IncomingChip } from "../IncomingChip";
 import { StatusComposite } from "../StatusComposite";
 import { MissingFolderMark } from "./MissingFolderMark";
 
@@ -328,6 +329,9 @@ export const WorkspaceItem = memo(function WorkspaceItem({
 								/>
 								<span className="truncate">{gitInfo.currentBranch}</span>
 							</div>
+						)}
+						{isLoaded && gitInfo?.isGitRepo && (
+							<IncomingChip workspaceId={workspace.id} />
 						)}
 					</div>
 				)}

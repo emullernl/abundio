@@ -5,6 +5,7 @@ import {
 	hasGitDataCachedFor,
 	useGitChangesStore,
 } from "../stores/gitChangesStore";
+import { useIncomingStore } from "../stores/incomingStore";
 import { useProfileStore } from "../stores/profileStore";
 import { handlePrChanges, usePrStore } from "../stores/prStore";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
@@ -58,6 +59,7 @@ export function useGitDataSync() {
 				entry.cancelled = true;
 				entry.unlisten?.();
 				git.schedulerStop(wsId).catch(() => {});
+				useIncomingStore.getState().forget(wsId);
 				// No more live pushes: let the batched summary refresh its
 				// Dirty marker from here on.
 				useWorkspaceGitStore.getState().endLiveUncommitted(wsId);

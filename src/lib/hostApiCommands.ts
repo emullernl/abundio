@@ -77,6 +77,8 @@ export const HOST_API_COMMANDS: ReadonlySet<string> = new Set([
 	"git_workspaces_summary",
 	"git_scheduler_start",
 	"git_scheduler_stop",
+	"git_fetch_upstream",
+	"git_pull_ff",
 	// Worktrees
 	"list_repo_worktrees",
 	"worktree_add",
