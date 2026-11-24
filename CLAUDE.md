@@ -59,6 +59,7 @@ The modules below are listed together; which crate holds each is decided by whet
 - `owner_map.rs` — `OwnerMap`: which Windows hold each git scheduler worker and file watch. A Window's `Destroyed` releases its holds, because React cleanup never runs when a webview is destroyed.
 - `search.rs` — Full-text workspace search with cancellation support (`fs_search`, `fs_search_cancel`).
 - `git_commands.rs` — Git operations: changed files, file diffs, branch info, list branches, status fingerprint.
+- `git_upstream.rs` — **Incoming** / **Outgoing commits** against the **Upstream** (libgit2, in every scheduler bundle), and the only network git: `fetch_upstream` and the fast-forward-only `pull_ff` (ADR-0066). These two run the `git` CLI with every prompt off, one fetch per repository and remote at a time; `GitScheduler::refresh_repo` then refreshes every Workspace of that repository, since a linked worktree's watch does not see the shared `refs/remotes`.
 - `gh_commands.rs` — GitHub CLI integration: PR status, review requests, user's PRs.
 - `dev_environments.rs` — Desktop IDE detection and launch (VS Code, Cursor, JetBrains, etc.). Pure Rust, no app state.
 - `process_monitor.rs` — Process monitoring for PTY child processes.
@@ -113,6 +114,7 @@ The modules below are listed together; which crate holds each is decided by whet
 - `stores/agentSignalsStore.ts` — What Agents show the user about their own pane (ADR-0056): **Attention flags** and **Progress lines**. Per Window, in memory only.
 - `stores/orchestratorStore.ts` — The Window's Orchestrator session, in memory: phase, Agent, the Workspace to go back to, Peek, file tabs and their selection, the file search.
 - `stores/tabCloseConfirmStore.ts` — Confirm state for closing a tab.
+- `stores/incomingStore.ts` — **Incoming commits** per Workspace (the bundle's `upstream`), this Window's last check and its failure, and the Pull dialog. `hooks/useIncomingSync.ts` fetches on the timer and on focus; `lib/incomingCommits.ts` holds the pure rules and texts; `lib/pull.ts` is the one way to check or Pull (busy-Agent confirm, refusal dialog: `components/PullDialogs.tsx`); `components/IncomingChip.tsx` is the ↓N in the sidebar and status bar (ADR-0066).
 
 #### Lib
 

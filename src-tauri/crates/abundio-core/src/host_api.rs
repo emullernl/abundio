@@ -415,6 +415,25 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
             }
             Value::Null
         }
+        "git_fetch_upstream" => {
+            let a = a!(c, raw, { cwd: String, background: Option<bool> });
+            let outcome =
+                crate::git_upstream::fetch_upstream(&a.cwd, a.background.unwrap_or(false))?;
+            if let crate::git_upstream::FetchOutcome::Fetched { common_dir } = &outcome {
+                host.git.refresh_repo(common_dir);
+            }
+            json(outcome)?
+        }
+        "git_pull_ff" => {
+            let cwd = a!(c, raw, { cwd: String }).cwd;
+            let outcome = crate::git_upstream::pull_ff(&cwd)?;
+            // The fetch may have moved every worktree's counts, and the pull
+            // moved this one's HEAD.
+            if let Some(common) = crate::git_upstream::common_dir(&cwd) {
+                host.git.refresh_repo(&common);
+            }
+            json(outcome)?
+        }
         "git_scheduler_stop" => {
             host.git.stop(client.as_str(), &a!(c, raw, { workspace_id: String }).workspace_id);
             Value::Null

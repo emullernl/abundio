@@ -311,6 +311,50 @@ export interface CommitHistory {
 	githubSlug: string | null;
 }
 
+/** The current branch's **Upstream** and its **Incoming** / **Outgoing
+ *  commits** (see GLOSSARY.md, ADR-0066). Only as fresh as the last fetch. */
+export interface UpstreamState {
+	/** e.g. `origin/feature-x`. */
+	name: string;
+	remote: string;
+	incoming: number;
+	outgoing: number;
+	/** Newest first, at most 50; `incoming` is the true count. */
+	incomingCommits: HistoryCommit[];
+	/** When the repository last fetched, from anywhere; seconds since the
+	 *  Unix epoch. Null if never. */
+	lastFetched: number | null;
+}
+
+export type FetchOutcome =
+	| { kind: "fetched" }
+	| { kind: "noUpstream" }
+	/** A background check of a repository never fetched in: not run. */
+	| { kind: "skipped" }
+	| { kind: "failed"; message: string };
+
+export type PullRefusedReason =
+	| "noUpstream"
+	| "detached"
+	| "operation"
+	| "diverged"
+	| "overlap";
+
+export type PullOutcome =
+	| { kind: "pulled"; count: number; upstream: string }
+	| { kind: "upToDate"; upstream: string }
+	| {
+			kind: "refused";
+			reason: PullRefusedReason;
+			/** Repo-relative paths, for `overlap`. */
+			files: string[];
+			upstream: string | null;
+			outgoing: number;
+			incoming: number;
+	  }
+	| { kind: "fetchFailed"; message: string }
+	| { kind: "failed"; message: string };
+
 /** A file one commit touched, against its first parent. */
 export interface CommitFile {
 	path: string;

@@ -917,6 +917,7 @@ export function gitBundleForCwd(cwd: string): GitFetchBundle {
 	const entry = gitByRoot[cwd];
 	return {
 		commitHistory: commitHistoryForCwd(cwd),
+		upstream: null,
 		changedFiles: entry?.files ?? [],
 		branchInfo: entry?.branch ?? CLEAN_BRANCH,
 		statusFingerprint: `demo-fp-${cwd}`,

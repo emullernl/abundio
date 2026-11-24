@@ -8,18 +8,21 @@ import { useWorkWorkspaces } from "../hooks/useWorkWorkspaces";
 import { isAgentPane } from "../lib/firePromptAction";
 import { toggleFleetSpotlight, useTargetPaneId } from "../lib/fleetFocus";
 import { fuzzyMatch } from "../lib/fuzzyMatch";
+import { isDiverged } from "../lib/incomingCommits";
 import { settingsWindow } from "../lib/ipc";
 import { type KeyAction, triggerAction } from "../lib/keybindings";
 import { fileWindowTargetForPane } from "../lib/openFileWindow";
 import { isOrchestratorPane } from "../lib/orchestrator";
 import { firePaneAction } from "../lib/promptActionRegistry";
 import { actionsForPane, buttonLabel, canFire } from "../lib/promptActions";
+import { checkIncoming, pullWorkspace } from "../lib/pull";
 import { getTerminal } from "../lib/terminalManager";
 import { themeList } from "../lib/themes";
 import { typedLaunch } from "../lib/typedLaunch";
 import { addWorktreeTargetId } from "../lib/worktreeGrouping";
 import { useExplorerStore } from "../stores/explorerStore";
 import { useAgentsForWorkspace } from "../stores/hostAgentsStore";
+import { useIncomingStore } from "../stores/incomingStore";
 import { useProfileStore } from "../stores/profileStore";
 import { requestSwitchProfile } from "../stores/profileSwitchConfirmStore";
 import { usePromptActionStore } from "../stores/promptActionStore";
@@ -87,6 +90,10 @@ export function CommandPalette({
 		(s) => s.setGitChangesTreeView,
 	);
 	const promptActionList = usePromptActionStore((s) => s.actions);
+	// Null: no Upstream (or not a repository); undefined: not known yet.
+	const activeUpstream = useIncomingStore((s) =>
+		activeWorkspaceId ? s.upstreamById[activeWorkspaceId] : undefined,
+	);
 	const { splitPane, closePane } = useSplitPane();
 
 	const items = useMemo<PaletteItem[]>(() => {
@@ -148,6 +155,30 @@ export function CommandPalette({
 				category: "Actions",
 				shortcut: "add-worktree",
 				action: () => triggerAction("add-worktree"),
+			});
+		}
+
+		// Incoming commits (ADR-0066): offered when the branch has an Upstream.
+		if (activeWorkspaceId && activeUpstream && !inFleet) {
+			const id = activeWorkspaceId;
+			const u = activeUpstream;
+			result.push({
+				id: "action-check-incoming",
+				label: "Check for Incoming Commits",
+				category: "Git",
+				action: () => void checkIncoming(id),
+			});
+			result.push({
+				id: "action-pull",
+				label:
+					u.incoming > 0
+						? `Pull ${u.incoming} Incoming Commit${u.incoming === 1 ? "" : "s"} from ${u.name}`
+						: `Pull from ${u.name}`,
+				category: "Git",
+				// Pull fetches first, so it is offered even at ↓0; a Diverged
+				// branch can never fast-forward, so there it is listed but off.
+				disabled: isDiverged(u),
+				action: () => void pullWorkspace(id),
 			});
 		}
 
@@ -445,6 +476,8 @@ export function CommandPalette({
 
 		return result;
 	}, [
+		activeUpstream,
+		activeWorkspaceId,
 		workspaces,
 		focusedPaneId,
 		inFleet,

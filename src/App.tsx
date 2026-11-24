@@ -17,6 +17,7 @@ import { OpenInDevEnvButton } from "./components/OpenInDevEnvButton";
 import { OpenRemoteProfileDialog } from "./components/OpenRemoteProfileDialog";
 import { OrchestratorView } from "./components/Orchestrator/OrchestratorView";
 import { OVERVIEW_BAR_HEIGHT, OverviewBar } from "./components/OverviewBar";
+import { PullDialogs } from "./components/PullDialogs";
 import { RemoteHostBanner } from "./components/RemoteHostBanner";
 import { RightSidebar } from "./components/RightSidebar/RightSidebar";
 import { SaveConfirmDialog } from "./components/SaveConfirmDialog";
@@ -35,6 +36,7 @@ import { useFileReloadWatcher } from "./hooks/useFileReloadWatcher";
 import { useFileWindowRaise } from "./hooks/useFileWindowRaise";
 import { useFileWindowRestore } from "./hooks/useFileWindowRestore";
 import { useGitDataSync } from "./hooks/useGitDataSync";
+import { useIncomingSync } from "./hooks/useIncomingSync";
 import { useMissingFolderRefresh } from "./hooks/useMissingFolderRefresh";
 import { useSplitPane } from "./hooks/useSplitPane";
 import { useTerminalFileDrop } from "./hooks/useTerminalFileDrop";
@@ -378,6 +380,7 @@ export function App() {
 	useFileWindowRestore();
 	useFileWindowRaise();
 	useGitDataSync();
+	useIncomingSync();
 	useWorktreeSync();
 	useTerminalFileDrop();
 	const workspaces = useWorkspaceStore((s) => s.workspaces);
@@ -1606,6 +1609,7 @@ export function App() {
 						onCancel={clearPaneClose}
 					/>
 				))}
+			<PullDialogs />
 			{pendingProfileSwitch && (
 				<ConfirmDialog
 					title={`Switch to "${pendingProfileSwitch.targetProfileName}"?`}

@@ -142,6 +142,8 @@ export const HOST_ROUTES: Record<string, Route> = {
 	git_snapshot_worktree: path(),
 	git_diff_trees: path(),
 	git_fetch_bundle: path(),
+	git_fetch_upstream: path(),
+	git_pull_ff: path(),
 	git_file_diff: path(),
 	git_commit_files: path(),
 	git_commit_file_diff: path(),

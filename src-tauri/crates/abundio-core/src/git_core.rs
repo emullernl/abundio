@@ -44,7 +44,7 @@ pub struct BranchInfo {
 }
 
 /// One commit in the **Commits** section (see GLOSSARY.md).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryCommit {
     pub oid: String,
@@ -190,6 +190,9 @@ pub struct GitFetchBundle {
     /// `None` when the base branch cannot be resolved to a commit. Best-effort
     /// like `operation_in_progress`: it never fails the bundle.
     pub commit_history: Option<CommitHistory>,
+    /// The current branch's **Upstream** with its Incoming and Outgoing
+    /// commits. `None` when it has none. Best-effort: never fails the bundle.
+    pub upstream: Option<crate::git_upstream::UpstreamState>,
 }
 
 /// Reject anything that isn't a plain repository-relative path.

@@ -8,6 +8,7 @@ import {
 	workspaces as workspacesApi,
 } from "../lib/ipc";
 import type { CommitHistory, GitChangedFile } from "../lib/types";
+import { useIncomingStore } from "./incomingStore";
 import { conflictedPathsOf, useWorkspaceGitStore } from "./workspaceGitStore";
 import { useWorkspaceStore } from "./workspaceStore";
 
@@ -311,6 +312,9 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 			...branchStatOf(files),
 		});
 		chipStore.setLiveUncommitted(workspaceId, files);
+		useIncomingStore
+			.getState()
+			.setUpstream(workspaceId, bundle.upstream ?? null);
 		// Persist the branch to the workspace_store, but ONLY when it actually
 		// changed. Every `invoke` carries ~100-1000 ms of WKWebView main-thread
 		// overhead in this app, and the scheduler pushes a bundle on every
@@ -369,6 +373,7 @@ export const useGitChangesStore = create<GitChangesState>()((set, get) => ({
 
 	applyError: (workspaceId, message, notGitRepo) => {
 		if (notGitRepo) {
+			useIncomingStore.getState().setUpstream(workspaceId, null);
 			const wtStore = useWorkspaceGitStore.getState();
 			wtStore.setInfo(workspaceId, {
 				conflictedPaths: [],

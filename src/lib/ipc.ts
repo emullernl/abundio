@@ -31,6 +31,7 @@ import type {
 	CommitHistory,
 	DetectedDevEnvironment,
 	DirEntry,
+	FetchOutcome,
 	FileContent,
 	FileEntry,
 	GitChangedFile,
@@ -46,10 +47,12 @@ import type {
 	PrStatePayload,
 	PtyActivityType,
 	PtyStatusType,
+	PullOutcome,
 	SearchFileResult,
 	SearchResult,
 	Tab,
 	TabUpdate,
+	UpstreamState,
 	WorkspaceUpdate,
 	WorkspaceWithTabs,
 	WorktreeEntry,
@@ -824,6 +827,8 @@ export interface GitFetchBundle {
 	operationInProgress: GitOperation | null;
 	/** Null when the base branch cannot be resolved to a commit. */
 	commitHistory: CommitHistory | null;
+	/** Null when the branch has no Upstream. */
+	upstream: UpstreamState | null;
 }
 
 /** Line/file churn between two worktree tree snapshots — a per-Turn working-tree
@@ -886,7 +891,16 @@ export const git = {
 	conflictFile: (cwd: string, filePath: string) =>
 		invoke<GitConflictFile>("git_conflict_file", { cwd, filePath }),
 
-	/** `git add <path>` — Abundio's only write to git.
+	/** Fetch the remote the current branch's Upstream lives on (ADR-0066).
+	 *  Never throws for a network failure: that is a `failed` outcome. Every
+	 *  Workspace of the repository gets a fresh bundle afterwards. */
+	fetchUpstream: (cwd: string, background = false) =>
+		invoke<FetchOutcome>("git_fetch_upstream", { cwd, background }),
+
+	/** Fetch, then fast-forward to the Upstream, or say why not (ADR-0066). */
+	pullFf: (cwd: string) => invoke<PullOutcome>("git_pull_ff", { cwd }),
+
+	/** `git add <path>` — one of Abundio's three writes to git (with Pull).
 	 *
 	 *  Callers MUST follow this with an explicit `fetchChanges`: `.git/index` is
 	 *  deliberately excluded from the file watcher (read-only git commands touch

@@ -30,6 +30,7 @@ pub mod git_commands;
 pub mod git_core;
 pub mod git_libgit2;
 pub mod git_scheduler;
+pub mod git_upstream;
 pub mod hook_apply;
 pub mod hook_route;
 pub mod hook_server;
