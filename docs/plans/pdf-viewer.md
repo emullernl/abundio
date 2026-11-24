@@ -29,8 +29,13 @@ Orchestrator tab. Today a `.pdf` is a known binary extension, so it shows the
   whole through `fs_read_file` as base64, so Remote Hosts work unchanged.
 - **Git changes**: a PDF's diff pane shows "binary file" and an **Open PDF**
   button that opens the file in a File pane. No visual diff.
+- **Print** (added 2026-11-24): a toolbar button draws every page at 150 dpi
+  into a print-only element and opens the webview's print dialog, as
+  markdown printing does (`lib/pdfPrint.ts`). One page per sheet, sized as
+  the first page, no margin. A progress chip with Cancel shows while pages
+  are drawn.
 - **Not in scope**: Workspace search does not look inside PDFs; no editing,
-  annotations, forms or printing.
+  annotations or forms.
 
 ## Steps (one branch, one commit each)
 

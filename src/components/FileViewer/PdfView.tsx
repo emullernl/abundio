@@ -5,6 +5,7 @@ import {
 	Minus,
 	MoveHorizontal,
 	Plus,
+	Printer,
 	Search,
 	X,
 } from "lucide-react";
@@ -13,6 +14,7 @@ import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { decodeBase64 } from "../../lib/base64";
 import { openExternal } from "../../lib/desktop";
 import { loadPdfjs, PDF_DATA_URLS } from "../../lib/pdfjs";
+import { PrintCancelled, printPdf } from "../../lib/pdfPrint";
 import {
 	clampPdfPosition,
 	classifyPdfLink,
@@ -93,6 +95,34 @@ export function PdfView({
 	const [scale, setScale] = useState(1);
 	const [outline, setOutline] = useState<OutlineItem[]>([]);
 	const [outlineOpen, setOutlineOpen] = useState(false);
+	// Pages drawn so far while preparing a print; `null` when not printing.
+	const [printing, setPrinting] = useState<{
+		done: number;
+		total: number;
+	} | null>(null);
+	const printAbort = useRef<AbortController | null>(null);
+	const print = useCallback(() => {
+		const doc = docRef.current;
+		if (!doc || printAbort.current) return;
+		const abort = new AbortController();
+		printAbort.current = abort;
+		setPrinting({ done: 0, total: doc.numPages });
+		printPdf(doc, {
+			signal: abort.signal,
+			onProgress: (done, total) => setPrinting({ done, total }),
+		})
+			.catch((e) => {
+				if (!(e instanceof PrintCancelled)) {
+					console.error("[pdf] print failed:", e);
+				}
+			})
+			.finally(() => {
+				printAbort.current = null;
+				setPrinting(null);
+			});
+	}, []);
+	// Unmounting mid-print stops drawing.
+	useEffect(() => () => printAbort.current?.abort(), []);
 
 	// Report the position once the user stops moving.
 	const reportTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -406,6 +436,17 @@ export function PdfView({
 				>
 					<Search size={14} />
 				</button>
+				<button
+					type="button"
+					aria-label="Print"
+					title="Print…"
+					disabled={!pageCount || printing !== null}
+					onClick={print}
+					className={buttonClass}
+					style={{ width: 24, height: 22, padding: 0 }}
+				>
+					<Printer size={14} />
+				</button>
 			</div>
 			<div className="flex-1 min-h-0 flex">
 				{outlineOpen && outline.length > 0 && (
@@ -426,6 +467,37 @@ export function PdfView({
 				<div className="relative flex-1 min-w-0">
 					{findOpen && eventBusRef.current && (
 						<PdfFindBar eventBus={eventBusRef.current} onClose={onCloseFind} />
+					)}
+					{printing && (
+						<div
+							className="absolute flex items-center gap-2"
+							style={{
+								top: 8,
+								left: "50%",
+								transform: "translateX(-50%)",
+								zIndex: 11,
+								padding: "6px 6px 6px 12px",
+								borderRadius: 6,
+								fontSize: 12,
+								color: "var(--fg-primary)",
+								background: "var(--bg-secondary)",
+								border: "1px solid var(--border)",
+								boxShadow:
+									"0 4px 14px color-mix(in srgb, var(--bg-primary) 60%, transparent)",
+							}}
+							role="status"
+						>
+							Preparing page {Math.min(printing.done + 1, printing.total)} of{" "}
+							{printing.total}…
+							<button
+								type="button"
+								onClick={() => printAbort.current?.abort()}
+								className={buttonClass}
+								style={{ height: 22, padding: "0 8px", fontSize: 12 }}
+							>
+								Cancel
+							</button>
+						</div>
 					)}
 					{error && (
 						<div
