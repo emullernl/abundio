@@ -1857,6 +1857,7 @@ mod tests {
         assert_eq!(file_base("other", "w", Some("/me/app")), None);
         // The Orchestrator's folder is in no Workspace: `--workspace other`
         // with `src/a.ts` lands in other's folder.
+        // nosemgrep: rust.lang.security.temp-dir.temp-dir -- test scratch folder, random name, no security decision
         let root = std::env::temp_dir().join(format!("abundio-base-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(root.join("src/a.ts"), "x").unwrap();
@@ -1870,6 +1871,7 @@ mod tests {
     fn the_absolute_path_is_built_on_the_folder_as_stored() {
         // macOS: temp_dir is /var/…, canonically /private/var/…; the app knows
         // the Workspace by the stored form, so the answer must use it too.
+        // nosemgrep: rust.lang.security.temp-dir.temp-dir -- test scratch folder, random name, no security decision
         let root = std::env::temp_dir().join(format!("abundio-stored-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("a.md"), "x").unwrap();
@@ -1881,6 +1883,7 @@ mod tests {
 
     #[test]
     fn a_file_resolves_inside_its_workspace_only() {
+        // nosemgrep: rust.lang.security.temp-dir.temp-dir -- test scratch folder, random name, no security decision
         let root = std::env::temp_dir().join(format!("abundio-file-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(root.join("src/a.ts"), "x").unwrap();

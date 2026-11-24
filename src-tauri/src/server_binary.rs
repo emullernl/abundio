@@ -76,6 +76,7 @@ pub fn gzip(raw: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 pub(crate) fn dev_build(platform: &str) -> Result<PathBuf, String> {
+    // nosemgrep: rust.lang.security.current-exe.current-exe -- debug builds only (cfg!(debug_assertions) at both callers); finds the dev server next to the app
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let profile_dir = exe.parent().ok_or("no build folder")?;
     let (path, how) = match platform {
