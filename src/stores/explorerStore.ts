@@ -43,7 +43,7 @@ const diffContentCache = new Map<
 export interface FilePaneState {
 	filePath: string;
 	fileName: string;
-	fileType: "text" | "image" | "binary" | "diff";
+	fileType: "text" | "image" | "pdf" | "binary" | "diff";
 	content: string | null;
 	mime: string | null;
 	isDirty: boolean;
@@ -1040,6 +1040,29 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 							},
 						}));
 					}
+				} catch {
+					// Transient read failure — leave as-is
+				}
+			} else if (pane.fileType === "pdf") {
+				// Read-only, so nothing to lose: reload. The view keeps its
+				// page and zoom (docs/plans/pdf-viewer.md).
+				try {
+					const result = await fsApi.readFile(pane.filePath);
+					const current = get().filePanes[paneId];
+					if (!current || result.content === current.content) continue;
+					set((s) => ({
+						filePanes: {
+							...s.filePanes,
+							[paneId]: {
+								...s.filePanes[paneId],
+								content: result.content,
+								mime: result.mime,
+								fileType: result.fileType,
+								externallyChanged: false,
+								deletedOnDisk: false,
+							},
+						},
+					}));
 				} catch {
 					// Transient read failure — leave as-is
 				}

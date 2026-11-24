@@ -42,6 +42,7 @@ import {
 	openFileWindow,
 } from "../../lib/openFileWindow";
 import { findPreviewForSource } from "../../lib/paneTree";
+import type { PdfPosition } from "../../lib/pdfView";
 import { sc } from "../../lib/platform";
 import {
 	relativeToWorkspace,
@@ -70,6 +71,7 @@ import { ConflictToolbar } from "./ConflictToolbar";
 import { FileChangeBanner } from "./FileChangeBanner";
 import { FilePaneTitleBar } from "./FilePaneTitleBar";
 import { ImageViewer } from "./ImageViewer";
+import { PdfView } from "./PdfView";
 import { RenderedMarkdownView } from "./RenderedMarkdownView";
 import { UnsupportedFile } from "./UnsupportedFile";
 
@@ -96,6 +98,10 @@ interface FilePaneProps {
 	markdownView?: MarkdownView;
 	/** Remember a new view (on the layout node, or the Orchestrator tab). */
 	onMarkdownViewChange?: (view: MarkdownView) => void;
+	/** A PDF's stored page and zoom; absent: the first page at fit width. */
+	pdfPosition?: PdfPosition | null;
+	/** Remember where a PDF is (on the layout node, or the Orchestrator tab). */
+	onPdfPositionChange?: (position: PdfPosition) => void;
 }
 
 // A print asked for from the source view waits for the rendered document to
@@ -120,6 +126,8 @@ export function FilePane({
 	embedded,
 	markdownView,
 	onMarkdownViewChange,
+	pdfPosition,
+	onPdfPositionChange,
 }: FilePaneProps) {
 	const registerFilePane = useExplorerStore((s) => s.registerFilePane);
 	const keyOverrides = useKeybindingOverrides();
@@ -370,8 +378,11 @@ export function FilePane({
 		[paneId],
 	);
 	useEffect(() => {
-		if (view === "source" && findOpen) setFindOpen(false);
-	}, [view, findOpen, setFindOpen]);
+		// A PDF has its own find; only text closes it in the source.
+		if (paneState?.fileType === "text" && view === "source" && findOpen) {
+			setFindOpen(false);
+		}
+	}, [paneState?.fileType, view, findOpen, setFindOpen]);
 
 	// A jump to a line (search result, terminal link, `file open --line`)
 	// means the source. The editor takes the line once it is shown.
@@ -891,6 +902,19 @@ export function FilePane({
 						mime={paneState.mime ?? "image/png"}
 						fileName={paneState.fileName}
 					/>
+				)}
+				{paneState.fileType === "pdf" && (
+					<div className="absolute inset-0 flex flex-col">
+						<PdfView
+							content={paneState.content ?? ""}
+							position={pdfPosition}
+							onPositionChange={onPdfPositionChange}
+							findOpen={findOpen}
+							onOpenFind={() => setFindOpen(true)}
+							onCloseFind={() => setFindOpen(false)}
+							focused={isFocused}
+						/>
+					</div>
 				)}
 				{paneState.fileType === "binary" && (
 					<UnsupportedFile fileName={paneState.fileName} size={0} />

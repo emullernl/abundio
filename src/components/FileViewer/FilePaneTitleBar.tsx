@@ -1,5 +1,6 @@
 import {
 	AppWindow,
+	FileText,
 	Monitor,
 	Printer,
 	Search,
@@ -15,7 +16,7 @@ import { useSettingsStore } from "../../stores/settingsStore";
 import { File, GitCompare, Image } from "../Icons";
 import { MarkdownViewSwitch } from "./MarkdownViewSwitch";
 
-type FileType = "text" | "image" | "binary" | "diff";
+type FileType = "text" | "image" | "pdf" | "binary" | "diff";
 
 interface Props {
 	paneId: string;
@@ -156,6 +157,9 @@ export function FilePaneTitleBar({
 	} else if (fileType === "image") {
 		FileIcon = Image;
 		iconColor = "#a074c4";
+	} else if (fileType === "pdf") {
+		FileIcon = FileText;
+		iconColor = "#e5534b";
 	} else {
 		FileIcon = File;
 		iconColor = getFileIconColor(ext);

@@ -1,3 +1,4 @@
+import type { PdfPosition } from "./pdfView";
 import type { MarkdownView, PaneNode } from "./types";
 
 /** Parse a Tab's stored layoutJson. Returns null on malformed JSON rather than throwing. */
@@ -236,6 +237,31 @@ export function setFileNodeView(
 	if (tree.type !== "split") return tree;
 	const first = setFileNodeView(tree.first, paneId, view);
 	const second = setFileNodeView(tree.second, paneId, view);
+	if (first === tree.first && second === tree.second) return tree;
+	return { ...tree, first, second };
+}
+
+/** Set a PDF File pane's page and zoom. Returns the same tree when nothing
+ *  changes, so a report of the place it already has saves nothing. */
+export function setFileNodePdfPosition(
+	tree: PaneNode,
+	paneId: string,
+	position: PdfPosition,
+): PaneNode {
+	if (tree.type === "file") {
+		if (tree.id !== paneId) return tree;
+		const was = tree.pdfPosition;
+		if (was && was.page === position.page && was.zoom === position.zoom) {
+			return tree;
+		}
+		return {
+			...tree,
+			pdfPosition: { page: position.page, zoom: position.zoom },
+		};
+	}
+	if (tree.type !== "split") return tree;
+	const first = setFileNodePdfPosition(tree.first, paneId, position);
+	const second = setFileNodePdfPosition(tree.second, paneId, position);
 	if (first === tree.first && second === tree.second) return tree;
 	return { ...tree, first, second };
 }

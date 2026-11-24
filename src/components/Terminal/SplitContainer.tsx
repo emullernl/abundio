@@ -1,6 +1,10 @@
 import { lazy, memo, type ReactNode, Suspense, useCallback } from "react";
 import { useSplitPane } from "../../hooks/useSplitPane";
-import { setMarkdownViewForPane } from "../../lib/markdownPreview";
+import {
+	setMarkdownViewForPane,
+	setPdfPositionForPane,
+} from "../../lib/markdownPreview";
+import type { PdfPosition } from "../../lib/pdfView";
 import type { MarkdownView, PaneNode } from "../../lib/types";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { FilePane } from "../FileViewer/FilePane";
@@ -66,6 +70,13 @@ const FileLeaf = memo(function FileLeaf({
 		[workspaceId, node.id],
 	);
 
+	const onPdfPositionChange = useCallback(
+		(position: PdfPosition) => {
+			void setPdfPositionForPane(workspaceId, node.id, position);
+		},
+		[workspaceId, node.id],
+	);
+
 	return (
 		<FilePane
 			paneId={node.id}
@@ -80,6 +91,8 @@ const FileLeaf = memo(function FileLeaf({
 			onFocus={() => setFocusedPane(node.id)}
 			markdownView={node.markdownView}
 			onMarkdownViewChange={onMarkdownViewChange}
+			pdfPosition={node.pdfPosition}
+			onPdfPositionChange={onPdfPositionChange}
 		/>
 	);
 });
