@@ -596,6 +596,9 @@ function PdfWindow({ info }: { info: FileWindowInfo }) {
 	const [content, setContent] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [findOpen, setFindOpen] = useState(false);
+	// The latest place, so a view remounted after an error (the file deleted
+	// and written again) comes back where the user was, not where it opened.
+	const lastPosition = useRef(info.pdfPosition);
 	useReadOnlyWindowChrome();
 
 	useEffect(() => {
@@ -640,8 +643,9 @@ function PdfWindow({ info }: { info: FileWindowInfo }) {
 				) : content ? (
 					<PdfView
 						content={content}
-						position={info.pdfPosition}
+						position={lastPosition.current}
 						onPositionChange={(p) => {
+							lastPosition.current = p;
 							fileWindows.setPdfPosition(p).catch(() => {});
 						}}
 						findOpen={findOpen}

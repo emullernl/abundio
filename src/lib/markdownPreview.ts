@@ -95,10 +95,6 @@ export function pruneNonMarkdownPreviews(tree: PaneNode): PaneNode {
 	return result;
 }
 
-/**
- * Remember a File pane's markdown view on its node (ADR-0061), in whichever
- * Tab of the Workspace holds it.
- */
 /** Remember a PDF File pane's page and zoom on its layout node. */
 export async function setPdfPositionForPane(
 	workspaceId: string,
@@ -117,6 +113,10 @@ export async function setPdfPositionForPane(
 	}
 }
 
+/**
+ * Remember a File pane's markdown view on its node (ADR-0061), in whichever
+ * Tab of the Workspace holds it.
+ */
 export async function setMarkdownViewForPane(
 	workspaceId: string,
 	paneId: string,

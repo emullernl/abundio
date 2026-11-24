@@ -106,11 +106,17 @@ export function PdfView({
 		total: number;
 	} | null>(null);
 	const printAbort = useRef<AbortController | null>(null);
+	// Set when a reload stopped the print, so the user hears why.
+	const printStoppedByReload = useRef(false);
+	// Why the last print did not reach the dialog; shown until dismissed.
+	const [printError, setPrintError] = useState<string | null>(null);
 	const print = useCallback(() => {
 		const doc = docRef.current;
 		if (!doc || printAbort.current) return;
 		const abort = new AbortController();
 		printAbort.current = abort;
+		printStoppedByReload.current = false;
+		setPrintError(null);
 		setPrinting({ done: 0, total: doc.numPages });
 		printPdf(doc, {
 			signal: abort.signal,
@@ -120,9 +126,16 @@ export function PdfView({
 				setPrinting(done < total ? { done, total } : null),
 		})
 			.catch((e) => {
-				if (!(e instanceof PrintCancelled)) {
-					console.error("[pdf] print failed:", e);
+				if (e instanceof PrintCancelled) {
+					if (printStoppedByReload.current) {
+						setPrintError(
+							"The PDF changed while it was being prepared. Print again.",
+						);
+					}
+					return;
 				}
+				console.error("[pdf] print failed:", e);
+				setPrintError(`Printing failed. ${e}`);
 			})
 			.finally(() => {
 				printAbort.current = null;
@@ -250,6 +263,11 @@ export function PdfView({
 			docRef.current = doc;
 			viewer.setDocument(doc);
 			linkServiceRef.current.setDocument(doc, null);
+			// A print still drawing from the old document would fail on it.
+			if (printAbort.current) {
+				printStoppedByReload.current = true;
+				printAbort.current.abort();
+			}
 			previous?.destroy();
 			setPageCount(doc.numPages);
 			setError(null);
@@ -525,6 +543,35 @@ export function PdfView({
 							</button>
 						</div>
 					)}
+					{printError && !printing && (
+						<div
+							className="absolute flex items-center gap-2"
+							style={{
+								top: 8,
+								left: "50%",
+								transform: "translateX(-50%)",
+								zIndex: 11,
+								padding: "6px 6px 6px 12px",
+								borderRadius: 6,
+								fontSize: 12,
+								color: "var(--fg-primary)",
+								background: "var(--bg-secondary)",
+								border: "1px solid var(--border)",
+							}}
+							role="alert"
+						>
+							{printError}
+							<button
+								type="button"
+								aria-label="Dismiss"
+								onClick={() => setPrintError(null)}
+								className={buttonClass}
+								style={{ width: 22, height: 22, padding: 0 }}
+							>
+								<X size={14} />
+							</button>
+						</div>
+					)}
 					{error && (
 						<div
 							className="absolute inset-0 flex items-center justify-center"
@@ -544,6 +591,8 @@ export function PdfView({
 						ref={containerRef}
 						tabIndex={-1}
 						onClickCapture={onClickCapture}
+						// A middle-click on a link must not reach WebKit either.
+						onAuxClickCapture={onClickCapture}
 						className="absolute inset-0 overflow-auto outline-none abundio-pdf"
 						style={{ background: "var(--bg-primary)" }}
 					>

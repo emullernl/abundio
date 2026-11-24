@@ -255,3 +255,21 @@ describe("PdfView", () => {
 		expect(find?.data).toMatchObject({ query: "needle", type: "" });
 	});
 });
+
+describe("PdfView links, middle button", () => {
+	it("keeps a middle-click on a link away from WebKit", async () => {
+		await render();
+		const viewerEl = host?.querySelector(".pdfViewer") as HTMLElement;
+		const a = document.createElement("a");
+		a.setAttribute("href", "file:///etc/passwd");
+		viewerEl.appendChild(a);
+		const ev = new MouseEvent("auxclick", {
+			bubbles: true,
+			cancelable: true,
+			button: 1,
+		});
+		a.dispatchEvent(ev);
+		expect(ev.defaultPrevented).toBe(true);
+		expect(openExternal).not.toHaveBeenCalled();
+	});
+});

@@ -505,10 +505,15 @@ impl FileWindowStore {
     pub fn set_pdf_position(&self, label: &str, position: PdfPosition) -> Result<(), AbundioError> {
         let json = position.checked()?.to_json();
         let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "UPDATE file_windows SET pdf_position = ?1 WHERE label = ?2",
+        // Only a PDF window has a position; like the Orchestrator tab's
+        // setter, a call for anything else is refused, not ignored.
+        let changed = conn.execute(
+            "UPDATE file_windows SET pdf_position = ?1 WHERE label = ?2 AND kind = 'pdf'",
             params![json, label],
         )?;
+        if changed == 0 {
+            return Err(AbundioError::NotFound(format!("PDF file window {label}")));
+        }
         Ok(())
     }
 
@@ -1251,6 +1256,11 @@ mod tests {
         assert_eq!(s.pdf_position(&row.label).unwrap(), Some(p));
         let bad = PdfPosition { page: 0, zoom: crate::pdf_position::PdfZoom::Scale(1.0) };
         assert!(s.set_pdf_position(&row.label, bad).is_err());
+        // No such window, or not a PDF one: refused.
+        let ok = PdfPosition { page: 1, zoom: crate::pdf_position::PdfZoom::Scale(1.0) };
+        assert!(matches!(s.set_pdf_position("md-nope", ok.clone()), Err(AbundioError::NotFound(_))));
+        let text_row = s.upsert("ws-1", &text("/ws/a.md"), "/ws/a.md").unwrap();
+        assert!(matches!(s.set_pdf_position(&text_row.label, ok), Err(AbundioError::NotFound(_))));
     }
 
     #[test]

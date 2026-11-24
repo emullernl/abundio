@@ -4,7 +4,7 @@ import {
 	setMarkdownViewForPane,
 	setPdfPositionForPane,
 } from "../../lib/markdownPreview";
-import type { PdfPosition } from "../../lib/pdfView";
+import { type PdfPosition, parsePdfPosition } from "../../lib/pdfView";
 import type { MarkdownView, PaneNode } from "../../lib/types";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { FilePane } from "../FileViewer/FilePane";
@@ -91,7 +91,9 @@ const FileLeaf = memo(function FileLeaf({
 			onFocus={() => setFocusedPane(node.id)}
 			markdownView={node.markdownView}
 			onMarkdownViewChange={onMarkdownViewChange}
-			pdfPosition={node.pdfPosition}
+			// From layout JSON (another build, another Client): checked like
+			// the stored ones Rust reads back.
+			pdfPosition={parsePdfPosition(node.pdfPosition)}
 			onPdfPositionChange={onPdfPositionChange}
 		/>
 	);

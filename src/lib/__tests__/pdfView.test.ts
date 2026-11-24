@@ -141,3 +141,20 @@ describe("pinchScaleFactor", () => {
 		expect(pinchScaleFactor(MIN_PDF_SCALE, 40)).toBe(1);
 	});
 });
+
+describe("zoom beyond the step table (Fit width)", () => {
+	it("never steps against the asked direction", () => {
+		// A narrow pane with a wide page fits below the smallest step…
+		expect(stepPdfZoom(0.2, -1)).toBe(0.2);
+		expect(stepPdfZoom(0.2, 1)).toBe(MIN_PDF_SCALE);
+		// …and a wide pane with a small page above the largest.
+		expect(stepPdfZoom(6, 1)).toBe(6);
+		expect(stepPdfZoom(6, -1)).toBe(MAX_PDF_SCALE);
+	});
+
+	it("never pinches against the gesture", () => {
+		expect(pinchScaleFactor(0.2, 10)).toBe(1);
+		expect(pinchScaleFactor(6, -10)).toBe(1);
+		expect(pinchScaleFactor(6, 10)).toBeLessThan(1);
+	});
+});

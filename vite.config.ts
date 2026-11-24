@@ -19,7 +19,12 @@ function pdfjsAssets(): Plugin {
 		name: "abundio-pdfjs-assets",
 		configureServer(server) {
 			server.middlewares.use("/pdfjs", (req, res, next) => {
-				const rel = decodeURIComponent((req.url ?? "").split("?")[0]);
+				let rel: string;
+				try {
+					rel = decodeURIComponent((req.url ?? "").split("?")[0]);
+				} catch {
+					return next(); // a malformed escape
+				}
 				const [dir, name, ...rest] = rel.replace(/^\//, "").split("/");
 				if (!PDFJS_DIRS.includes(dir) || !name || rest.length > 0) {
 					return next();
@@ -30,9 +35,14 @@ function pdfjsAssets(): Plugin {
 				} catch {
 					return next();
 				}
-				if (name.endsWith(".wasm")) {
-					res.setHeader("Content-Type", "application/wasm");
-				}
+				res.setHeader(
+					"Content-Type",
+					name.endsWith(".wasm")
+						? "application/wasm"
+						: name.endsWith(".js")
+							? "text/javascript"
+							: "application/octet-stream",
+				);
 				createReadStream(file).pipe(res);
 			});
 		},

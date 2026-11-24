@@ -69,6 +69,10 @@ export function clampPdfPosition(
 export function stepPdfZoom(scale: number, direction: 1 | -1): number {
 	// Within a hair of a step counts as on it, so 0.9999 steps past 1.
 	const eps = 0.001;
+	// Fit width can sit beyond the table (a narrow pane, a wide page): a step
+	// further out stays put rather than jumping back the other way.
+	if (direction > 0 && scale >= MAX_PDF_SCALE - eps) return scale;
+	if (direction < 0 && scale <= MIN_PDF_SCALE + eps) return scale;
 	if (direction > 0) {
 		return ZOOM_STEPS.find((s) => s > scale + eps) ?? MAX_PDF_SCALE;
 	}
@@ -86,7 +90,15 @@ export function pinchScaleFactor(scale: number, deltaY: number): number {
 	const delta = Math.max(-50, Math.min(50, deltaY));
 	const wanted = scale * Math.exp(-delta / 100);
 	const next = Math.min(MAX_PDF_SCALE, Math.max(MIN_PDF_SCALE, wanted));
-	return scale > 0 ? next / scale : 1;
+	// Never against the gesture: beyond a limit, zooming further is a no-op.
+	if (
+		scale <= 0 ||
+		(delta > 0 && next > scale) ||
+		(delta < 0 && next < scale)
+	) {
+		return 1;
+	}
+	return next / scale;
 }
 
 /** Two positions name the same place. */
