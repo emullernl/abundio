@@ -74,6 +74,15 @@ describe("closeOffersFor", () => {
 		});
 	});
 
+	it("leaves the panes of other Hosts alone", () => {
+		expect(closeOffersFor(offers, "codex", true, (p) => p !== "b")).toEqual({
+			a: { agentId: "codex", kind: "restart" },
+			b: offers.b,
+			c: offers.c,
+			d: offers.d,
+		});
+	});
+
 	it("changes nothing for an Agent with no watch offer", () => {
 		expect(closeOffersFor(offers, "qwen", true)).toBe(offers);
 	});
@@ -96,6 +105,12 @@ describe("watchOfferCopy", () => {
 		const c = watchOfferCopy("watch", "Codex", false);
 		expect(c.message).not.toContain("status tracking");
 		expect(c.message).toContain("Add it to Abundio's agents");
+	});
+
+	it("claims no status tracking in a restart offer with hooks off", () => {
+		const c = watchOfferCopy("restart", "Codex", false);
+		expect(c.message).not.toContain("tracking");
+		expect(c.actions.map((a) => a.action)).toEqual(["restart"]);
 	});
 
 	it("offers only a restart once the hooks are written", () => {

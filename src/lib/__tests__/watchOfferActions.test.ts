@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const closes: [string, string, unknown][] = [];
 const restarts: [string, string, string][] = [];
 const provisions: unknown[] = [];
+let failClose = false;
 
 vi.mock("../ipc", async (importOriginal) => {
 	const real = await importOriginal<typeof import("../ipc")>();
@@ -12,6 +13,7 @@ vi.mock("../ipc", async (importOriginal) => {
 			onOffer: async () => () => {},
 			onClosed: async () => () => {},
 			close: async (paneId: string, agentId: string, opts: unknown) => {
+				if (failClose) throw new Error("connection lost");
 				closes.push([paneId, agentId, opts]);
 			},
 		},
@@ -100,6 +102,16 @@ describe("answerWatchOffer on this computer", () => {
 		expect(restarts).toEqual([["a", "claude", "claude"]]);
 		expect(closes).toEqual([]);
 		expect(Object.keys(useWatchOfferStore.getState().offers)).toEqual(["b"]);
+	});
+
+	it("puts the banner back when the answer fails", async () => {
+		failClose = true;
+		await answerWatchOffer("a", "later");
+		failClose = false;
+		expect(useWatchOfferStore.getState().offers.a).toEqual({
+			agentId: "codex",
+			kind: "watch",
+		});
 	});
 
 	it("does nothing for a pane with no offer", async () => {

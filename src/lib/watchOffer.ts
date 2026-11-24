@@ -50,19 +50,21 @@ export function removeOffer(offers: WatchOffers, paneId: string): WatchOffers {
 	return rest;
 }
 
-/** An Agent's offer was answered somewhere. Enable (`watched`) leaves every
- *  other pane running it with a restart offer, since none of them has read
- *  its hooks; any other answer closes them. Restart offers are each pane's
- *  own and stay. */
+/** An Agent's offer was answered on one Host. Enable (`watched`) leaves
+ *  every other pane of that Host running it with a restart offer, since none
+ *  of them has read its hooks; any other answer closes them. Panes of other
+ *  Hosts (`onHost` false) keep theirs: the Agent's switch there is its own.
+ *  Restart offers are each pane's own and stay. */
 export function closeOffersFor(
 	offers: WatchOffers,
 	agentId: string,
 	watched: boolean,
+	onHost: (paneId: string) => boolean = () => true,
 ): WatchOffers {
 	let changed = false;
 	const next: Record<string, PaneWatchOffer> = {};
 	for (const [paneId, o] of Object.entries(offers)) {
-		if (o.agentId !== agentId || o.kind !== "watch") {
+		if (o.agentId !== agentId || o.kind !== "watch" || !onHost(paneId)) {
 			next[paneId] = o;
 			continue;
 		}
@@ -94,6 +96,18 @@ export function watchOfferCopy(
 	agentName: string,
 	hooksEnabled: boolean,
 ): WatchOfferCopy {
+	if (kind === "restart" && !hooksEnabled) {
+		return {
+			message: `${agentName} is now one of Abundio's agents. Restart it so Abundio sees it?`,
+			actions: [
+				{
+					action: "restart",
+					label: "Restart now (new session)",
+					primary: true,
+				},
+			],
+		};
+	}
 	if (kind === "restart") {
 		return {
 			message: `Status tracking for ${agentName} is set up. It starts when ${agentName} next starts.`,

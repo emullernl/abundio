@@ -276,9 +276,14 @@ export const watchOfferApi = {
 			},
 		),
 	/** Answered somewhere (any Window, any Client of the Host). */
-	onClosed: (cb: (agentId: string, watched: boolean) => void) =>
-		listen<{ agentId: string; watched?: boolean }>("watch-offer-closed", (e) =>
-			cb(e.payload.agentId, !!e.payload.watched),
+	/** `fromHost` says whose answer it was: only that Host's panes follow
+	 *  it (`sentByOwnerOf`). */
+	onClosed: (
+		cb: (agentId: string, watched: boolean, fromHost: unknown) => void,
+	) =>
+		listen<{ agentId: string; watched?: boolean; fromHost?: string }>(
+			"watch-offer-closed",
+			(e) => cb(e.payload.agentId, !!e.payload.watched, e.payload.fromHost),
 		),
 	/** Close every banner for `agentId`; `snooze` (*Not now*) also stops
 	 *  offering it until the Host starts again, and `watched` (Enable) turns

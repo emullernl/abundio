@@ -104,7 +104,8 @@ async function restart(paneId: string, agentId: string): Promise<void> {
 }
 
 /** Carry out one banner button. The pane's banner goes at once; the others
- *  follow Rust's `watch-offer-closed`. */
+ *  follow Rust's `watch-offer-closed`. An answer that did not go through
+ *  puts the banner back, so the user sees it is still unanswered. */
 export async function answerWatchOffer(
 	paneId: string,
 	action: WatchOfferAction,
@@ -119,6 +120,7 @@ export async function answerWatchOffer(
 			case "enable":
 			case "enable-restart":
 				await watch(paneId, agentId);
+				// The answer is kept; a lost close only leaves other banners up.
 				await watchOfferApi
 					.close(paneId, agentId, { watched: true })
 					.catch(() => {});
@@ -137,5 +139,6 @@ export async function answerWatchOffer(
 		}
 	} catch (e) {
 		console.warn("[watch offer] the answer did not go through", e);
+		useWatchOfferStore.getState().add(paneId, offer);
 	}
 }
