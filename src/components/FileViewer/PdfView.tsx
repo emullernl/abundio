@@ -114,7 +114,10 @@ export function PdfView({
 		setPrinting({ done: 0, total: doc.numPages });
 		printPdf(doc, {
 			signal: abort.signal,
-			onProgress: (done, total) => setPrinting({ done, total }),
+			// Once every page is drawn the dialog opens; nothing is left to
+			// cancel, so the chip goes.
+			onProgress: (done, total) =>
+				setPrinting(done < total ? { done, total } : null),
 		})
 			.catch((e) => {
 				if (!(e instanceof PrintCancelled)) {
