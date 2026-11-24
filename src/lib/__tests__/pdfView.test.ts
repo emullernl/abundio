@@ -7,6 +7,7 @@ import {
 	MIN_PDF_SCALE,
 	parsePdfPosition,
 	pdfZoomLabel,
+	pinchScaleFactor,
 	stepPdfZoom,
 } from "../pdfView";
 
@@ -118,5 +119,25 @@ describe("labels and paths", () => {
 	it("spots a PDF by extension", () => {
 		expect(isPdfPath("/a/Spec.PDF")).toBe(true);
 		expect(isPdfPath("/a/pdf.txt")).toBe(false);
+	});
+});
+
+describe("pinchScaleFactor", () => {
+	it("zooms in a little per small delta, and out the other way", () => {
+		const f = pinchScaleFactor(1, -5);
+		expect(f).toBeGreaterThan(1);
+		expect(f).toBeLessThan(1.1);
+		expect(pinchScaleFactor(1, 5)).toBeLessThan(1);
+	});
+
+	it("caps one big wheel notch", () => {
+		expect(pinchScaleFactor(1, -1000)).toBeCloseTo(Math.exp(0.5));
+	});
+
+	it("stays within the scales a position may hold", () => {
+		expect(MAX_PDF_SCALE * pinchScaleFactor(MAX_PDF_SCALE, -40)).toBe(
+			MAX_PDF_SCALE,
+		);
+		expect(pinchScaleFactor(MIN_PDF_SCALE, 40)).toBe(1);
 	});
 });

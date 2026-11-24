@@ -78,6 +78,17 @@ export function stepPdfZoom(scale: number, direction: 1 | -1): number {
 	return MIN_PDF_SCALE;
 }
 
+/** The factor one pinch or Cmd/Ctrl+wheel event scales by: smooth, so a
+ *  trackpad's stream of small events zooms gradually, and kept so the result
+ *  stays within the scales a position may hold. */
+export function pinchScaleFactor(scale: number, deltaY: number): number {
+	// A wheel notch is ~100; a trackpad pinch sends many deltas of a few.
+	const delta = Math.max(-50, Math.min(50, deltaY));
+	const wanted = scale * Math.exp(-delta / 100);
+	const next = Math.min(MAX_PDF_SCALE, Math.max(MIN_PDF_SCALE, wanted));
+	return scale > 0 ? next / scale : 1;
+}
+
 /** Two positions name the same place. */
 export function samePdfPosition(a: PdfPosition, b: PdfPosition): boolean {
 	return a.page === b.page && a.zoom === b.zoom;

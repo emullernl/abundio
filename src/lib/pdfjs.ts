@@ -8,6 +8,7 @@
  * which `vite.config.ts` serves and bundles; nothing is fetched from the
  * network.
  */
+import rendererUrl from "pdfjs-dist/legacy/build/pdf.renderer.min.mjs?url";
 import workerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 
 export type PdfjsLib = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -19,6 +20,9 @@ export function loadPdfjs(): Promise<{ lib: PdfjsLib; viewer: PdfjsViewer }> {
 	loading ??= (async () => {
 		const lib = await import("pdfjs-dist/legacy/build/pdf.mjs");
 		lib.GlobalWorkerOptions.workerSrc = workerUrl;
+		// Without it pages are drawn on the main thread, and scrolling and
+		// zooming stall while each page draws.
+		lib.GlobalWorkerOptions.rendererSrc = rendererUrl;
 		const viewer = await import("pdfjs-dist/legacy/web/pdf_viewer.mjs");
 		await import("pdfjs-dist/legacy/web/pdf_viewer.css");
 		return { lib, viewer };

@@ -22,6 +22,7 @@ import {
 	type PdfPosition,
 	type PdfZoom,
 	pdfZoomLabel,
+	pinchScaleFactor,
 	samePdfPosition,
 	stepPdfZoom,
 } from "../../lib/pdfView";
@@ -51,7 +52,11 @@ interface OutlineItem {
 // biome-ignore lint/suspicious/noExplicitAny: pdf.js's viewer classes are loaded at run time
 type Any = any;
 
-const POSITION_REPORT_MS = 400;
+// Saving the position rewrites the layout, so wait until the user has
+// settled rather than saving while they scroll.
+const POSITION_REPORT_MS = 1200;
+// How long a pinch shows the CSS-scaled pages before drawing them sharp.
+const PINCH_DRAW_DELAY_MS = 400;
 
 const buttonClass =
 	"flex items-center justify-center rounded cursor-pointer border-0 bg-transparent " +
@@ -228,6 +233,8 @@ export function PdfView({
 				data: decodeBase64(content),
 				...PDF_DATA_URLS,
 				enableXfa: false,
+				// Draw on the GPU.
+				enableHWA: true,
 			});
 			const doc = await task.promise;
 			if (cancelled) {
@@ -261,7 +268,12 @@ export function PdfView({
 	useEffect(() => {
 		const container = containerRef.current;
 		if (!container) return;
+		// Only a change of width refits: a height change (a find bar, a
+		// banner) would otherwise redraw every visible page.
+		let width = container.clientWidth;
 		const observer = new ResizeObserver(() => {
+			if (container.clientWidth === width) return;
+			width = container.clientWidth;
 			const viewer = viewerRef.current;
 			if (viewer?.pagesCount && livePosition.current.zoom === "page-width") {
 				viewer.currentScaleValue = "page-width";
@@ -303,11 +315,22 @@ export function PdfView({
 		const onWheel = (e: WheelEvent) => {
 			if (!e.ctrlKey && !e.metaKey) return;
 			e.preventDefault();
-			zoomBy(e.deltaY < 0 ? 1 : -1);
+			const viewer = viewerRef.current;
+			if (!viewer?.pagesCount) return;
+			const factor = pinchScaleFactor(viewer.currentScale, e.deltaY);
+			if (factor === 1) return;
+			const rect = container.getBoundingClientRect();
+			// Scales the drawn pages with CSS at once, and draws them sharp
+			// only once the gesture pauses.
+			viewer.updateScale({
+				scaleFactor: factor,
+				origin: [e.clientX - rect.left, e.clientY - rect.top],
+				drawingDelay: PINCH_DRAW_DELAY_MS,
+			});
 		};
 		container.addEventListener("wheel", onWheel, { passive: false });
 		return () => container.removeEventListener("wheel", onWheel);
-	}, [zoomBy]);
+	}, []);
 
 	// A link in the page: in-document ones are pdf.js's own; web links go to
 	// the browser; anything else would navigate the whole webview, so stop it.

@@ -181,7 +181,7 @@ describe("PdfView", () => {
 			state.bus?.dispatch("scalechanging", { scale: 2 });
 		});
 		expect(onPositionChange).not.toHaveBeenCalled();
-		act(() => vi.advanceTimersByTime(1000));
+		act(() => vi.advanceTimersByTime(2000));
 		expect(onPositionChange).toHaveBeenCalledTimes(1);
 		expect(onPositionChange).toHaveBeenCalledWith({ page: 4, zoom: 2 });
 	});
