@@ -80,6 +80,7 @@ pub fn git_fetch_bundle(
             // rather than failing the whole bundle.
             operation_in_progress: op_res.unwrap_or(None),
             commit_history: commits_res.ok(),
+            upstream: crate::git_upstream::compute_upstream_sync(&cwd).ok().flatten(),
         })
     }
 }

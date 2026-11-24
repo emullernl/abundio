@@ -46,6 +46,7 @@ struct SchedulerEntry {
     stop_tx: Sender<()>,
     /// The worker's base branch, so a `start` with a different one replaces it.
     base_branch: Option<String>,
+    root_path: String,
 }
 
 impl Drop for SchedulerEntry {
@@ -96,6 +97,7 @@ impl GitScheduler {
             }
         }
         let entry_base_branch = base_branch.clone();
+        let entry_root_path = root_path.clone();
 
         // Capacity-1 channel = automatic coalescing. If the worker is busy
         // when many triggers arrive, only one is enqueued; the rest fall on
@@ -132,6 +134,7 @@ impl GitScheduler {
         entry.insert(SchedulerEntry {
             stop_tx,
             base_branch: entry_base_branch,
+            root_path: entry_root_path,
         });
     }
 
@@ -141,6 +144,18 @@ impl GitScheduler {
         if self.owners.release(workspace_id, owner) {
             // Removing drops `SchedulerEntry`, which sends the stop signal.
             self.entries.remove(workspace_id);
+        }
+    }
+
+    /// Refresh every worker whose Workspace belongs to the repository with
+    /// common git directory `common_dir`. A fetch moves `refs/remotes` in the
+    /// common directory, which a linked worktree's watch does not cover.
+    pub fn refresh_repo(&self, common_dir: &std::path::Path) {
+        let roots: Vec<String> = self.entries.iter().map(|e| e.root_path.clone()).collect();
+        for root in roots {
+            if crate::git_upstream::common_dir(&root).as_deref() == Some(common_dir) {
+                self.hub.notify(&root);
+            }
         }
     }
 
@@ -225,5 +240,6 @@ fn compute_bundle(
         status_fingerprint: fp_res?,
         operation_in_progress: op_res.unwrap_or(None),
         commit_history: commits_res.ok(),
+        upstream: crate::git_upstream::compute_upstream_sync(root_path).ok().flatten(),
     })
 }
