@@ -501,6 +501,7 @@ fn run(data_dir: PathBuf) -> Result<(), String> {
 }
 
 fn main() {
+    // nosemgrep: rust.lang.security.args.args -- only parses options; skips argv[0]
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = match parse_args(&args) {
         Ok(c) => c,
