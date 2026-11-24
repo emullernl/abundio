@@ -71,6 +71,7 @@ import { trackPtyResize } from "./projectionResize";
 import { stripControlChars } from "./promptActions";
 import { resyncSnapshot } from "./ptyResync";
 import { ShellIntegrationParser } from "./shellIntegration";
+import { shiftEnterSequence } from "./shiftEnter";
 import { registerSnapshot, unregisterSnapshot } from "./snapshotRegistry";
 import { isRustStatusAuthority } from "./statusSync";
 import { installFileLinkProvider } from "./terminalFileLinks";
@@ -1360,7 +1361,21 @@ export async function createTerminal(
 	// returning false suppresses xterm's own handling.
 	term.attachCustomKeyEventHandler((event) => {
 		if (event.type !== "keydown") return true;
-		if (term.buffer.active.type === "alternate") return true;
+		const alternateScreen = term.buffer.active.type === "alternate";
+		// **Shift+Enter new line** (shiftEnter.ts): send what Option/Alt+Enter
+		// sends. Checked before the alternate-screen return below, because
+		// full-screen Agents need it too. `term.input` goes through onData, so
+		// the input bookkeeping matches a typed key.
+		const newline = shiftEnterSequence(event, {
+			alternateScreen,
+			...paneInputContext(managed.ptyId),
+		});
+		if (newline !== null) {
+			event.preventDefault();
+			term.input(newline, true);
+			return false;
+		}
+		if (alternateScreen) return true;
 		const seq = modifiedNavKeySequence(event);
 		if (seq === null) return true;
 		event.preventDefault();
@@ -1402,6 +1417,21 @@ export async function createTerminal(
 	await loadScrollback(paneId, managed);
 
 	return managed;
+}
+
+/** Whether this PTY is in agent mode and whether its shell is running a
+ *  command, as the activity store has them. */
+function paneInputContext(ptyId: string | null | undefined): {
+	agentMode: boolean;
+	commandRunning: boolean;
+} {
+	const entry = ptyId
+		? usePtyActivityStore.getState().activities[ptyId]
+		: undefined;
+	return {
+		agentMode: entry?.detectionMode === "agent",
+		commandRunning: entry?.shellCommandRunning ?? false,
+	};
 }
 
 /** Run the deferred PTY init (listener registration + spawn) if it hasn't
