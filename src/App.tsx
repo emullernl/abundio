@@ -107,6 +107,7 @@ import {
 } from "./lib/orchestratorTabs";
 import { switchToPane } from "./lib/paneLocation";
 import { collectFilePaneIds, parseTabLayout } from "./lib/paneTree";
+import { startPasteTray } from "./lib/pasteTray";
 import { isMac } from "./lib/platform";
 import { firePaneSlot } from "./lib/promptActionRegistry";
 import { saveAllSnapshots } from "./lib/snapshotRegistry";
@@ -959,6 +960,7 @@ export function App() {
 
 	// Agent control (ADR-0054): `abundio` calls from this Window's panes.
 	useEffect(() => startAgentControl(), []);
+	useEffect(() => startPasteTray(), []);
 
 	// The Agents a typed command can start, for Rust's shell integration.
 	useEffect(() => startAgentCommandsSync(), []);

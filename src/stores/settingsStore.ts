@@ -84,6 +84,9 @@ interface SettingsState {
 	 *  (so the agent recognises it) instead of inserting its file path. See the
 	 *  "Smart image drop" term in GLOSSARY.md. */
 	smartImageDrop: boolean;
+	/** Show the **Paste tray**: thumbnails of the images handed to an Agent for
+	 *  the prompt it has not sent yet (docs/plans/paste-tray.md). */
+	pasteTray: boolean;
 	/** Draw the **Attention count** on the app icon (the **App icon badge**). */
 	appIconBadgeEnabled: boolean;
 	/** **Session resume** (ADR-0050): relaunched Agents reopen their last
@@ -199,6 +202,7 @@ interface SettingsState {
 	setGpuAcceleration: (enabled: boolean) => void;
 	setBlockMouseReporting: (enabled: boolean) => void;
 	setSmartImageDrop: (enabled: boolean) => void;
+	setPasteTray: (enabled: boolean) => void;
 	setAppIconBadgeEnabled: (enabled: boolean) => void;
 	setResumeAgentSessions: (enabled: boolean) => void;
 	setReopenWorkspacesOnOpen: (enabled: boolean) => void;
@@ -269,6 +273,7 @@ export const PERSISTED_KEYS = [
 	"gpuAccelerationEnabled",
 	"blockMouseReporting",
 	"smartImageDrop",
+	"pasteTray",
 	"appIconBadgeEnabled",
 	"resumeAgentSessions",
 	"declinedWatchOffers",
@@ -330,6 +335,7 @@ const PERSISTED_DEFAULTS: {
 	gpuAccelerationEnabled: boolean;
 	blockMouseReporting: boolean;
 	smartImageDrop: boolean;
+	pasteTray: boolean;
 	appIconBadgeEnabled: boolean;
 	resumeAgentSessions: boolean;
 	declinedWatchOffers: string[];
@@ -374,6 +380,7 @@ const PERSISTED_DEFAULTS: {
 		gpuAccelerationEnabled: true,
 		blockMouseReporting: false,
 		smartImageDrop: true,
+		pasteTray: true,
 		appIconBadgeEnabled: true,
 		resumeAgentSessions: true,
 		declinedWatchOffers: [],
@@ -506,6 +513,8 @@ const PERSISTED_DEFAULTS: {
 				typeof s.smartImageDrop === "boolean"
 					? s.smartImageDrop
 					: defaults.smartImageDrop,
+			pasteTray:
+				typeof s.pasteTray === "boolean" ? s.pasteTray : defaults.pasteTray,
 			appIconBadgeEnabled:
 				typeof s.appIconBadgeEnabled === "boolean"
 					? s.appIconBadgeEnabled
@@ -723,6 +732,7 @@ export const useSettingsStore = create<SettingsState>()(
 			gpuAccelerationEnabled: PERSISTED_DEFAULTS.gpuAccelerationEnabled,
 			blockMouseReporting: PERSISTED_DEFAULTS.blockMouseReporting,
 			smartImageDrop: PERSISTED_DEFAULTS.smartImageDrop,
+			pasteTray: PERSISTED_DEFAULTS.pasteTray,
 			appIconBadgeEnabled: PERSISTED_DEFAULTS.appIconBadgeEnabled,
 			resumeAgentSessions: PERSISTED_DEFAULTS.resumeAgentSessions,
 			declinedWatchOffers: PERSISTED_DEFAULTS.declinedWatchOffers,
@@ -930,6 +940,7 @@ export const useSettingsStore = create<SettingsState>()(
 				set({ blockMouseReporting });
 			},
 			setSmartImageDrop: (smartImageDrop) => set({ smartImageDrop }),
+			setPasteTray: (pasteTray) => set({ pasteTray }),
 			setAppIconBadgeEnabled: (appIconBadgeEnabled) =>
 				set({ appIconBadgeEnabled }),
 			setResumeAgentSessions: (resumeAgentSessions) =>

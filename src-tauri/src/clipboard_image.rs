@@ -113,3 +113,124 @@ fn set_clipboard_rgba_arboard(img: &image::DynamicImage) -> Result<(), AbundioEr
         .map_err(|e| AbundioError::Clipboard(format!("set_image failed: {e}")))?;
     Ok(())
 }
+
+// ── Paste tray: read the clipboard's image (docs/plans/paste-tray.md) ──
+
+/// Longest side of a **Pasted image**'s thumbnail in the **Paste tray**.
+const THUMB_SIDE: u32 = 160;
+/// Longest side of the larger view shown when a thumbnail is clicked.
+const FULL_SIDE: u32 = 1600;
+
+/// A clipboard image for the **Paste tray**: two PNGs, base64, already scaled.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PastedImage {
+    pub thumb: String,
+    pub full: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// The one clipboard rule for an image paste: an image, no text, no copied
+/// files. Text wins, and Finder/Explorer put a copied file's *icon* on the
+/// clipboard as a picture, which must never pass for the image.
+fn is_image_paste(has_text: bool, has_files: bool, has_image: bool) -> bool {
+    has_image && !has_text && !has_files
+}
+
+fn pasted_image(img: &image::RgbaImage) -> Result<PastedImage, AbundioError> {
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let (width, height) = img.dimensions();
+    Ok(PastedImage {
+        thumb: b64.encode(crate::prompt_attachments::encode_png(img, THUMB_SIDE)?),
+        full: b64.encode(crate::prompt_attachments::encode_png(img, FULL_SIDE)?),
+        width,
+        height,
+    })
+}
+
+/// The clipboard's image when the clipboard rule holds (an image, no text, no
+/// copied files), as raw pixels; `None` otherwise. Decodes, never encodes.
+fn read_image_paste() -> Result<Option<arboard::ImageData<'static>>, AbundioError> {
+    let mut clipboard = arboard::Clipboard::new()
+        .map_err(|e| AbundioError::Clipboard(format!("clipboard open failed: {e}")))?;
+    let has_text = clipboard
+        .get_text()
+        .map(|t| !t.is_empty())
+        .unwrap_or(false);
+    let has_files = clipboard
+        .get()
+        .file_list()
+        .map(|f| !f.is_empty())
+        .unwrap_or(false);
+    // Checked before the image is read, which is the slow part.
+    if !is_image_paste(has_text, has_files, true) {
+        return Ok(None);
+    }
+    match clipboard.get_image() {
+        Ok(data) => Ok(Some(data)),
+        Err(arboard::Error::ContentNotAvailable | arboard::Error::ConversionFailure) => Ok(None),
+        Err(e) => Err(AbundioError::Clipboard(format!("read failed: {e}"))),
+    }
+}
+
+fn peek_blocking() -> Result<Option<PastedImage>, AbundioError> {
+    let Some(data) = read_image_paste()? else {
+        return Ok(None);
+    };
+    let img = crate::prompt_attachments::rgba_image(
+        data.width,
+        data.height,
+        data.bytes.into_owned(),
+    )?;
+    pasted_image(&img).map(Some)
+}
+
+/// What the **Paste tray** sees on the clipboard: its image, scaled, when the
+/// clipboard holds an image and neither text nor copied files; `None`
+/// otherwise. Only reads the clipboard, never writes it. Runs after the paste
+/// keystroke has gone out, so its encoding never delays the paste.
+#[tauri::command]
+pub async fn clipboard_image_peek() -> Result<Option<PastedImage>, AbundioError> {
+    tauri::async_runtime::spawn_blocking(peek_blocking)
+        .await
+        .map_err(|e| AbundioError::Clipboard(format!("task join failed: {e}")))?
+}
+
+/// Whether the clipboard holds an image and neither text nor copied files —
+/// what **Smart image paste** asks before sending the paste keystroke. Unlike
+/// [`clipboard_image_peek`] it encodes nothing, so the paste does not wait on
+/// thumbnails.
+#[tauri::command]
+pub async fn clipboard_is_image_paste() -> Result<bool, AbundioError> {
+    tauri::async_runtime::spawn_blocking(|| read_image_paste().map(|d| d.is_some()))
+        .await
+        .map_err(|e| AbundioError::Clipboard(format!("task join failed: {e}")))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_an_image_alone_is_an_image_paste() {
+        assert!(is_image_paste(false, false, true));
+        assert!(!is_image_paste(true, false, true), "text wins");
+        assert!(!is_image_paste(false, true, true), "a copied file's icon is not the image");
+        assert!(!is_image_paste(false, false, false));
+    }
+
+    #[test]
+    fn a_pasted_image_is_scaled_into_two_decodable_pngs() {
+        use base64::Engine;
+        let img = image::RgbaImage::from_pixel(3200, 800, image::Rgba([1, 2, 3, 255]));
+        let p = pasted_image(&img).unwrap();
+        assert_eq!((p.width, p.height), (3200, 800), "the size is the original's");
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let thumb = image::load_from_memory(&b64.decode(&p.thumb).unwrap()).unwrap();
+        let full = image::load_from_memory(&b64.decode(&p.full).unwrap()).unwrap();
+        assert_eq!((thumb.width(), thumb.height()), (160, 40));
+        assert_eq!((full.width(), full.height()), (1600, 400));
+    }
+}

@@ -146,7 +146,7 @@ const MAX_IMAGE_SIDE: u32 = 4096;
 const MAX_CLIPBOARD_FILES: usize = 32;
 
 /// Wrap raw RGBA pixels, as the clipboard hands them over, in an image.
-fn rgba_image(
+pub(crate) fn rgba_image(
     width: usize,
     height: usize,
     rgba: Vec<u8>,
@@ -161,7 +161,7 @@ fn rgba_image(
 
 /// Encode `img` as PNG, scaled down first so its longest side is at most
 /// `max_side`.
-fn encode_png(img: &image::RgbaImage, max_side: u32) -> Result<Vec<u8>, AbundioError> {
+pub(crate) fn encode_png(img: &image::RgbaImage, max_side: u32) -> Result<Vec<u8>, AbundioError> {
     use std::io::Cursor;
     let mut png = Vec::new();
     fit_within(img, max_side)

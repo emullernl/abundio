@@ -1,4 +1,5 @@
 import { readClipboardText, writeClipboardText } from "./clipboard";
+import { smartImagePaste } from "./pasteTray";
 import { getTerminal } from "./terminalManager";
 
 // Shared copy/paste for a terminal pane, used by both the right-click context
@@ -23,5 +24,11 @@ export async function pasteIntoTerminal(paneId: string): Promise<void> {
 		// the text in \e[200~ … \e[201~ so a clipboard ending in a newline is
 		// inserted, not auto-executed. It emits via onData → pty.write.
 		managed.term.paste(text);
+		return;
 	}
+	// No text: an image-only clipboard goes to an Agent as its own paste
+	// keystroke (**Smart image paste**). In a plain shell nothing happens.
+	await smartImagePaste(managed.ptyId, (data) =>
+		managed.term.input(data, true),
+	);
 }

@@ -10,14 +10,11 @@ import {
 import { useFileDropStore } from "../lib/fileDropStore";
 import { focusPaneForInput } from "../lib/fleetFocus";
 import { clipboardImage, pty, shells } from "../lib/ipc";
+import { CTRL_V, notePastedImage } from "../lib/pasteTray";
 import { isWindows } from "../lib/platform";
 import { getTerminal } from "../lib/terminalManager";
 import { usePtyActivityStore } from "../stores/ptyActivityStore";
 import { useSettingsStore } from "../stores/settingsStore";
-
-// Ctrl+V control byte. Agents that support clipboard-image paste (Claude Code,
-// Gemini CLI) read the OS clipboard when they receive this on stdin.
-const CTRL_V = "\x16";
 
 // The PTY's "System Default" shell, resolved once in Rust and memoized. Only
 // needed on Windows to tell whether the default is Git Bash (→ unix paths).
@@ -132,6 +129,7 @@ async function handleDrop(
 		try {
 			await clipboardImage.setFromPath(paths[0]);
 			pty.write(ptyId, CTRL_V);
+			void notePastedImage(ptyId);
 			return;
 		} catch (err) {
 			// Decode/clipboard failure → fall through to a path insert so the drop

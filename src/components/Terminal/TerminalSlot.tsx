@@ -59,6 +59,7 @@ import { DebugActivityMeter } from "./DebugActivityMeter";
 import { NameAgentDialog } from "./NameAgentDialog";
 import { type ContextMenuItem, PaneContextMenu } from "./PaneContextMenu";
 import { ParameterDialog } from "./ParameterDialog";
+import { PasteTray } from "./PasteTray";
 import { PromptActionPopover } from "./PromptActionPopover";
 import { SearchBar } from "./SearchBar";
 import { type FleetSlotInfo, TerminalTitleBar } from "./TerminalTitleBar";
@@ -670,6 +671,7 @@ export function TerminalSlot({
 				className="w-full flex-1 min-h-0"
 				style={{ overflow: "hidden" }}
 			/>
+			<PasteTray paneId={paneId} />
 			<ActionBar
 				paneId={paneId}
 				onRequestParams={setParamAction}
