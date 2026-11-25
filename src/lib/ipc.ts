@@ -1638,6 +1638,9 @@ export const clipboardImage = {
 	 *  it holds an image and neither text nor copied files; `null` otherwise.
 	 *  Only reads the clipboard. */
 	peek: () => invoke<PastedImage | null>("clipboard_image_peek"),
+	/** Whether the clipboard holds an image and neither text nor copied files.
+	 *  Cheap next to `peek`: nothing is encoded (**Smart image paste**). */
+	isImagePaste: () => invoke<boolean>("clipboard_is_image_paste"),
 };
 
 /** A clipboard image as `clipboard_image_peek` returns it. */

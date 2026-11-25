@@ -1,9 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const peek = vi.fn();
+const isImagePaste = vi.fn();
 vi.mock("../ipc", async (orig) => ({
 	...(await orig<typeof import("../ipc")>()),
-	clipboardImage: { peek: () => peek(), setFromPath: vi.fn() },
+	clipboardImage: {
+		peek: () => peek(),
+		isImagePaste: () => isImagePaste(),
+		setFromPath: vi.fn(),
+	},
 }));
 
 import { usePasteTrayStore } from "../../stores/pasteTrayStore";
@@ -46,6 +51,8 @@ const tray = (ptyId: string) => usePasteTrayStore.getState().trays[ptyId];
 beforeEach(() => {
 	peek.mockReset();
 	peek.mockResolvedValue(IMAGE);
+	isImagePaste.mockReset();
+	isImagePaste.mockResolvedValue(true);
 	usePasteTrayStore.setState({ trays: {} });
 	useSettingsStore.setState({ pasteTray: true, smartImageDrop: true });
 	setMode("p1", "agent");
@@ -105,52 +112,61 @@ describe("notePastedImage", () => {
 });
 
 describe("shouldSmartPaste", () => {
-	it("needs agent mode, the setting and an image", () => {
-		expect(shouldSmartPaste(true, true, IMAGE)).toBe(true);
-		expect(shouldSmartPaste(false, true, IMAGE)).toBe(false);
-		expect(shouldSmartPaste(true, false, IMAGE)).toBe(false);
-		expect(shouldSmartPaste(true, true, null)).toBe(false);
+	it("needs agent mode, the setting and an image paste", () => {
+		expect(shouldSmartPaste(true, true, true)).toBe(true);
+		expect(shouldSmartPaste(false, true, true)).toBe(false);
+		expect(shouldSmartPaste(true, false, true)).toBe(false);
+		expect(shouldSmartPaste(true, true, false)).toBe(false);
 	});
 });
 
 describe("smartImagePaste", () => {
-	it("sends Ctrl+V once and adds the image once, even through the typed path", async () => {
-		const send = vi.fn((data: string) => {
-			// What term.input does: the byte reaches onData at once.
-			if (data === CTRL_V) noteTypedCtrlV("p1");
-		});
-		expect(await smartImagePaste("p1", send)).toBe(true);
-		expect(send).toHaveBeenCalledWith(CTRL_V);
-		await Promise.resolve();
-		expect(tray("p1")).toHaveLength(1);
+	// What term.input does: the byte reaches onData, and so the typed path.
+	const typed = vi.fn((data: string) => {
+		if (data === CTRL_V) noteTypedCtrlV("p1");
+	});
+	beforeEach(() => typed.mockClear());
+
+	it("sends Ctrl+V after the cheap check, and the typed path adds the image once", async () => {
+		expect(await smartImagePaste("p1", typed)).toBe(true);
+		expect(typed).toHaveBeenCalledWith(CTRL_V);
+		await vi.waitFor(() => expect(tray("p1")).toHaveLength(1));
+		expect(isImagePaste).toHaveBeenCalledTimes(1);
 		expect(peek).toHaveBeenCalledTimes(1);
 	});
+	it("sends without waiting for the thumbnails", async () => {
+		peek.mockReturnValue(new Promise(() => {}));
+		expect(await smartImagePaste("p1", typed)).toBe(true);
+		expect(typed).toHaveBeenCalledWith(CTRL_V);
+	});
 	it("does nothing in a shell pane", async () => {
-		const send = vi.fn();
-		expect(await smartImagePaste("s1", send)).toBe(false);
-		expect(send).not.toHaveBeenCalled();
+		expect(await smartImagePaste("s1", typed)).toBe(false);
+		expect(typed).not.toHaveBeenCalled();
 	});
 	it("does nothing when Smart image drop is off", async () => {
 		useSettingsStore.setState({ smartImageDrop: false });
-		const send = vi.fn();
-		expect(await smartImagePaste("p1", send)).toBe(false);
-		expect(send).not.toHaveBeenCalled();
+		expect(await smartImagePaste("p1", typed)).toBe(false);
+		expect(typed).not.toHaveBeenCalled();
 	});
-	it("does nothing when the clipboard has text (Rust returns no image)", async () => {
-		peek.mockResolvedValue(null);
-		const send = vi.fn();
-		expect(await smartImagePaste("p1", send)).toBe(false);
-		expect(send).not.toHaveBeenCalled();
+	it("does nothing when the clipboard is not an image alone", async () => {
+		isImagePaste.mockResolvedValue(false);
+		expect(await smartImagePaste("p1", typed)).toBe(false);
+		expect(typed).not.toHaveBeenCalled();
 	});
-	it("still sends with the tray off, but shows nothing", async () => {
+	it("with the tray off, still sends but encodes no thumbnails", async () => {
 		useSettingsStore.setState({ pasteTray: false });
-		const send = vi.fn();
-		expect(await smartImagePaste("p1", send)).toBe(true);
+		expect(await smartImagePaste("p1", typed)).toBe(true);
+		await Promise.resolve();
+		expect(peek).not.toHaveBeenCalled();
 		expect(tray("p1")).toBeUndefined();
 	});
-	it("a later typed Ctrl+V is noted as usual", async () => {
-		await smartImagePaste("p1", vi.fn());
-		noteTypedCtrlV("p1");
-		await vi.waitFor(() => expect(tray("p1")).toHaveLength(2));
+});
+
+describe("freeing trays", () => {
+	it("drops a tray when its PTY is removed", async () => {
+		await notePastedImage("p1");
+		expect(tray("p1")).toHaveLength(1);
+		usePtyActivityStore.getState().removePty("p1", { local: true });
+		expect(tray("p1")).toBeUndefined();
 	});
 });

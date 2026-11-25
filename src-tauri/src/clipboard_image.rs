@@ -150,7 +150,9 @@ fn pasted_image(img: &image::RgbaImage) -> Result<PastedImage, AbundioError> {
     })
 }
 
-fn peek_blocking() -> Result<Option<PastedImage>, AbundioError> {
+/// The clipboard's image when the clipboard rule holds (an image, no text, no
+/// copied files), as raw pixels; `None` otherwise. Decodes, never encodes.
+fn read_image_paste() -> Result<Option<arboard::ImageData<'static>>, AbundioError> {
     let mut clipboard = arboard::Clipboard::new()
         .map_err(|e| AbundioError::Clipboard(format!("clipboard open failed: {e}")))?;
     let has_text = clipboard
@@ -166,12 +168,16 @@ fn peek_blocking() -> Result<Option<PastedImage>, AbundioError> {
     if !is_image_paste(has_text, has_files, true) {
         return Ok(None);
     }
-    let data = match clipboard.get_image() {
-        Ok(data) => data,
-        Err(arboard::Error::ContentNotAvailable | arboard::Error::ConversionFailure) => {
-            return Ok(None)
-        }
-        Err(e) => return Err(AbundioError::Clipboard(format!("read failed: {e}"))),
+    match clipboard.get_image() {
+        Ok(data) => Ok(Some(data)),
+        Err(arboard::Error::ContentNotAvailable | arboard::Error::ConversionFailure) => Ok(None),
+        Err(e) => Err(AbundioError::Clipboard(format!("read failed: {e}"))),
+    }
+}
+
+fn peek_blocking() -> Result<Option<PastedImage>, AbundioError> {
+    let Some(data) = read_image_paste()? else {
+        return Ok(None);
     };
     let img = crate::prompt_attachments::rgba_image(
         data.width,
@@ -181,12 +187,24 @@ fn peek_blocking() -> Result<Option<PastedImage>, AbundioError> {
     pasted_image(&img).map(Some)
 }
 
-/// What the **Paste tray** and **Smart image paste** see on the clipboard:
-/// its image, when the clipboard holds an image and neither text nor copied
-/// files; `None` otherwise. Only reads the clipboard, never writes it.
+/// What the **Paste tray** sees on the clipboard: its image, scaled, when the
+/// clipboard holds an image and neither text nor copied files; `None`
+/// otherwise. Only reads the clipboard, never writes it. Runs after the paste
+/// keystroke has gone out, so its encoding never delays the paste.
 #[tauri::command]
 pub async fn clipboard_image_peek() -> Result<Option<PastedImage>, AbundioError> {
     tauri::async_runtime::spawn_blocking(peek_blocking)
+        .await
+        .map_err(|e| AbundioError::Clipboard(format!("task join failed: {e}")))?
+}
+
+/// Whether the clipboard holds an image and neither text nor copied files —
+/// what **Smart image paste** asks before sending the paste keystroke. Unlike
+/// [`clipboard_image_peek`] it encodes nothing, so the paste does not wait on
+/// thumbnails.
+#[tauri::command]
+pub async fn clipboard_is_image_paste() -> Result<bool, AbundioError> {
+    tauri::async_runtime::spawn_blocking(|| read_image_paste().map(|d| d.is_some()))
         .await
         .map_err(|e| AbundioError::Clipboard(format!("task join failed: {e}")))?
 }

@@ -23,6 +23,10 @@ export function PasteTray({ paneId }: { paneId: string }) {
 	);
 	const enabled = useSettingsStore((s) => s.pasteTray);
 	const [open, setOpen] = useState<TrayImage | null>(null);
+	// The tray stays mounted while it draws nothing, so `open` would outlive
+	// its image (tray emptied, image hidden) and pop up again on the next
+	// paste. Only an image still in the tray is shown.
+	const shown = open && images.some((i) => i.id === open.id) ? open : null;
 	if (!enabled || !ptyId || images.length === 0) return null;
 	const { remove, clear } = usePasteTrayStore.getState();
 	return (
@@ -85,12 +89,15 @@ export function PasteTray({ paneId }: { paneId: string }) {
 			>
 				<X size={13} />
 			</button>
-			{open && <PastedImageView image={open} onClose={() => setOpen(null)} />}
+			{shown && <PastedImageView image={shown} onClose={() => setOpen(null)} />}
 		</div>
 	);
 }
 
-/** The larger view of one **Pasted image**. Escape or a click outside closes. */
+/** The larger view of one **Pasted image**. Escape or a click outside the
+ *  image closes it. React carries its mousedown up the component tree, so the
+ *  pane's capture handler runs too and focuses this pane: the one the image
+ *  was pasted into, which is where focus belongs after closing. */
 function PastedImageView({
 	image,
 	onClose,
@@ -115,6 +122,11 @@ function PastedImageView({
 				src={png(image.full)}
 				alt="Pasted"
 				draggable={false}
+				// Only a click outside the image closes the view.
+				onMouseDown={(e) => {
+					e.preventDefault();
+					e.stopPropagation();
+				}}
 				style={{
 					maxWidth: "100%",
 					maxHeight: "100%",

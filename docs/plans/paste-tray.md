@@ -22,12 +22,12 @@ An Agent shows a pasted image only as a label such as `[Image #1]`. The **Paste 
 
 ## Window
 
-4. `stores/pasteTrayStore.ts`: images per PTY id (at most 9, oldest dropped), `add`, `remove`, `clear`. Clears itself from `subscribeStatusChange` (next status Working, or mode leaving agent).
+4. `stores/pasteTrayStore.ts`: images per PTY id (at most 9, oldest dropped), `add`, `remove`, `clear`. `startPasteTray` clears a tray from `subscribeStatusChange` (next status Working, or mode leaving agent) and frees it when its PTY is removed (which emits no status change).
 5. `lib/pasteTray.ts`: `notePastedImage(ptyId)` — if the setting is on and the PTY is in agent mode, peek and add. Pure rule for when the tray clears.
 6. Paths:
    - `useTerminalFileDrop`: after a Smart image drop's `Ctrl+V`, `notePastedImage`.
    - `terminalManager` `onData`: user input exactly `\x16` in an agent-mode PTY → `notePastedImage` (the byte still goes to the PTY untouched).
-   - **Smart image paste**, `lib/smartImagePaste.ts`: `pasteIntoTerminal` with empty clipboard text, and on macOS a `Cmd+V` keydown in the terminal (`attachCustomKeyEventHandler`), ask `clipboard_image_peek`; with an image, in an agent-mode PTY, with `smartImageDrop` on → write `\x16` and add the image to the tray. A native `paste` event carrying no text is dropped, so xterm never sends an empty bracketed paste.
+   - **Smart image paste**, `lib/smartImagePaste.ts`: `pasteIntoTerminal` with empty clipboard text, and on macOS a `Cmd+V` keydown in the terminal (`attachCustomKeyEventHandler`), ask the cheap `clipboard_is_image_paste` (decodes, never encodes); when true, in an agent-mode PTY, with `smartImageDrop` on → type `\x16`. The typed Ctrl+V path then fills the tray in the background, so the paste never waits on thumbnails, and with the tray off nothing is encoded. A native `paste` event carrying no text is dropped, so xterm never sends an empty bracketed paste.
 7. `components/Terminal/PasteTray.tsx` and its larger view (`useEscapeKey`).
 8. Setting and its toggle; glossary entries already written.
 

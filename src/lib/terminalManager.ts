@@ -59,7 +59,7 @@ import { parseOsc52 } from "./osc52";
 import { publishPaneFontSize } from "./paneFontSize";
 import { notePaneInput } from "./paneInput";
 import { collectPaneIds, containsPane, parseTabLayout } from "./paneTree";
-import { noteTypedCtrlV, smartImagePaste } from "./pasteTray";
+import { CTRL_V, noteTypedCtrlV, smartImagePaste } from "./pasteTray";
 import {
 	type PendingTask,
 	setPendingAgent,
@@ -1699,7 +1699,7 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		pty.write(currentPtyId, data);
 		// A typed Ctrl+V hands the Agent the clipboard's image: show it in the
 		// **Paste tray**. The byte itself is untouched.
-		if (data === "\x16") noteTypedCtrlV(currentPtyId);
+		if (data === CTRL_V) noteTypedCtrlV(currentPtyId);
 	});
 
 	// Set when Rust refused the spawn for a **Missing folder** (ADR-0053).

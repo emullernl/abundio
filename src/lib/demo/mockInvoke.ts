@@ -685,6 +685,8 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		// No clipboard in the demo: the Paste tray never fills.
 		case "clipboard_image_peek":
 			return null;
+		case "clipboard_is_image_paste":
+			return false;
 
 		default:
 			console.warn(`[demo] unmocked command: ${cmd}`);
