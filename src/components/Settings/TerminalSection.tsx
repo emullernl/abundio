@@ -19,6 +19,8 @@ export function TerminalSection() {
 		(s) => s.setBlockMouseReporting,
 	);
 	const smartImageDrop = useSettingsStore((s) => s.smartImageDrop);
+	const pasteTray = useSettingsStore((s) => s.pasteTray);
+	const setPasteTray = useSettingsStore((s) => s.setPasteTray);
 	const showActionBar = useSettingsStore((s) => s.showActionBar);
 	const setShowActionBar = useSettingsStore((s) => s.setShowActionBar);
 	const setSmartImageDrop = useSettingsStore((s) => s.setSmartImageDrop);
@@ -72,7 +74,16 @@ export function TerminalSection() {
 					checked={smartImageDrop}
 					onChange={setSmartImageDrop}
 					label="Drop images to agents as images"
-					description="When you drop an image onto a running agent, paste it via the clipboard so the agent recognises it — instead of inserting the file path. Other dropped files always insert their path."
+					description="When you drop an image onto a running agent, paste it via the clipboard so the agent recognises it — instead of inserting the file path. Other dropped files always insert their path. Also lets the normal paste shortcut send an image-only clipboard to an agent."
+				/>
+			</div>
+			<div className="flex-shrink-0">
+				<SectionLabel>Pasted Images</SectionLabel>
+				<ToggleRow
+					checked={pasteTray}
+					onChange={setPasteTray}
+					label="Show pasted image thumbnails"
+					description="Agents show a pasted image only as a label like [Image #1]. This shows a small thumbnail under the pane's title bar until the prompt is sent. Click one to see it larger."
 				/>
 			</div>
 			<div className="flex-shrink-0">

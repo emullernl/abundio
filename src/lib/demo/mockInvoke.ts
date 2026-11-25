@@ -682,6 +682,10 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		case "file_window_focus":
 			return undefined;
 
+		// No clipboard in the demo: the Paste tray never fills.
+		case "clipboard_image_peek":
+			return null;
+
 		default:
 			console.warn(`[demo] unmocked command: ${cmd}`);
 			return undefined;

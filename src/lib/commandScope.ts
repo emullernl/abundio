@@ -58,6 +58,8 @@ const DESKTOP = [
 	// then be sent to the Host (phase 7).
 	"prompt_attachment_from_clipboard",
 	"set_clipboard_image_from_path",
+	// The Paste tray reads this computer's clipboard, whatever the Host.
+	"clipboard_image_peek",
 	// GitHub is this computer's: the PR checker (the user's own review
 	// requests and PRs, polled while a desktop window has focus, phase 7b-4)
 	// and New task's issues, for any Workspace's repository, whatever its

@@ -1634,7 +1634,22 @@ export const clipboardImage = {
 	 *  or unsupported image (caller falls back to inserting the path). */
 	setFromPath: (path: string) =>
 		invoke<void>("set_clipboard_image_from_path", { path }),
+	/** The clipboard's image, scaled for the **Paste tray** (base64 PNGs), when
+	 *  it holds an image and neither text nor copied files; `null` otherwise.
+	 *  Only reads the clipboard. */
+	peek: () => invoke<PastedImage | null>("clipboard_image_peek"),
 };
+
+/** A clipboard image as `clipboard_image_peek` returns it. */
+export interface PastedImage {
+	/** Base64 PNG, at most 160 px on its longest side. */
+	thumb: string;
+	/** Base64 PNG, at most 1600 px on its longest side. */
+	full: string;
+	/** The original's size. */
+	width: number;
+	height: number;
+}
 
 /** The background new windows show before their page paints (the theme's). */
 export const windowBackground = {

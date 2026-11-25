@@ -1732,6 +1732,7 @@ pub fn run() {
             updater::updater_release_notes,
             updater::updater_mark_version_seen,
             clipboard_image::set_clipboard_image_from_path,
+            clipboard_image::clipboard_image_peek,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

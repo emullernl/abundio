@@ -59,6 +59,7 @@ import { DebugActivityMeter } from "./DebugActivityMeter";
 import { NameAgentDialog } from "./NameAgentDialog";
 import { type ContextMenuItem, PaneContextMenu } from "./PaneContextMenu";
 import { ParameterDialog } from "./ParameterDialog";
+import { PasteTray } from "./PasteTray";
 import { PromptActionPopover } from "./PromptActionPopover";
 import { SearchBar } from "./SearchBar";
 import { type FleetSlotInfo, TerminalTitleBar } from "./TerminalTitleBar";
@@ -663,6 +664,7 @@ export function TerminalSlot({
 				}
 			/>
 			<WatchOfferBanner paneId={paneId} />
+			<PasteTray paneId={paneId} />
 			{debugMeterEnabled && <DebugActivityMeter paneId={paneId} />}
 			<TerminalLoader paneId={paneId} />
 			<div

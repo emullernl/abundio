@@ -59,6 +59,7 @@ import { parseOsc52 } from "./osc52";
 import { publishPaneFontSize } from "./paneFontSize";
 import { notePaneInput } from "./paneInput";
 import { collectPaneIds, containsPane, parseTabLayout } from "./paneTree";
+import { noteTypedCtrlV, smartImagePaste } from "./pasteTray";
 import {
 	type PendingTask,
 	setPendingAgent,
@@ -1348,6 +1349,19 @@ export async function createTerminal(
 
 	installMouseReportingHooks(managed);
 	installClipboardHook(managed);
+	// A native paste with no text (an image-only clipboard) would reach the
+	// PTY as an empty bracketed paste. Drop it: **Smart image paste** sends an
+	// Agent the image as its own keystroke instead.
+	term.element?.addEventListener(
+		"paste",
+		(e) => {
+			if (!e.clipboardData?.getData("text/plain")) {
+				e.preventDefault();
+				e.stopImmediatePropagation();
+			}
+		},
+		true,
+	);
 
 	// Modified-nav-key handling for the shell line editor. xterm turns these into
 	// CSI sequences (`\e[1;Nx`, `\e[3;N~`, …) that the default bash/zsh keymaps
@@ -1374,6 +1388,23 @@ export async function createTerminal(
 			event.preventDefault();
 			term.input(newline, true);
 			return false;
+		}
+		// **Smart image paste** on macOS: Cmd+V is the native paste, which
+		// carries text only. Let it run, and ask Rust whether the clipboard
+		// holds only an image; if so the Agent gets its Ctrl+V. Before the
+		// alternate-screen return, because full-screen Agents need it too.
+		if (
+			isMac &&
+			event.metaKey &&
+			!event.ctrlKey &&
+			!event.altKey &&
+			!event.shiftKey &&
+			event.key.toLowerCase() === "v" &&
+			managed.ptyId &&
+			!managed.restoring
+		) {
+			void smartImagePaste(managed.ptyId, (data) => term.input(data, true));
+			return true;
 		}
 		if (alternateScreen) return true;
 		const seq = modifiedNavKeySequence(event);
@@ -1666,6 +1697,9 @@ async function initPty(paneId: string, managed: ManagedTerminal, cwd: string) {
 		}
 		noteInput(managed, paneId, currentPtyId, data);
 		pty.write(currentPtyId, data);
+		// A typed Ctrl+V hands the Agent the clipboard's image: show it in the
+		// **Paste tray**. The byte itself is untouched.
+		if (data === "\x16") noteTypedCtrlV(currentPtyId);
 	});
 
 	// Set when Rust refused the spawn for a **Missing folder** (ADR-0053).
