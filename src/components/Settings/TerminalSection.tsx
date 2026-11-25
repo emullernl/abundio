@@ -83,7 +83,7 @@ export function TerminalSection() {
 					checked={pasteTray}
 					onChange={setPasteTray}
 					label="Show pasted image thumbnails"
-					description="Agents show a pasted image only as a label like [Image #1]. This shows a small thumbnail under the pane's title bar until the prompt is sent. Click one to see it larger."
+					description="Agents show a pasted image only as a label like [Image #1]. This shows a small thumbnail at the bottom of the pane until the prompt is sent. Click one to see it larger."
 				/>
 			</div>
 			<div className="flex-shrink-0">

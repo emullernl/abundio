@@ -1,10 +1,10 @@
 # Paste tray and Smart image paste
 
-An Agent shows a pasted image only as a label such as `[Image #1]`. The **Paste tray** (`GLOSSARY.md`) shows the images themselves, as small thumbnails under the pane's title bar. **Smart image paste** makes the normal paste shortcut send an image-only clipboard to the Agent.
+An Agent shows a pasted image only as a label such as `[Image #1]`. The **Paste tray** (`GLOSSARY.md`) shows the images themselves, as small thumbnails at the bottom of the pane, above the Action bar. **Smart image paste** makes the normal paste shortcut send an image-only clipboard to the Agent.
 
 ## Decisions
 
-- **Where**: a slim row between the title bar and the terminal, like the Watch offer banner. Mounted in `TerminalSlot`, so it also appears in Fleet tiles and the Peek.
+- **Where**: a slim row at the bottom of the pane, between the terminal and the Action bar (near the Agent's prompt). Mounted in `TerminalSlot`, so it also appears in Fleet tiles and the Peek.
 - **What fills it**: a **Smart image drop**, a **Smart image paste**, and `Ctrl+V` typed into an agent-mode pane while the clipboard holds an image.
 - **Clipboard rule** (one rule for every path): an image, no text, no copied files. Text wins; Finder/Explorer-copied files are left to the normal paste (their icon is never shown as an image).
 - **Clears**: when the pane goes Working, when the Agent leaves agent mode or exits, and on the PTY's restart. Its × hides one image or the whole tray. It never takes an image back from the Agent.

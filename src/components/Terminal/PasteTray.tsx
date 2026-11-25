@@ -12,8 +12,8 @@ const png = (b64: string) => `data:image/png;base64,${b64}`;
 
 /**
  * A pane's **Paste tray** (docs/plans/paste-tray.md): thumbnails of the images
- * handed to its Agent for the prompt it has not sent yet, between the title
- * bar and the terminal. Like the Watch offer banner it never takes focus, so
+ * handed to its Agent for the prompt it has not sent yet, between the
+ * terminal and the Action bar, next to where the Agent's prompt is. Like the Watch offer banner it never takes focus, so
  * typing carries on while it shows.
  */
 export function PasteTray({ paneId }: { paneId: string }) {
@@ -32,7 +32,7 @@ export function PasteTray({ paneId }: { paneId: string }) {
 			className="flex items-center gap-1.5 shrink-0 overflow-x-auto"
 			style={{
 				padding: "4px 6px",
-				margin: "0 8px 4px 0",
+				margin: "4px 8px 0 0",
 				fontSize: 11.5,
 				color: "var(--fg-secondary)",
 				background: "var(--bg-secondary)",

@@ -664,7 +664,6 @@ export function TerminalSlot({
 				}
 			/>
 			<WatchOfferBanner paneId={paneId} />
-			<PasteTray paneId={paneId} />
 			{debugMeterEnabled && <DebugActivityMeter paneId={paneId} />}
 			<TerminalLoader paneId={paneId} />
 			<div
@@ -672,6 +671,7 @@ export function TerminalSlot({
 				className="w-full flex-1 min-h-0"
 				style={{ overflow: "hidden" }}
 			/>
+			<PasteTray paneId={paneId} />
 			<ActionBar
 				paneId={paneId}
 				onRequestParams={setParamAction}
