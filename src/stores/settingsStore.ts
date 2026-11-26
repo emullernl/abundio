@@ -59,6 +59,9 @@ interface SettingsState {
 	rightSidebarCommitsShare: number;
 	/** Height share of the Left sidebar's **Agents list**. See `lib/leftSidebarLayout.ts`. */
 	leftSidebarAgentsShare: number;
+	/** Height share of **Review requested** inside the **Pull Requests**
+	 *  section; My open PRs gets the rest. See `lib/prSplit.ts`. */
+	rightSidebarPrReviewShare: number;
 	debugActivityMeter: boolean;
 	activityByteThreshold: number;
 	terminalScrollback: number;
@@ -155,6 +158,7 @@ interface SettingsState {
 	setRightSidebarPrRatio: (ratio: number) => void;
 	setRightSidebarCommitsShare: (share: number) => void;
 	setLeftSidebarAgentsShare: (share: number) => void;
+	setRightSidebarPrReviewShare: (share: number) => void;
 	toggleDebugActivityMeter: () => void;
 	setActivityByteThreshold: (n: number) => void;
 	setTerminalScrollback: (n: number) => void;
@@ -259,6 +263,7 @@ export const PERSISTED_KEYS = [
 	"rightSidebarPrRatio",
 	"rightSidebarCommitsShare",
 	"leftSidebarAgentsShare",
+	"rightSidebarPrReviewShare",
 	"debugActivityMeter",
 	"activityByteThreshold",
 	"terminalScrollback",
@@ -317,6 +322,9 @@ const PERSISTED_DEFAULTS: {
 	rightSidebarCommitsShare: number;
 	/** Height share of the Left sidebar's **Agents list**. See `lib/leftSidebarLayout.ts`. */
 	leftSidebarAgentsShare: number;
+	/** Height share of **Review requested** inside the **Pull Requests**
+	 *  section; My open PRs gets the rest. See `lib/prSplit.ts`. */
+	rightSidebarPrReviewShare: number;
 	debugActivityMeter: boolean;
 	activityByteThreshold: number;
 	terminalScrollback: number;
@@ -366,6 +374,7 @@ const PERSISTED_DEFAULTS: {
 		rightSidebarPrRatio: 0.5,
 		rightSidebarCommitsShare: 0.2,
 		leftSidebarAgentsShare: 0.3,
+		rightSidebarPrReviewShare: 0.5,
 		debugActivityMeter: false,
 		activityByteThreshold: 1024,
 		terminalScrollback: 50000,
@@ -449,6 +458,14 @@ const PERSISTED_DEFAULTS: {
 				typeof s.leftSidebarAgentsShare === "number"
 					? s.leftSidebarAgentsShare
 					: defaults.leftSidebarAgentsShare,
+			rightSidebarPrReviewShare:
+				// Strictly between 0 and 1: drags never save an end value, and
+				// an end would give one list no height until it is measured.
+				typeof s.rightSidebarPrReviewShare === "number" &&
+				s.rightSidebarPrReviewShare > 0 &&
+				s.rightSidebarPrReviewShare < 1
+					? s.rightSidebarPrReviewShare
+					: defaults.rightSidebarPrReviewShare,
 			debugActivityMeter:
 				typeof s.debugActivityMeter === "boolean"
 					? s.debugActivityMeter
@@ -718,6 +735,7 @@ export const useSettingsStore = create<SettingsState>()(
 			rightSidebarPrRatio: PERSISTED_DEFAULTS.rightSidebarPrRatio,
 			rightSidebarCommitsShare: PERSISTED_DEFAULTS.rightSidebarCommitsShare,
 			leftSidebarAgentsShare: PERSISTED_DEFAULTS.leftSidebarAgentsShare,
+			rightSidebarPrReviewShare: PERSISTED_DEFAULTS.rightSidebarPrReviewShare,
 			debugActivityMeter: PERSISTED_DEFAULTS.debugActivityMeter,
 			activityByteThreshold: PERSISTED_DEFAULTS.activityByteThreshold,
 			terminalScrollback: PERSISTED_DEFAULTS.terminalScrollback,
@@ -789,6 +807,8 @@ export const useSettingsStore = create<SettingsState>()(
 				set({ rightSidebarCommitsShare }),
 			setLeftSidebarAgentsShare: (leftSidebarAgentsShare) =>
 				set({ leftSidebarAgentsShare }),
+			setRightSidebarPrReviewShare: (rightSidebarPrReviewShare) =>
+				set({ rightSidebarPrReviewShare }),
 			toggleDebugActivityMeter: () =>
 				set((state) => ({ debugActivityMeter: !state.debugActivityMeter })),
 			setActivityByteThreshold: (n) => {

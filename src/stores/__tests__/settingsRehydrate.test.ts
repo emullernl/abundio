@@ -169,3 +169,20 @@ it("queues pushes made before terminalManager registers, in order", async () => 
 	bridge.withTerminalSettings((t) => t.setMouseReportingBlocked(true));
 	expect(seen).toEqual(["size:12", "mouse:false", "mouse:true"]);
 });
+
+it("keeps a stored PR list split and defaults a missing one", async () => {
+	localStorage.setItem(
+		"abundio-settings",
+		JSON.stringify({ state: { rightSidebarPrReviewShare: 0.7 }, version: 18 }),
+	);
+	let { useSettingsStore } = await import("../settingsStore");
+	expect(useSettingsStore.getState().rightSidebarPrReviewShare).toBe(0.7);
+
+	vi.resetModules();
+	localStorage.setItem(
+		"abundio-settings",
+		JSON.stringify({ state: { theme: "default" }, version: 18 }),
+	);
+	({ useSettingsStore } = await import("../settingsStore"));
+	expect(useSettingsStore.getState().rightSidebarPrReviewShare).toBe(0.5);
+});
