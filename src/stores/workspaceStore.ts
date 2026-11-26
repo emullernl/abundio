@@ -5,7 +5,11 @@ import {
 	normalizeHandle,
 } from "../lib/agentHandle";
 import { raiseFileWindows } from "../lib/fileWindowRaise";
-import { handlePrefixFor, isFallbackDefault } from "../lib/handlePrefix";
+import {
+	FALLBACK_PREFIX,
+	handlePrefixFor,
+	isFallbackDefault,
+} from "../lib/handlePrefix";
 import { setJoinedWorkspace, setRoutingLookups } from "../lib/hostRouting";
 import {
 	agentControl as agentControlApi,
@@ -1522,7 +1526,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		saveLayout(result.tabId, result.layoutJson).catch(() => {});
 		// Its Agent is known now: a pane still called "Agent 3" takes its
 		// Agent's **Handle prefix**.
-		if (agentId) void get().ensureDefaultHandle(paneId);
+		if (agentId)
+			get()
+				.ensureDefaultHandle(paneId)
+				.catch(() => {});
 	},
 
 	stampAgentSessionOnPane: (paneId, agentId, sessionId) => {
@@ -1612,24 +1619,30 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 		const before = nodeNow();
 		if (!before?.ws) return;
 		const act = usePtyActivityStore.getState();
-		const ptyId = act.panePtyMap[paneId] || before.node.ptyId;
+		const ptyId = act.panePtyMap?.[paneId] || before.node.ptyId;
 		const agentId =
-			before.node.agentId ?? (ptyId ? act.detectedAgentIds[ptyId] : undefined);
+			before.node.agentId ??
+			(ptyId ? act.detectedAgentIds?.[ptyId] : undefined);
 		const prefix = handlePrefixFor(agentId, useSettingsStore.getState().agents);
 		// Named already, unless by the "Agent 3" given before its Agent was
 		// known, which now takes its Agent's prefix.
 		const had = before.node.agentHandle;
-		if (had && !(isFallbackDefault(had) && prefix !== "Agent")) return;
+		if (had && !(isFallbackDefault(had) && prefix !== FALLBACK_PREFIX)) return;
 		const inAgentMode =
-			!!ptyId && act.activities[ptyId]?.detectionMode === "agent";
+			!!ptyId && act.activities?.[ptyId]?.detectionMode === "agent";
 		if (!had && !before.node.agentId && !inAgentMode) return;
 		const handle = await agentControlApi
 			.handleDefault(before.ws.id, paneId, prefix)
 			.catch(() => null);
 		if (!handle) return;
-		// Named meanwhile (by the user, or the Agent left): leave it.
+		// Named meanwhile (by the user, or the Agent left): leave it. But an
+		// earlier call for this pane, made before its Agent was known, may
+		// have written "Agent 1" meanwhile: this call's real prefix wins.
 		const after = nodeNow();
-		if (!after?.ws || after.node.agentHandle !== had) return;
+		const now = after?.node.agentHandle;
+		const supersedes =
+			prefix !== FALLBACK_PREFIX && !!now && isFallbackDefault(now);
+		if (!after?.ws || (now !== had && !supersedes)) return;
 		const result = findMutatedTabLayout([after.ws], (layout) =>
 			setAgentHandle(layout, paneId, handle),
 		);

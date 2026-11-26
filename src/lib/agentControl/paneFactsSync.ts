@@ -122,7 +122,10 @@ export function startPaneFactsSync(): () => void {
 		usePtyActivityStore.subscribe(schedule),
 		useWorkspaceStore.subscribe(schedule),
 		useAgentSignalsStore.subscribe(schedule),
-		useSettingsStore.subscribe(schedule),
+		// Only the Agent list matters here (a custom Agent's prefix).
+		useSettingsStore.subscribe((s, prev) => {
+			if (s.agents !== prev.agents) schedule();
+		}),
 	];
 	onShellIntegrationSeen(schedule);
 	schedule();

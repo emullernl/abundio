@@ -1130,7 +1130,12 @@ export function startAgentControl(): () => void {
 		for (const [ptyId, agentId] of Object.entries(s.detectedAgentIds)) {
 			if (prev.detectedAgentIds[ptyId] === agentId) continue;
 			const paneId = paneOfPty(ptyId);
-			if (paneId) void useWorkspaceStore.getState().ensureDefaultHandle(paneId);
+			if (paneId) {
+				useWorkspaceStore
+					.getState()
+					.ensureDefaultHandle(paneId)
+					.catch(() => {});
+			}
 		}
 	});
 	const stopSignals = startSignalClearing();
