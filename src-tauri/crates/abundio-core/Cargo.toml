@@ -1,6 +1,6 @@
 [package]
 name = "abundio-core"
-version = "4.1.0"
+version = "4.2.0"
 description = "What an Abundio Host runs with no window: Workspaces, PTYs, status, layouts, Agent control"
 authors = ["Emil Müller"]
 edition = "2021"
