@@ -5,6 +5,11 @@ import {
 	prHostNote,
 	prViewLabel,
 } from "../../lib/prHostScope";
+import {
+	prListsHeight,
+	prReviewShare,
+	reviewShareFromDrag,
+} from "../../lib/prSplit";
 import type { GhStatus } from "../../lib/types";
 import { useProfileStore } from "../../stores/profileStore";
 import {
@@ -27,6 +32,7 @@ import { useWorkspaceGitStore } from "../../stores/workspaceGitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useJoinedHostName } from "../HostChip";
 import { ChevronDown, GitPullRequest, RefreshCw } from "../Icons";
+import { SectionDivider } from "../SectionDivider";
 import { PullRequestItem } from "./PullRequestItem";
 
 /** Minimum time the refresh icon stays spinning after a click, so a fast
@@ -188,45 +194,77 @@ export function PullRequestsSection() {
 		(v) => !noWorkspace || v !== "mine-repo",
 	);
 
+	// Height split between the two lists. The saved share is a proportion;
+	// the pixel minimums are applied against the measured height on every
+	// draw (`lib/prSplit.ts`). Live drag value is local, saved on mouseup.
+	const savedShare = useSettingsStore((s) => s.rightSidebarPrReviewShare);
+	const setSavedShare = useSettingsStore((s) => s.setRightSidebarPrReviewShare);
+	const [localShare, setLocalShare] = useState<number | null>(null);
+	const listsHeight = useElementHeight();
+	const share = prReviewShare(
+		localShare ?? savedShare,
+		prListsHeight(listsHeight.height),
+	);
+	const heightRef = useRef(0);
+	heightRef.current = listsHeight.height;
+
+	const handleSplitResize = useCallback((y: number) => {
+		const next = reviewShareFromDrag(y, heightRef.current);
+		if (next !== null) setLocalShare(next);
+	}, []);
+	const handleSplitResizeEnd = useCallback(() => {
+		if (localShare !== null) {
+			setSavedShare(localShare);
+			setLocalShare(null);
+		}
+	}, [localShare, setSavedShare]);
+
 	return (
 		<div className="flex flex-col h-full min-h-0">
-			<PrSubPanel
-				views={reviewViews}
-				activeView={effReviewView}
-				setActiveView={handleReviewViewChange}
-				scope={reviewScope}
-				section={reviewSection}
-				ghStatus={ghStatus}
-				hasRepo={hasRepo}
-				hasProfileRepos={profileRepoSlugs.size > 0}
-				hostFacts={hostFacts}
-				repoSlugsResolved={repoSlugsResolved}
-				pollEnabled={prPollEnabled}
-				onRefresh={handleRefresh}
-				refreshing={refreshing}
-				showRefresh
-				showPrStatus
-			/>
-			<div
-				className="flex-shrink-0"
-				style={{ height: 1, backgroundColor: "var(--border)" }}
-			/>
-			<PrSubPanel
-				views={myPrsViews}
-				activeView={effMyPrsView}
-				setActiveView={handleMyPrsViewChange}
-				scope={myPrsScope}
-				section={myPrsSection}
-				ghStatus={ghStatus}
-				hasRepo={hasRepo}
-				hasProfileRepos={profileRepoSlugs.size > 0}
-				hostFacts={hostFacts}
-				repoSlugsResolved={repoSlugsResolved}
-				pollEnabled={prPollEnabled}
-				onRefresh={handleRefresh}
-				showRefresh={false}
-				showPrStatus
-			/>
+			{/* The two lists and the divider between them. The divider reports
+			 *  a fraction of this container's height, so it must stay its
+			 *  parent, and the footer below must stay outside it. */}
+			<div ref={listsHeight.ref} className="flex flex-col flex-1 min-h-0">
+				<PrSubPanel
+					grow={share}
+					views={reviewViews}
+					activeView={effReviewView}
+					setActiveView={handleReviewViewChange}
+					scope={reviewScope}
+					section={reviewSection}
+					ghStatus={ghStatus}
+					hasRepo={hasRepo}
+					hasProfileRepos={profileRepoSlugs.size > 0}
+					hostFacts={hostFacts}
+					repoSlugsResolved={repoSlugsResolved}
+					pollEnabled={prPollEnabled}
+					onRefresh={handleRefresh}
+					refreshing={refreshing}
+					showRefresh
+					showPrStatus
+				/>
+				<SectionDivider
+					onResize={handleSplitResize}
+					onResizeEnd={handleSplitResizeEnd}
+				/>
+				<PrSubPanel
+					grow={1 - share}
+					views={myPrsViews}
+					activeView={effMyPrsView}
+					setActiveView={handleMyPrsViewChange}
+					scope={myPrsScope}
+					section={myPrsSection}
+					ghStatus={ghStatus}
+					hasRepo={hasRepo}
+					hasProfileRepos={profileRepoSlugs.size > 0}
+					hostFacts={hostFacts}
+					repoSlugsResolved={repoSlugsResolved}
+					pollEnabled={prPollEnabled}
+					onRefresh={handleRefresh}
+					showRefresh={false}
+					showPrStatus
+				/>
+			</div>
 			{unreadError && ghStatus?.authenticated && (
 				// Without this, a missing marker would read as "all read".
 				<div
@@ -247,11 +285,33 @@ export function PullRequestsSection() {
 	);
 }
 
+/** Tracks an element's height with a ResizeObserver; 0 until measured, and
+ *  where ResizeObserver is missing (jsdom). */
+function useElementHeight() {
+	const [height, setHeight] = useState(0);
+	const observer = useRef<ResizeObserver | null>(null);
+	const ref = useCallback((el: HTMLDivElement | null) => {
+		observer.current?.disconnect();
+		observer.current = null;
+		if (!el || typeof ResizeObserver === "undefined") return;
+		setHeight(el.getBoundingClientRect().height);
+		const ro = new ResizeObserver((entries) => {
+			const h = entries[0]?.contentRect.height;
+			if (typeof h === "number") setHeight(h);
+		});
+		ro.observe(el);
+		observer.current = ro;
+	}, []);
+	return { ref, height };
+}
+
 function openGithubSettings() {
 	settingsWindow.open("github").catch(() => {});
 }
 
 interface PrSubPanelProps<V extends PrView> {
+	/** Flex-grow weight: this list's share of the two lists' height. */
+	grow: number;
 	views: V[];
 	activeView: V;
 	setActiveView: (view: V) => void;
@@ -278,6 +338,7 @@ interface PrSubPanelProps<V extends PrView> {
 }
 
 function PrSubPanel<V extends PrView>({
+	grow,
 	views,
 	activeView,
 	setActiveView,
@@ -322,7 +383,7 @@ function PrSubPanel<V extends PrView>({
 	}, [dropdownOpen]);
 
 	return (
-		<div className="flex flex-col min-h-0" style={{ flex: "1 1 0%" }}>
+		<div className="flex flex-col min-h-0" style={{ flex: `${grow} 1 0%` }}>
 			{/* Header */}
 			<div
 				className="flex items-center gap-2 py-2 flex-shrink-0"

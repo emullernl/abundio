@@ -116,6 +116,29 @@ describe("PullRequestsSection", () => {
 		expect(text()).not.toContain("PR 4");
 	});
 
+	it("splits the two lists by a draggable divider weighted by the setting", () => {
+		useSettingsStore.setState({ rightSidebarPrReviewShare: 0.7 });
+		seed({ unreadError: "no notifications scope" });
+		render();
+		const divider = container.querySelector<HTMLElement>(
+			'[style*="row-resize"]',
+		);
+		expect(divider).not.toBeNull();
+		const review = divider?.previousElementSibling as HTMLElement;
+		const mine = divider?.nextElementSibling as HTMLElement;
+		expect(review.textContent).toContain("Review Requested");
+		expect(mine.textContent).toContain("My Open PRs");
+		expect(review.style.flex).toMatch(/^0\.7 1 0%/);
+		expect(mine.style.flex).toMatch(/^0\.3\d* 1 0%/);
+		// The footer sits outside the divider's parent, so the drag fraction
+		// maps onto the two lists alone.
+		expect(text()).toContain("Unread markers unavailable");
+		expect(divider?.parentElement?.textContent).not.toContain(
+			"Unread markers unavailable",
+		);
+		useSettingsStore.setState({ rightSidebarPrReviewShare: 0.5 });
+	});
+
 	it("shows everything in the All scope", () => {
 		seed({ reviewView: "review-all", myPrsView: "mine-all" });
 		render();
