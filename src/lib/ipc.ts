@@ -2018,6 +2018,8 @@ export interface PaneFacts {
 	detectedAgentId: string | null;
 	progress: string | null;
 	shellIntegrationSeen: boolean;
+	/** The **Handle prefix** a Default handle for this pane starts with. */
+	handlePrefix: string;
 }
 
 export interface PaneFactsReport {
@@ -2063,10 +2065,10 @@ export const agentControl = {
 			| { ok: false; code: "invalid_handle" | "handle_taken"; message: string }
 		>("agent_handle_check", { workspaceId, paneId, handle }),
 
-	/** The lowest free **Default handle** in the Profile, reserved for
-	 *  `paneId` for a few seconds. */
-	handleDefault: (workspaceId: string, paneId: string) =>
-		invoke<string>("agent_handle_default", { workspaceId, paneId }),
+	/** The lowest free **Default handle** for `prefix` (its **Handle
+	 *  prefix**) in the Profile, reserved for `paneId` for a few seconds. */
+	handleDefault: (workspaceId: string, paneId: string, prefix: string) =>
+		invoke<string>("agent_handle_default", { workspaceId, paneId, prefix }),
 
 	/** Rust aims requests at the owning Window, so they are heard here only. */
 	onRequest: (cb: (e: AgentControlRequestEvent) => void) =>

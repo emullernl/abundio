@@ -54,8 +54,9 @@ pub trait Live {
     fn write(&self, pty_id: &str, bytes: &[u8]) -> Result<(), AbundioError>;
     /// May `pane_id` take `handle` in its Profile? Reserves it if so.
     fn check_handle(&self, workspace_id: &str, pane_id: &str, handle: &str) -> Result<crate::agent_names::HandleCheck, AbundioError>;
-    /// The lowest free Default handle, reserved for `pane_id`.
-    fn take_default_handle(&self, workspace_id: &str, pane_id: &str) -> Result<String, AbundioError>;
+    /// The lowest free Default handle for `prefix` (a **Handle prefix**),
+    /// reserved for `pane_id`.
+    fn take_default_handle(&self, workspace_id: &str, pane_id: &str, prefix: Option<&str>) -> Result<String, AbundioError>;
     /// Edit one pane's own fields in its Tab's layout, as the authority,
     /// and tell every Window.
     fn patch_pane(&self, tab_id: &str, pane_id: &str, set: serde_json::Map<String, Value>) -> Result<(), AbundioError>;
@@ -909,7 +910,10 @@ pub fn run(
                         }
                     },
                     // Every Agent has a handle: clearing one hands out a default.
-                    None => live.take_default_handle(workspace_id, pane.id())?,
+                    None => {
+                        let prefix = live.facts(pane.id()).handle_prefix;
+                        live.take_default_handle(workspace_id, pane.id(), prefix.as_deref())?
+                    }
                 };
                 let mut set = serde_json::Map::new();
                 set.insert("agentHandle".into(), json!(name));
@@ -1017,8 +1021,8 @@ mod tests {
         fn check_handle(&self, ws: &str, pane: &str, h: &str) -> Result<crate::agent_names::HandleCheck, AbundioError> {
             self.handles.check(self.store.as_ref().unwrap(), ws, pane, h)
         }
-        fn take_default_handle(&self, ws: &str, pane: &str) -> Result<String, AbundioError> {
-            self.handles.take_default(self.store.as_ref().unwrap(), ws, pane)
+        fn take_default_handle(&self, ws: &str, pane: &str, prefix: Option<&str>) -> Result<String, AbundioError> {
+            self.handles.take_default(self.store.as_ref().unwrap(), ws, pane, prefix)
         }
         fn patch_pane(&self, tab: &str, pane: &str, set: serde_json::Map<String, Value>) -> Result<(), AbundioError> {
             let op = crate::layout_ops::LayoutOp::Patch { id: pane.into(), set, unset: vec![] };
@@ -1541,7 +1545,18 @@ mod tests {
     fn clearing_a_handle_gives_a_default_one_back() {
         let (fake, ws, caller) = world();
         let v = ok(run(&fake, &Recorded::default(), &caller, &ws, &rename(None), &never(), None));
-        assert_eq!(v["handle"], "Agent One");
+        assert_eq!(v["handle"], "Agent 1");
+    }
+
+    #[test]
+    fn a_cleared_handle_takes_the_agents_prefix() {
+        let (mut fake, ws, caller) = world();
+        fake.facts.insert(
+            "ag".into(),
+            PaneFacts { handle_prefix: Some("Claude".into()), ..Default::default() },
+        );
+        let v = ok(run(&fake, &Recorded::default(), &caller, &ws, &rename(None), &never(), None));
+        assert_eq!(v["handle"], "Claude 1");
     }
 
     #[test]

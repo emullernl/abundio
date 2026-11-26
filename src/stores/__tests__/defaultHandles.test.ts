@@ -41,7 +41,7 @@ const node = () =>
 
 beforeEach(() => {
 	handleCheck.mockReset().mockResolvedValue({ ok: true });
-	handleDefault.mockReset().mockResolvedValue("Agent Two");
+	handleDefault.mockReset().mockResolvedValue("Claude 2");
 	usePtyActivityStore.setState({ panePtyMap: {}, activities: {} });
 });
 
@@ -49,8 +49,8 @@ describe("ensureDefaultHandle", () => {
 	it("names an Agent pane that has no handle", async () => {
 		setLayout({ type: "terminal", id: "a", ptyId: "pa", agentId: "claude" });
 		await useWorkspaceStore.getState().ensureDefaultHandle("a");
-		expect(handleDefault).toHaveBeenCalledWith("ws", "a");
-		expect(node().agentHandle).toBe("Agent Two");
+		expect(handleDefault).toHaveBeenCalledWith("ws", "a", "Claude");
+		expect(node().agentHandle).toBe("Claude 2");
 	});
 
 	it("names a pane in agent mode even before its Agent is stamped", async () => {
@@ -61,8 +61,40 @@ describe("ensureDefaultHandle", () => {
 				pa: { state: "active", detectionMode: "agent" } as PtyActivityEntry,
 			},
 		});
+		handleDefault.mockResolvedValue("Agent 1");
 		await useWorkspaceStore.getState().ensureDefaultHandle("a");
-		expect(node().agentHandle).toBe("Agent Two");
+		expect(handleDefault).toHaveBeenCalledWith("ws", "a", "Agent");
+		expect(node().agentHandle).toBe("Agent 1");
+	});
+
+	it("renames an untouched Agent 1 once its Agent is known", async () => {
+		setLayout({
+			type: "terminal",
+			id: "a",
+			ptyId: "pa",
+			agentHandle: "Agent 1",
+		});
+		handleDefault.mockResolvedValue("Codex 1");
+		// Stamping the Agent is what asks for the new name.
+		useWorkspaceStore.getState().stampAgentOnPane("a", "codex");
+		await vi.waitFor(() => expect(node().agentHandle).toBe("Codex 1"));
+		expect(handleDefault).toHaveBeenCalledWith("ws", "a", "Codex");
+		expect(node().agentHandle).toBe("Codex 1");
+	});
+
+	it("keeps an older Agent One, and a typed-in name", async () => {
+		for (const agentHandle of ["Agent One", "Agent Smith"]) {
+			setLayout({
+				type: "terminal",
+				id: "a",
+				ptyId: "pa",
+				agentId: "claude",
+				agentHandle,
+			});
+			await useWorkspaceStore.getState().ensureDefaultHandle("a");
+			expect(node().agentHandle).toBe(agentHandle);
+		}
+		expect(handleDefault).not.toHaveBeenCalled();
 	});
 
 	it("leaves a shell pane, and a named one, alone", async () => {
@@ -90,7 +122,7 @@ describe("ensureDefaultHandle", () => {
 				agentId: "claude",
 				agentHandle: "Mine",
 			});
-			return "Agent Two";
+			return "Claude 2";
 		});
 		await useWorkspaceStore.getState().ensureDefaultHandle("a");
 		expect(node().agentHandle).toBe("Mine");
@@ -128,7 +160,7 @@ describe("setAgentHandle", () => {
 			agentHandle: "Reviewer",
 		});
 		await useWorkspaceStore.getState().setAgentHandle("a", null);
-		expect(node().agentHandle).toBe("Agent Two");
+		expect(node().agentHandle).toBe("Claude 2");
 	});
 
 	it("refuses the name when Rust cannot check it (the demo mocks the check)", async () => {

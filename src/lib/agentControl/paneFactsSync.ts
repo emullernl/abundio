@@ -1,9 +1,11 @@
 import { useAgentSignalsStore } from "../../stores/agentSignalsStore";
 import { usePtyActivityStore } from "../../stores/ptyActivityStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { handlePrefixFor } from "../handlePrefix";
 import type { PaneFacts, PaneFactsReport } from "../ipc";
 import { isRustStatusAuthority } from "../statusSync";
-import type { WorkspaceWithTabs } from "../types";
+import type { CodingAgent, WorkspaceWithTabs } from "../types";
 import {
 	onShellIntegrationSeen,
 	shellIntegrationSeenPanes,
@@ -28,6 +30,8 @@ interface Sources {
 	progress: Readonly<Record<string, string>>;
 	/** Panes whose shell integration has reported in. */
 	integrationSeen: ReadonlySet<string>;
+	/** The user's Agents, for a custom Agent's **Handle prefix**. */
+	agents: readonly Pick<CodingAgent, "id" | "name">[];
 }
 
 /** Every terminal pane's facts. Pure. */
@@ -45,6 +49,10 @@ export function collectPaneFacts(src: Sources): Map<string, PaneFacts> {
 				detectedAgentId: at(src.detectedAgentIds),
 				progress: src.progress[node.id] ?? null,
 				shellIntegrationSeen: src.integrationSeen.has(node.id),
+				handlePrefix: handlePrefixFor(
+					node.agentId ?? at(src.detectedAgentIds),
+					src.agents,
+				),
 			});
 		}
 	}
@@ -58,7 +66,8 @@ function same(a: PaneFacts, b: PaneFacts): boolean {
 		a.command === b.command &&
 		a.detectedAgentId === b.detectedAgentId &&
 		a.progress === b.progress &&
-		a.shellIntegrationSeen === b.shellIntegrationSeen
+		a.shellIntegrationSeen === b.shellIntegrationSeen &&
+		a.handlePrefix === b.handlePrefix
 	);
 }
 
@@ -96,6 +105,7 @@ export function startPaneFactsSync(): () => void {
 			detectedAgentIds: act.detectedAgentIds,
 			progress: useAgentSignalsStore.getState().progress,
 			integrationSeen: shellIntegrationSeenPanes(),
+			agents: useSettingsStore.getState().agents,
 		});
 		const reports = diffPaneFacts(sent, now);
 		sent = now;
@@ -112,6 +122,7 @@ export function startPaneFactsSync(): () => void {
 		usePtyActivityStore.subscribe(schedule),
 		useWorkspaceStore.subscribe(schedule),
 		useAgentSignalsStore.subscribe(schedule),
+		useSettingsStore.subscribe(schedule),
 	];
 	onShellIntegrationSeen(schedule);
 	schedule();

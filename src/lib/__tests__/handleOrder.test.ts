@@ -66,6 +66,12 @@ describe("compareHandles / sortByHandle", () => {
 		]);
 	});
 
+	it("sorts prefixed Default handles by word, then number", () => {
+		expect(
+			sort(["Codex 1", "Claude 10", "Claude 2", "Agent 3", "Agent Two"]),
+		).toEqual(["Agent Two", "Agent 3", "Claude 2", "Claude 10", "Codex 1"]);
+	});
+
 	it("puts a custom handle 'Agent' before the Default handles", () => {
 		expect(compareHandles("Agent", "Agent One")).toBeLessThan(0);
 		expect(compareHandles("Agent One", "Agent")).toBeGreaterThan(0);

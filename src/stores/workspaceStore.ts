@@ -5,6 +5,7 @@ import {
 	normalizeHandle,
 } from "../lib/agentHandle";
 import { raiseFileWindows } from "../lib/fileWindowRaise";
+import { handlePrefixFor, isFallbackDefault } from "../lib/handlePrefix";
 import { setJoinedWorkspace, setRoutingLookups } from "../lib/hostRouting";
 import {
 	agentControl as agentControlApi,
@@ -1519,6 +1520,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			),
 		}));
 		saveLayout(result.tabId, result.layoutJson).catch(() => {});
+		// Its Agent is known now: a pane still called "Agent 3" takes its
+		// Agent's **Handle prefix**.
+		if (agentId) void get().ensureDefaultHandle(paneId);
 	},
 
 	stampAgentSessionOnPane: (paneId, agentId, sessionId) => {
@@ -1606,20 +1610,26 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 			return node?.type === "terminal" ? { ws, node } : null;
 		};
 		const before = nodeNow();
-		if (!before?.ws || before.node.agentHandle) return;
-		const ptyId = usePtyActivityStore.getState().panePtyMap[paneId];
+		if (!before?.ws) return;
+		const act = usePtyActivityStore.getState();
+		const ptyId = act.panePtyMap[paneId] || before.node.ptyId;
+		const agentId =
+			before.node.agentId ?? (ptyId ? act.detectedAgentIds[ptyId] : undefined);
+		const prefix = handlePrefixFor(agentId, useSettingsStore.getState().agents);
+		// Named already, unless by the "Agent 3" given before its Agent was
+		// known, which now takes its Agent's prefix.
+		const had = before.node.agentHandle;
+		if (had && !(isFallbackDefault(had) && prefix !== "Agent")) return;
 		const inAgentMode =
-			!!ptyId &&
-			usePtyActivityStore.getState().activities[ptyId]?.detectionMode ===
-				"agent";
-		if (!before.node.agentId && !inAgentMode) return;
+			!!ptyId && act.activities[ptyId]?.detectionMode === "agent";
+		if (!had && !before.node.agentId && !inAgentMode) return;
 		const handle = await agentControlApi
-			.handleDefault(before.ws.id, paneId)
+			.handleDefault(before.ws.id, paneId, prefix)
 			.catch(() => null);
 		if (!handle) return;
 		// Named meanwhile (by the user, or the Agent left): leave it.
 		const after = nodeNow();
-		if (!after?.ws || after.node.agentHandle) return;
+		if (!after?.ws || after.node.agentHandle !== had) return;
 		const result = findMutatedTabLayout([after.ws], (layout) =>
 			setAgentHandle(layout, paneId, handle),
 		);

@@ -1,5 +1,6 @@
 //! **Agent handles** across a Profile (ADR-0055): the uniqueness check and
-//! **Default handles** ("Agent One", "Agent Two" …).
+//! **Default handles** ("Claude 1", "Codex 2" …): a **Handle prefix** and the
+//! lowest number free for it. Handles from before ("Agent One") are kept.
 //!
 //! Both read every layout of the Profile from the database, because each
 //! Window holds only a copy of the other Windows' layouts and that copy can be
@@ -21,55 +22,51 @@ use crate::workspace_store::WorkspaceStore;
 /// How long a handed-out default stays reserved without reaching a layout.
 const RESERVATION: Duration = Duration::from_secs(10);
 
-const ONES: [&str; 20] = [
-    "Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
-    "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen",
-    "Nineteen",
-];
-
-const TENS: [&str; 10] = [
-    "", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety",
-];
-
-/// `n` in words, as in a Default handle: One, Twenty-One, One Hundred Five.
-pub fn number_words(n: u32) -> String {
-    match n {
-        0..=19 => ONES[n as usize].to_string(),
-        20..=99 => {
-            let tens = TENS[(n / 10) as usize];
-            match n % 10 {
-                0 => tens.to_string(),
-                ones => format!("{tens}-{}", ONES[ones as usize]),
-            }
-        }
-        100..=999 => {
-            let rest = n % 100;
-            let hundreds = format!("{} Hundred", ONES[(n / 100) as usize]);
-            if rest == 0 {
-                hundreds
-            } else {
-                format!("{hundreds} {}", number_words(rest))
-            }
-        }
-        _ => n.to_string(),
-    }
-}
-
 /// The handle of every Profile's Orchestrator (ADR-0057). No other Agent may
 /// take it.
 pub const ORCHESTRATOR_HANDLE: &str = "Orchestrator";
 
-/// The Default handle with number `n`.
-pub fn default_handle(n: u32) -> String {
-    format!("Agent {}", number_words(n))
+/// The prefix of a Default handle whose Agent is not known.
+pub const FALLBACK_PREFIX: &str = "Agent";
+
+/// Room left in a 32-character handle for " " and a number up to 99999.
+const PREFIX_MAX_LENGTH: usize = 26;
+
+/// The **Handle prefix** to use for `asked` (what the Window sent): one word,
+/// starting with a letter, else "Agent". The Window's `handlePrefix.ts`
+/// applies the same rule.
+pub fn handle_prefix(asked: Option<&str>) -> &str {
+    match asked.map(str::trim) {
+        Some(p)
+            if !p.is_empty()
+                && p.len() <= PREFIX_MAX_LENGTH
+                && p.starts_with(|c: char| c.is_ascii_alphabetic())
+                && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') =>
+        {
+            p
+        }
+        _ => FALLBACK_PREFIX,
+    }
 }
 
-/// The lowest Default handle whose key is not in `taken`.
-pub fn lowest_free(taken: &HashSet<String>) -> String {
+/// The Default handle for `prefix` with number `n`: "Claude 3".
+pub fn default_handle(prefix: &str, n: u32) -> String {
+    format!("{prefix} {n}")
+}
+
+/// The lowest Default handle for `prefix` whose key is not in `taken`.
+pub fn lowest_free(prefix: &str, taken: &HashSet<String>) -> String {
     (1..)
-        .map(default_handle)
+        .map(|n| default_handle(prefix, n))
         .find(|h| !taken.contains(&handle_key(h)))
         .expect("an unbounded range always has a free number")
+}
+
+/// Whether `handle` is a Default handle for `prefix` ("Claude 3").
+fn is_default_for(prefix: &str, handle: &str) -> bool {
+    let key = handle_key(handle);
+    key.strip_prefix(&format!("{}-", handle_key(prefix)))
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
 struct Reserved {
@@ -190,31 +187,37 @@ impl HandleReservations {
         Ok(HandleCheck::ok())
     }
 
-    /// The lowest free Default handle in the Profile of `workspace_id`,
-    /// reserved for `pane_id`.
+    /// The lowest free Default handle for `prefix` (a **Handle prefix**,
+    /// checked by `handle_prefix`) in the Profile of `workspace_id`, reserved
+    /// for `pane_id`.
     pub fn take_default(
         &self,
         store: &WorkspaceStore,
         workspace_id: &str,
         pane_id: &str,
+        prefix: Option<&str>,
     ) -> Result<String, AbundioError> {
+        let prefix = handle_prefix(prefix);
         let profile_id = store
             .profile_of(workspace_id)?
             .ok_or_else(|| AbundioError::NotFound(format!("Workspace not found: {workspace_id}")))?;
         // One lock around reading what is taken and reserving, so two asks
         // at once cannot both see the same number free.
         let mut map = self.0.lock().unwrap();
-        // Asked again for the same pane (a retry): hand back what it holds.
-        if let Some(r) = map
-            .values()
-            .find(|r| r.default && r.pane_id == pane_id && r.at.elapsed() < RESERVATION)
-        {
+        // Asked again for the same pane (a retry): hand back what it holds,
+        // unless it was for another prefix (its Agent has become known).
+        if let Some(r) = map.values().find(|r| {
+            r.default
+                && r.pane_id == pane_id
+                && r.at.elapsed() < RESERVATION
+                && is_default_for(prefix, &r.handle)
+        }) {
             return Ok(r.handle.clone());
         }
         let mut taken: HashSet<String> =
             handles_in_use(store, &profile_id, pane_id)?.into_keys().collect();
         taken.extend(Self::live_for(&mut map, &profile_id, pane_id));
-        let handle = lowest_free(&taken);
+        let handle = lowest_free(prefix, &taken);
         map.retain(|_, r| r.pane_id != pane_id);
         map.insert(
             handle_key(&handle),
@@ -296,43 +299,49 @@ mod tests {
     }
 
     #[test]
-    fn numbers_in_words() {
-        let cases = [
-            (1, "One"), (9, "Nine"), (12, "Twelve"), (19, "Nineteen"), (20, "Twenty"),
-            (21, "Twenty-One"), (45, "Forty-Five"), (99, "Ninety-Nine"), (100, "One Hundred"),
-            (105, "One Hundred Five"), (121, "One Hundred Twenty-One"), (999, "Nine Hundred Ninety-Nine"),
-            (1000, "1000"),
-        ];
-        for (n, words) in cases {
-            assert_eq!(number_words(n), words, "{n}");
+    fn prefixes_are_one_word_or_agent() {
+        assert_eq!(handle_prefix(Some("Claude")), "Claude");
+        assert_eq!(handle_prefix(Some(" Codex ")), "Codex");
+        for bad in [None, Some(""), Some("9lives"), Some("Two words"), Some("ab!"), Some(&"x".repeat(27))] {
+            assert_eq!(handle_prefix(bad), "Agent", "{bad:?}");
         }
-        assert_eq!(default_handle(2), "Agent Two");
-        // Every default handle is a valid handle.
-        for n in 1..300 {
-            assert!(crate::control_protocol::valid_handle(&default_handle(n)), "{n}");
+        assert_eq!(default_handle("Claude", 2), "Claude 2");
+        // Every default handle is a valid handle, even at the longest prefix.
+        let long = "x".repeat(26);
+        for n in [1, 99, 100, 99_999] {
+            assert!(crate::control_protocol::valid_handle(&default_handle(&long, n)), "{n}");
+            assert!(crate::control_protocol::valid_handle(&default_handle("Agent", n)), "{n}");
         }
     }
 
     #[test]
-    fn lowest_free_number_fills_gaps_and_skips_look_alikes() {
-        let taken: HashSet<String> = ["agent-one", "agent-three"].map(String::from).into();
-        assert_eq!(lowest_free(&taken), "Agent Two");
-        // A user who typed "agent two" took Two as surely as a default did.
-        let taken: HashSet<String> = ["agent-one", "agent-two"].map(String::from).into();
-        assert_eq!(lowest_free(&taken), "Agent Three");
+    fn lowest_free_number_fills_gaps_per_prefix() {
+        let taken: HashSet<String> = ["claude-1", "claude-3", "codex-2"].map(String::from).into();
+        assert_eq!(lowest_free("Claude", &taken), "Claude 2");
+        assert_eq!(lowest_free("Codex", &taken), "Codex 1");
+        // An older "Agent One" does not take "Agent 1".
+        let taken: HashSet<String> = ["agent-one"].map(String::from).into();
+        assert_eq!(lowest_free("Agent", &taken), "Agent 1");
+        assert!(is_default_for("Claude", "claude 12"));
+        assert!(!is_default_for("Claude", "Claude"));
+        assert!(!is_default_for("Claude", "Claude x"));
+        assert!(!is_default_for("Agent", "Agent One"));
     }
 
     #[test]
     fn defaults_are_counted_across_the_profile() {
         let s = store();
         let r = HandleReservations::default();
-        workspace(&s, "api", PID, &[("a1", Some("Agent One")), ("a2", Some("Reviewer"))]);
-        let web = workspace(&s, "web", PID, &[("b1", Some("Agent Three")), ("b2", None)]);
-        assert_eq!(r.take_default(&s, &web, "b2").unwrap(), "Agent Two");
+        workspace(&s, "api", PID, &[("a1", Some("Claude 1")), ("a2", Some("Reviewer"))]);
+        let web = workspace(&s, "web", PID, &[("b1", Some("Claude 3")), ("b2", None)]);
+        assert_eq!(r.take_default(&s, &web, "b2", Some("Claude")).unwrap(), "Claude 2");
+        // Each prefix counts on its own.
+        let r = HandleReservations::default();
+        assert_eq!(r.take_default(&s, &web, "b2", Some("Codex")).unwrap(), "Codex 1");
         // Another Profile counts on its own.
         let p2 = other_profile(&s);
         let other = workspace(&s, "solo", &p2, &[("c1", None)]);
-        assert_eq!(r.take_default(&s, &other, "c1").unwrap(), "Agent One");
+        assert_eq!(r.take_default(&s, &other, "c1", Some("Claude")).unwrap(), "Claude 1");
     }
 
     #[test]
@@ -341,13 +350,13 @@ mod tests {
         let r = HandleReservations::default();
         let ws = workspace(&s, "api", PID, &[("a1", None), ("a2", None)]);
         // Neither layout carries its handle yet.
-        assert_eq!(r.take_default(&s, &ws, "a1").unwrap(), "Agent One");
-        assert_eq!(r.take_default(&s, &ws, "a2").unwrap(), "Agent Two");
+        assert_eq!(r.take_default(&s, &ws, "a1", Some("Claude")).unwrap(), "Claude 1");
+        assert_eq!(r.take_default(&s, &ws, "a2", Some("Claude")).unwrap(), "Claude 2");
         // Asking again for a1 does not hand out a third number.
-        assert_eq!(r.take_default(&s, &ws, "a1").unwrap(), "Agent One");
+        assert_eq!(r.take_default(&s, &ws, "a1", Some("Claude")).unwrap(), "Claude 1");
         // And a check by another pane sees the reservation.
         assert!(matches!(
-            r.check(&s, &ws, "a2", "agent one").unwrap(),
+            r.check(&s, &ws, "a2", "claude 1").unwrap(),
             HandleCheck::Refused { code: "handle_taken", .. }
         ));
     }
@@ -356,11 +365,23 @@ mod tests {
     fn a_number_is_free_again_once_its_agent_is_gone() {
         let s = store();
         let r = HandleReservations::default();
-        let gone = workspace(&s, "old", PID, &[("a1", Some("Agent One"))]);
-        let ws = workspace(&s, "api", PID, &[("a2", Some("Agent Two")), ("a3", None)]);
-        // Agent One left: its Workspace (and so its layout) is gone.
+        let gone = workspace(&s, "old", PID, &[("a1", Some("Claude 1"))]);
+        let ws = workspace(&s, "api", PID, &[("a2", Some("Claude 2")), ("a3", None)]);
+        // Claude 1 left: its Workspace (and so its layout) is gone.
         s.delete(&gone).unwrap();
-        assert_eq!(r.take_default(&s, &ws, "a3").unwrap(), "Agent One");
+        assert_eq!(r.take_default(&s, &ws, "a3", Some("Claude")).unwrap(), "Claude 1");
+    }
+
+    #[test]
+    fn a_pane_whose_agent_becomes_known_gets_a_new_default() {
+        let s = store();
+        let r = HandleReservations::default();
+        let ws = workspace(&s, "api", PID, &[("a1", None)]);
+        assert_eq!(r.take_default(&s, &ws, "a1", None).unwrap(), "Agent 1");
+        // Still reserved, but for "Agent": the Claude one is a new number.
+        assert_eq!(r.take_default(&s, &ws, "a1", Some("Claude")).unwrap(), "Claude 1");
+        // And "Agent 1" is free again for another pane.
+        assert_eq!(r.take_default(&s, &ws, "a2", None).unwrap(), "Agent 1");
     }
 
     #[test]
@@ -405,7 +426,7 @@ mod tests {
         assert_eq!(r.check(&s, &ws, "a1", "Writer").unwrap(), HandleCheck::ok());
         assert_eq!(r.check(&s, &ws, "a2", "Reviewer").unwrap(), HandleCheck::ok());
         // A held name is never handed back as the pane's default.
-        assert_eq!(r.take_default(&s, &ws, "a1").unwrap(), "Agent One");
+        assert_eq!(r.take_default(&s, &ws, "a1", None).unwrap(), "Agent 1");
     }
 
     #[test]
