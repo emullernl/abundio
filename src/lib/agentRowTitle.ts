@@ -46,13 +46,16 @@ export function agentRowText({
 	const title = xtermTitle.trim();
 	const primary = handle || agentName;
 	const secondary = progress || title || agentName;
-	const location = `${workspaceName} · ${tabName}`;
+	// A Workspace not in the store yet (mid-load) has no name: show the Tab alone.
+	const location = workspaceName ? `${workspaceName} · ${tabName}` : tabName;
 	const tooltip = [
-		`Workspace ${workspaceName} · Tab ${tabName}`,
+		workspaceName
+			? `Workspace ${workspaceName} · Tab ${tabName}`
+			: `Tab ${tabName}`,
 		// The name only when neither line already shows it.
 		primary === agentName || secondary === agentName ? "" : agentName,
 		title,
-		progress ?? "",
+		progress || "",
 		flagMessage ? `Wants your attention: ${flagMessage}` : "",
 	]
 		.filter(Boolean)

@@ -57,6 +57,11 @@ describe("agentRowText", () => {
 			"Wants your attention: Need a key",
 		]);
 	});
+	it("leaves out an unknown Workspace name", () => {
+		const t = agentRowText({ ...base, workspaceName: "" });
+		expect(t.location).toBe("Main");
+		expect(t.tooltip.split("\n")[0]).toBe("Tab Main");
+	});
 	it("tooltip leaves out the name when a line already shows it", () => {
 		const t = agentRowText({ ...base, xtermTitle: "" });
 		expect(t.tooltip).toBe("Workspace alpha · Tab Main");

@@ -149,7 +149,9 @@ describe("AgentsList", () => {
 		// The group names the Workspace, so the row has no location line;
 		// the tooltip says where it is.
 		expect(r[0].querySelector('[data-testid="agent-row-location"]')).toBeNull();
-		expect(r[0].textContent).not.toContain("Main");
+		expect(
+			r[0].querySelector('[data-testid="agent-row-secondary"]')?.textContent,
+		).not.toContain("Main");
 		expect(r[0].getAttribute("title")).toMatch(/^Workspace alpha · Tab Main/);
 		expect(r[1].getAttribute("title")).toMatch(/^Workspace beta · Tab Build/);
 		expect(
