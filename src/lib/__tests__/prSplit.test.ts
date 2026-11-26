@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	MIN_PR_LIST_PX,
+	MIN_UNMEASURED_SHARE,
 	PR_SPLIT_DIVIDER_PX,
 	prListsHeight,
 	prReviewShare,
@@ -39,9 +40,10 @@ describe("prReviewShare", () => {
 		expect((1 - s) * 180).toBeCloseTo(MIN_PR_LIST_PX);
 	});
 
-	it("only clamps to 0..1 before the container is measured", () => {
-		expect(prReviewShare(0.9, 0)).toBe(0.9);
-		expect(prReviewShare(1.5, 0)).toBe(1);
+	it("keeps both lists drawn before the container is measured", () => {
+		expect(prReviewShare(0.7, 0)).toBe(0.7);
+		expect(prReviewShare(0, 0)).toBe(MIN_UNMEASURED_SHARE);
+		expect(prReviewShare(1.5, 0)).toBe(1 - MIN_UNMEASURED_SHARE);
 	});
 
 	it("uses the default for a non-number share", () => {

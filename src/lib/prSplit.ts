@@ -13,18 +13,23 @@ export const MIN_PR_LIST_PX = 72;
 
 const DEFAULT_SHARE = 0.5;
 
+/** Before the container is measured, neither list is drawn below this share,
+ *  so a stored end value (hand-edited) never hides a list for a frame. */
+export const MIN_UNMEASURED_SHARE = 0.1;
+
 const clamp = (v: number, lo: number, hi: number) =>
 	Math.min(hi, Math.max(lo, v));
 
 /**
  * The share to draw for a saved (or dragged) `share` in a container
- * `height` pixels tall. An unknown height (0, not yet measured) clamps only
- * to 0..1. A container too short for both minimums is split half and half
+ * `height` pixels tall. An unknown height (0, not yet measured) clamps to
+ * MIN_UNMEASURED_SHARE from either end. A container too short for both minimums is split half and half
  * rather than favouring one list.
  */
 export function prReviewShare(share: number, height: number): number {
 	const s = Number.isFinite(share) ? clamp(share, 0, 1) : DEFAULT_SHARE;
-	if (!Number.isFinite(height) || height <= 0) return s;
+	if (!Number.isFinite(height) || height <= 0)
+		return clamp(s, MIN_UNMEASURED_SHARE, 1 - MIN_UNMEASURED_SHARE);
 	if (height < 2 * MIN_PR_LIST_PX) return DEFAULT_SHARE;
 	const min = MIN_PR_LIST_PX / height;
 	return clamp(s, min, 1 - min);

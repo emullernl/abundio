@@ -98,6 +98,7 @@ describe("PullRequestsSection", () => {
 	afterEach(() => {
 		act(() => root.unmount());
 		container.remove();
+		useSettingsStore.setState({ rightSidebarPrReviewShare: 0.5 });
 	});
 
 	const render = () => {
@@ -136,7 +137,6 @@ describe("PullRequestsSection", () => {
 		expect(divider?.parentElement?.textContent).not.toContain(
 			"Unread markers unavailable",
 		);
-		useSettingsStore.setState({ rightSidebarPrReviewShare: 0.5 });
 	});
 
 	it("shows everything in the All scope", () => {

@@ -10,9 +10,10 @@ import {
  * lives in `windowUiStore` (ADR-0007/0008) — so these exclusions are about
  * noise, not scope:
  *
- * - the widths and divider shares are written continuously during a sidebar drag; they are
- *   global (GLOSSARY.md), but broadcasting them would live-resize your other
- *   Windows mid-drag when last-drag-wins-on-next-open is the intent;
+ * - the widths and divider shares are sidebar-drag sizes (the widths written
+ *   during the drag, the shares on mouseup); they are global (GLOSSARY.md),
+ *   but broadcasting them would resize your other open Windows when
+ *   last-drag-wins-on-next-open is the intent;
  * - `activityByteThreshold` is written at high frequency by the meter overlay;
  * - `lastOpenedDevEnvId` is a write-on-use breadcrumb, not a preference.
  *

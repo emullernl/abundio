@@ -459,8 +459,11 @@ const PERSISTED_DEFAULTS: {
 					? s.leftSidebarAgentsShare
 					: defaults.leftSidebarAgentsShare,
 			rightSidebarPrReviewShare:
+				// Strictly between 0 and 1: drags never save an end value, and
+				// an end would give one list no height until it is measured.
 				typeof s.rightSidebarPrReviewShare === "number" &&
-				Number.isFinite(s.rightSidebarPrReviewShare)
+				s.rightSidebarPrReviewShare > 0 &&
+				s.rightSidebarPrReviewShare < 1
 					? s.rightSidebarPrReviewShare
 					: defaults.rightSidebarPrReviewShare,
 			debugActivityMeter:
