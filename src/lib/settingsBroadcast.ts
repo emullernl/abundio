@@ -10,7 +10,7 @@ import {
  * lives in `windowUiStore` (ADR-0007/0008) — so these exclusions are about
  * noise, not scope:
  *
- * - the three widths are written continuously during a sidebar drag; they are
+ * - the widths and divider shares are written continuously during a sidebar drag; they are
  *   global (GLOSSARY.md), but broadcasting them would live-resize your other
  *   Windows mid-drag when last-drag-wins-on-next-open is the intent;
  * - `activityByteThreshold` is written at high frequency by the meter overlay;
@@ -32,6 +32,7 @@ export const NOT_BROADCAST = new Set<PersistedSettingKey>([
 	"rightSidebarPrRatio",
 	"rightSidebarCommitsShare",
 	"leftSidebarAgentsShare",
+	"rightSidebarPrReviewShare",
 	"activityByteThreshold",
 	"lastOpenedDevEnvId",
 ]);

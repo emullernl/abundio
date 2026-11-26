@@ -104,6 +104,16 @@ describe("settingsStore", () => {
 		expect(useSettingsStore.getState().rightSidebarPrRatio).toBe(0.6);
 	});
 
+	it("splits the PR lists half and half by default", () => {
+		expect(useSettingsStore.getState().rightSidebarPrReviewShare).toBe(0.5);
+	});
+
+	it("setRightSidebarPrReviewShare updates the PR list split", () => {
+		useSettingsStore.getState().setRightSidebarPrReviewShare(0.7);
+		expect(useSettingsStore.getState().rightSidebarPrReviewShare).toBe(0.7);
+		useSettingsStore.getState().setRightSidebarPrReviewShare(0.5);
+	});
+
 	it("toggleDebugActivityMeter flips the flag", () => {
 		expect(useSettingsStore.getState().debugActivityMeter).toBe(false);
 		useSettingsStore.getState().toggleDebugActivityMeter();

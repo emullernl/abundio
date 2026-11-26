@@ -46,6 +46,11 @@ describe("settingsBroadcast", () => {
 		expect(NOT_BROADCAST.has("leftSidebarAgentsShare")).toBe(true);
 	});
 
+	it("persists the PR list split but does not broadcast it", () => {
+		expect(PERSISTED_KEYS).toContain("rightSidebarPrReviewShare");
+		expect(NOT_BROADCAST.has("rightSidebarPrReviewShare")).toBe(true);
+	});
+
 	it("broadcasts every persisted key except the denied ones", () => {
 		expect(new Set(BROADCAST_KEYS)).toEqual(
 			new Set(PERSISTED_KEYS.filter((k) => !NOT_BROADCAST.has(k))),
