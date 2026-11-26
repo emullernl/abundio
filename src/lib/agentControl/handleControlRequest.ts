@@ -1123,10 +1123,26 @@ export function startAgentControl(): () => void {
 		const paneId = paneOfPty(c.ptyId);
 		if (paneId) void useWorkspaceStore.getState().ensureDefaultHandle(paneId);
 	});
+	// A typed Agent is often recognised a moment after it entered agent mode:
+	// its "Agent 3" then takes the Agent's **Handle prefix**.
+	const unsubscribeDetected = usePtyActivityStore.subscribe((s, prev) => {
+		if (s.detectedAgentIds === prev.detectedAgentIds) return;
+		for (const [ptyId, agentId] of Object.entries(s.detectedAgentIds)) {
+			if (prev.detectedAgentIds[ptyId] === agentId) continue;
+			const paneId = paneOfPty(ptyId);
+			if (paneId) {
+				useWorkspaceStore
+					.getState()
+					.ensureDefaultHandle(paneId)
+					.catch(() => {});
+			}
+		}
+	});
 	const stopSignals = startSignalClearing();
 	const stopFacts = startPaneFactsSync();
 	return () => {
 		unsubscribe();
+		unsubscribeDetected();
 		stopSignals();
 		stopFacts();
 		for (const u of unlistens) u.then((fn) => fn()).catch(() => {});

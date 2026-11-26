@@ -83,7 +83,7 @@ function NameAgentDialogBody({ paneId, current, onClose }: Props) {
 				<p style={{ color: "var(--fg-secondary)", fontSize: 13 }}>
 					Other agents in this Profile can address this one by its name, for
 					example <code>abundio agent prompt reviewer …</code>. Leave it empty
-					to give it a default name ("Agent One", "Agent Two"…) again.
+					to give it a default name ("Claude 1", "Codex 2"…) again.
 				</p>
 				<input
 					ref={inputRef}

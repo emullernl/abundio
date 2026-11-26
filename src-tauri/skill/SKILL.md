@@ -24,9 +24,9 @@ exit 1; a usage error exits 2. Read the message: it says what to do next.
 
 Start with `abundio agent list` (or `abundio pane list` for shells too). Each
 pane has a **Pane number** (`p1`, `p2`, …), and every agent has a name, its
-**Agent handle** ("Agent One" by default, or one the user chose, like
-"Reviewer"). Address a pane by either; a name is matched ignoring case, so
-`reviewer` finds "Reviewer". Quote a name with spaces: `"Agent Two"`.
+**Agent handle** ("Claude 1" or "Codex 2" by default, or one the user chose,
+like "Reviewer"). Address a pane by either; a name is matched ignoring case, so
+`reviewer` finds "Reviewer". Quote a name with spaces: `"Claude 2"`.
 `"self": true` is you. `abundio agent rename "<name>"` names you, if the user
 asks.
 

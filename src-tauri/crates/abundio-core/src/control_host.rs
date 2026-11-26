@@ -937,8 +937,8 @@ impl crate::control_local::Live for HostLive<'_> {
     fn check_handle(&self, workspace_id: &str, pane_id: &str, handle: &str) -> Result<crate::agent_names::HandleCheck, AbundioError> {
         self.host.handles.check(self.host.workspaces, workspace_id, pane_id, handle)
     }
-    fn take_default_handle(&self, workspace_id: &str, pane_id: &str) -> Result<String, AbundioError> {
-        self.host.handles.take_default(self.host.workspaces, workspace_id, pane_id)
+    fn take_default_handle(&self, workspace_id: &str, pane_id: &str, prefix: Option<&str>) -> Result<String, AbundioError> {
+        self.host.handles.take_default(self.host.workspaces, workspace_id, pane_id, prefix)
     }
     fn patch_pane(&self, tab_id: &str, pane_id: &str, set: serde_json::Map<String, Value>) -> Result<(), AbundioError> {
         let op = crate::layout_ops::LayoutOp::Patch { id: pane_id.to_string(), set, unset: vec![] };

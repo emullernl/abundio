@@ -1,7 +1,8 @@
 // **Handle order**: the order of the **Agents list** (inside each Workspace
 // when grouped) and of the **Agent cycle**.
-// By **Agent handle**, ignoring case; **Default handles** ("Agent Two") by
-// their number, where "Agent" falls alphabetically. Pure.
+// By **Agent handle**, ignoring case; a handle ending in a number by its word
+// and then that number's value ("Claude 2" before "Claude 10"). An older
+// **Default handle** in words ("Agent Two") counts as "Agent 2". Pure.
 
 import { handleKey } from "./agentHandle";
 
@@ -52,8 +53,8 @@ function numberWords(n: number): string {
 
 let byKey: Map<string, number> | null = null;
 
-/** The number of a **Default handle** ("Agent Twenty-One" → 21), or null when
- *  `handle` is not one. Matched by `handleKey`, so case and dashes do not
+/** The number of an older **Default handle** in words ("Agent Twenty-One" →
+ *  21), or null when `handle` is not one. Matched by `handleKey`, so case and dashes do not
  *  matter. Rust spells numbers as words up to 999, which covers any Profile. */
 export function defaultHandleNumber(handle: string): number | null {
 	if (!byKey) {
@@ -65,21 +66,18 @@ export function defaultHandleNumber(handle: string): number | null {
 	return byKey.get(handleKey(handle)) ?? null;
 }
 
+/** `handle` as it sorts: "Agent Two" reads "Agent 2". */
+function sortForm(handle: string): string {
+	const n = defaultHandleNumber(handle);
+	return n === null ? handle : `Agent ${n}`;
+}
+
 /** Compare two handles in Handle order. */
 export function compareHandles(a: string, b: string): number {
-	const na = defaultHandleNumber(a);
-	const nb = defaultHandleNumber(b);
-	const byText = (na === null ? a : "Agent").localeCompare(
-		nb === null ? b : "Agent",
-		"en",
-		{ sensitivity: "base", numeric: true },
-	);
-	if (byText !== 0) return byText;
-	if (na !== null && nb !== null) return na - nb;
-	// A custom handle that reads "Agent" before the Default handles.
-	if (na !== null) return 1;
-	if (nb !== null) return -1;
-	return 0;
+	return sortForm(a).localeCompare(sortForm(b), "en", {
+		sensitivity: "base",
+		numeric: true,
+	});
 }
 
 /**

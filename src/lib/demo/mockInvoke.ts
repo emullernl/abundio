@@ -484,7 +484,7 @@ function dispatch(cmd: string, args: Record<string, unknown>): unknown {
 		case "agent_handle_check":
 			return { ok: true };
 		case "agent_handle_default":
-			return "Agent One";
+			return `${(args?.prefix as string | undefined) ?? "Agent"} 1`;
 		case "agent_skill_provision":
 		case "agent_skill_provision_startup":
 			return undefined;

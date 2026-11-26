@@ -19,6 +19,10 @@ pub struct PaneFacts {
     pub progress: Option<String>,
     #[serde(default)]
     pub shell_integration_seen: bool,
+    /// The **Handle prefix** of the pane's Agent ("Claude"), for a Default
+    /// handle given here. Checked again by `agent_names::handle_prefix`.
+    #[serde(default)]
+    pub handle_prefix: Option<String>,
 }
 
 /// One pane's facts, or `None` when the pane is gone.

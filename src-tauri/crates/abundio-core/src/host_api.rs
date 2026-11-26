@@ -531,8 +531,8 @@ fn run(host: &Host, client: &ClientId, command: &str, raw: Value) -> Result<Opti
             json(host.handles.check(host.workspaces, &a.workspace_id, &a.pane_id, &a.handle)?)?
         }
         "agent_handle_default" => {
-            let a = a!(c, raw, { workspace_id: String, pane_id: String });
-            json(host.handles.take_default(host.workspaces, &a.workspace_id, &a.pane_id)?)?
+            let a = a!(c, raw, { workspace_id: String, pane_id: String, prefix: Option<String> });
+            json(host.handles.take_default(host.workspaces, &a.workspace_id, &a.pane_id, a.prefix.as_deref())?)?
         }
         // ── Host settings (ADR-0064) ──
         "host_settings_get" => json(crate::host_settings::get(host.workspaces)?)?,
