@@ -2,7 +2,7 @@ import { BellRing } from "lucide-react";
 import { useAgentHandle } from "../../hooks/useAgentHandle";
 import { usePaneStatus } from "../../hooks/usePaneStatus";
 import { FallbackAgentIcon, getAgentIconComponent } from "../../lib/agentIcons";
-import { agentRowTitle } from "../../lib/agentRowTitle";
+import { agentRowText } from "../../lib/agentRowTitle";
 import type { FleetTile } from "../../lib/fleetConsole";
 import { clashingJoinedPanesCached } from "../../lib/handleClash";
 import { switchToPane } from "../../lib/paneLocation";
@@ -16,8 +16,9 @@ import { useAgentMenu } from "./useAgentMenu";
 
 /**
  * One **Agent row** of the **Agents list**: status icon, Agent icon and the
- * Agent's terminal title, then the Workspace and Tab (the Tab alone in a
- * grouped list, whose label already names the Workspace). Clicking it is
+ * Agent handle; then the Progress line, else the Agent's terminal title; and,
+ * in a flat list only, the Workspace and Tab on a small third line (a grouped
+ * list's label already names the Workspace). The tooltip says where it is. Clicking it is
  * **Switch to**; right-clicking opens the **Agent menu**. Each row selects only its own pane's slices, so a chatty
  * Agent's title changes redraw its row, not the list.
  */
@@ -26,8 +27,8 @@ export function AgentRow({
 	variant = "flat",
 }: {
 	tile: FleetTile;
-	/** `grouped`: inside a Workspace card, so the Tab alone on the second line
-	 *  and a denser row. `flat`: Workspace and Tab, normal density. */
+	/** `grouped`: inside a Workspace card, so no location line and a denser
+	 *  row. `flat`: a third line with Workspace and Tab, normal density. */
 	variant?: "flat" | "grouped";
 }) {
 	const grouped = variant === "grouped";
@@ -63,20 +64,15 @@ export function AgentRow({
 
 	const AgentIcon = (agentId && getAgentIconComponent(agentId)) || undefined;
 	const displayName = agentName || "Agent";
-	const title = agentRowTitle({
+	const text = agentRowText({
 		agentName: displayName,
 		xtermTitle,
 		handle,
-	});
-	const tooltip = [
-		displayName,
-		xtermTitle.trim(),
-		`${workspaceName} · ${tabName}`,
 		progress,
-		flag ? `Wants your attention: ${flag.message}` : "",
-	]
-		.filter(Boolean)
-		.join("\n");
+		flagMessage: flag?.message,
+		workspaceName,
+		tabName,
+	});
 
 	const label = `${handle ?? displayName} (${workspaceName} · ${tabName})`;
 	const menu = useAgentMenu({ paneId, handle, label });
@@ -95,7 +91,7 @@ export function AgentRow({
 					e.preventDefault();
 					menu.open(e.clientX, e.clientY);
 				}}
-				title={tooltip}
+				title={text.tooltip}
 				aria-current={selected ? "true" : undefined}
 				data-testid="agent-row"
 				className={`flex items-start gap-2 w-full rounded-lg cursor-pointer transition-colors select-none text-left ${
@@ -132,13 +128,14 @@ export function AgentRow({
 					<span className="flex items-center min-w-0" style={{ gap: 5 }}>
 						<span
 							className="truncate"
+							data-testid="agent-row-primary"
 							style={{
 								fontSize: 12.5,
 								lineHeight: "18px",
 								color: "var(--fg-primary)",
 							}}
 						>
-							{title}
+							{text.primary}
 						</span>
 						<HostChip workspaceId={workspaceId} />
 						{flag && (
@@ -152,14 +149,29 @@ export function AgentRow({
 					</span>
 					<span
 						className="truncate"
+						data-testid="agent-row-secondary"
 						style={{
 							fontSize: 11,
 							lineHeight: "15px",
 							color: "var(--fg-secondary)",
 						}}
 					>
-						{progress ?? (grouped ? tabName : `${workspaceName} · ${tabName}`)}
+						{text.secondary}
 					</span>
+					{!grouped && (
+						<span
+							className="truncate"
+							data-testid="agent-row-location"
+							style={{
+								fontSize: 10,
+								lineHeight: "14px",
+								color: "var(--fg-secondary)",
+								opacity: 0.8,
+							}}
+						>
+							{text.location}
+						</span>
+					)}
 				</span>
 			</button>
 			{menu.element}

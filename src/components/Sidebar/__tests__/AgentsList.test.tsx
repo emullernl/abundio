@@ -146,10 +146,12 @@ describe("AgentsList", () => {
 		const r = rows();
 		expect(r).toHaveLength(2);
 		expect(groupLabels()).toEqual(["alpha", "beta"]);
-		// The group names the Workspace, so the row shows the Tab alone.
-		expect(r[0].textContent).toContain("Main");
-		expect(r[0].textContent).not.toContain("alpha · Main");
-		expect(r[1].textContent).toContain("Build");
+		// The group names the Workspace, so the row has no location line;
+		// the tooltip says where it is.
+		expect(r[0].querySelector('[data-testid="agent-row-location"]')).toBeNull();
+		expect(r[0].textContent).not.toContain("Main");
+		expect(r[0].getAttribute("title")).toMatch(/^Workspace alpha · Tab Main/);
+		expect(r[1].getAttribute("title")).toMatch(/^Workspace beta · Tab Build/);
 		expect(
 			container.querySelector('[data-testid="agents-count"]')?.textContent,
 		).toBe("· 2");
@@ -174,8 +176,11 @@ describe("AgentsList", () => {
 		render();
 		const r = rows();
 		expect(groupLabels()).toEqual([]);
-		expect(r[0].textContent).toContain("Agent Two");
-		expect(r[0].textContent).toContain("beta · Build");
+		const line = (el: Element, id: string) =>
+			el.querySelector(`[data-testid="agent-row-${id}"]`)?.textContent;
+		expect(line(r[0], "primary")).toBe("Agent Two");
+		expect(line(r[0], "secondary")).toBe("Fix the flaky test");
+		expect(line(r[0], "location")).toBe("beta · Build");
 		expect(r[1].textContent).toContain("Agent Ten");
 	});
 
@@ -224,9 +229,11 @@ describe("AgentsList", () => {
 		expect(useWindowUiStore.getState().agentsListCollapsed).toBe(false);
 	});
 
-	it("shows the Agent's terminal title, else the Agent's name", () => {
+	it("second line: the Agent's terminal title, else the Agent's name", () => {
 		render();
-		const [codex, claude] = rows();
+		const [codex, claude] = rows().map((el) =>
+			el.querySelector('[data-testid="agent-row-secondary"]'),
+		) as HTMLElement[];
 		const codexName =
 			useSettingsStore.getState().agents.find((a) => a.id === "codex")?.name ??
 			"";
