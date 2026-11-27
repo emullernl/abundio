@@ -175,38 +175,48 @@ fn read_image_paste() -> Result<Option<arboard::ImageData<'static>>, AbundioErro
     }
 }
 
-fn peek_blocking() -> Result<Option<PastedImage>, AbundioError> {
-    let Some(data) = read_image_paste()? else {
-        return Ok(None);
-    };
-    let img = crate::prompt_attachments::rgba_image(
-        data.width,
-        data.height,
-        data.bytes.into_owned(),
-    )?;
-    pasted_image(&img).map(Some)
+/// The clipboard's image as raw pixels, when the clipboard rule holds. Reads
+/// on the clipboard thread (the main thread on macOS, see
+/// `clipboard_thread.rs`), and only reads: decoding to pixels is arboard's.
+async fn image_paste<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<Option<arboard::ImageData<'static>>, AbundioError> {
+    crate::clipboard_thread::on_clipboard_thread(app, read_image_paste).await
 }
 
 /// What the **Paste tray** sees on the clipboard: its image, scaled, when the
 /// clipboard holds an image and neither text nor copied files; `None`
 /// otherwise. Only reads the clipboard, never writes it. Runs after the paste
-/// keystroke has gone out, so its encoding never delays the paste.
+/// keystroke has gone out, so its encoding never delays the paste; the
+/// encoding runs off the main thread, after the read.
 #[tauri::command]
-pub async fn clipboard_image_peek() -> Result<Option<PastedImage>, AbundioError> {
-    tauri::async_runtime::spawn_blocking(peek_blocking)
-        .await
-        .map_err(|e| AbundioError::Clipboard(format!("task join failed: {e}")))?
+pub async fn clipboard_image_peek<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<Option<PastedImage>, AbundioError> {
+    let Some(data) = image_paste(&app).await? else {
+        return Ok(None);
+    };
+    crate::clipboard_thread::off_main_thread(move || {
+        let img = crate::prompt_attachments::rgba_image(
+            data.width,
+            data.height,
+            data.bytes.into_owned(),
+        )?;
+        pasted_image(&img).map(Some)
+    })
+    .await
 }
 
 /// Whether the clipboard holds an image and neither text nor copied files —
 /// what **Smart image paste** asks before sending the paste keystroke. Unlike
 /// [`clipboard_image_peek`] it encodes nothing, so the paste does not wait on
-/// thumbnails.
+/// thumbnails. On macOS this runs while WebKit's own paste is reading the
+/// clipboard, which is why the read must be on the main thread.
 #[tauri::command]
-pub async fn clipboard_is_image_paste() -> Result<bool, AbundioError> {
-    tauri::async_runtime::spawn_blocking(|| read_image_paste().map(|d| d.is_some()))
-        .await
-        .map_err(|e| AbundioError::Clipboard(format!("task join failed: {e}")))?
+pub async fn clipboard_is_image_paste<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<bool, AbundioError> {
+    Ok(image_paste(&app).await?.is_some())
 }
 
 #[cfg(test)]

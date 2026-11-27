@@ -239,30 +239,50 @@ fn attach_copied_files(files: Vec<PathBuf>) -> Result<Option<Vec<String>>, Abund
 /// `CF_HDROP`, Linux `text/uri-list` over X11 — Wayland goes through XWayland,
 /// as the `wayland-data-control` feature is off). An empty result there means
 /// no files were copied, not a missing backend.
-fn paths_from_clipboard_blocking() -> Result<Vec<String>, AbundioError> {
+fn paths_from_clipboard_blocking(clip: Clipboard) -> Result<Vec<String>, AbundioError> {
+    match clip {
+        Clipboard::Files(files) => Ok(attach_copied_files(files)?.unwrap_or_default()),
+        Clipboard::Image(data) => {
+            let img = rgba_image(data.width, data.height, data.bytes.into_owned())?;
+            let png = png_within(&img, MAX_BYTES)?;
+            Ok(vec![save(&png, "png")?])
+        }
+        Clipboard::Nothing => Ok(Vec::new()),
+    }
+}
+
+/// What the clipboard holds for an Attachment, as read: copied files first,
+/// else an image's pixels.
+enum Clipboard {
+    Files(Vec<PathBuf>),
+    Image(arboard::ImageData<'static>),
+    Nothing,
+}
+
+/// Read the clipboard, and nothing else: runs on the clipboard thread (the
+/// main thread on macOS, see `clipboard_thread.rs`), so the file checks,
+/// encoding and saving happen afterwards, off it.
+fn read_clipboard() -> Result<Clipboard, AbundioError> {
     let mut clipboard = arboard::Clipboard::new()
         .map_err(|e| AbundioError::Clipboard(format!("clipboard open failed: {e}")))?;
 
     // A read error here is not worth failing over: fall through to the image,
     // whose read reports its own.
     if let Ok(files) = clipboard.get().file_list() {
-        if let Some(paths) = attach_copied_files(files)? {
-            return Ok(paths);
+        if !files.is_empty() {
+            return Ok(Clipboard::Files(files));
         }
     }
 
-    let data = match clipboard.get_image() {
-        Ok(data) => data,
+    match clipboard.get_image() {
+        Ok(data) => Ok(Clipboard::Image(data)),
         // Text or nothing at all: not an error, just nothing to attach. The
         // backends disagree on which of these a text-only clipboard reports.
         Err(arboard::Error::ContentNotAvailable | arboard::Error::ConversionFailure) => {
-            return Ok(Vec::new())
+            Ok(Clipboard::Nothing)
         }
-        Err(e) => return Err(AbundioError::Clipboard(format!("read failed: {e}"))),
-    };
-    let img = rgba_image(data.width, data.height, data.bytes.into_owned())?;
-    let png = png_within(&img, MAX_BYTES)?;
-    Ok(vec![save(&png, "png")?])
+        Err(e) => Err(AbundioError::Clipboard(format!("read failed: {e}"))),
+    }
 }
 
 // ── IPC ──
@@ -276,15 +296,37 @@ fn paths_from_clipboard_blocking() -> Result<Vec<String>, AbundioError> {
 /// bytes no longer have to cross IPC as base64). The clipboard hands back
 /// decoded pixels whatever the source format, so a pasted image is always PNG.
 #[tauri::command]
-pub async fn prompt_attachment_from_clipboard() -> Result<Vec<String>, AbundioError> {
-    tauri::async_runtime::spawn_blocking(paths_from_clipboard_blocking)
-        .await
-        .map_err(|e| AbundioError::Clipboard(format!("task join failed: {e}")))?
+pub async fn prompt_attachment_from_clipboard<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<Vec<String>, AbundioError> {
+    let clip = crate::clipboard_thread::on_clipboard_thread(&app, read_clipboard).await?;
+    crate::clipboard_thread::off_main_thread(move || paths_from_clipboard_blocking(clip)).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_empty_clipboard_attaches_nothing() {
+        assert!(paths_from_clipboard_blocking(Clipboard::Nothing)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn copied_files_read_on_the_clipboard_thread_are_attached_as_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, "x").unwrap();
+        let got = paths_from_clipboard_blocking(Clipboard::Files(vec![file.clone()])).unwrap();
+        assert_eq!(got, vec![file.to_string_lossy().to_string()]);
+        let only_folder = paths_from_clipboard_blocking(Clipboard::Files(vec![dir.path().into()]));
+        assert!(
+            only_folder.is_err(),
+            "a folder alone never falls through to its icon"
+        );
+    }
 
     #[test]
     fn extension_is_sanitized_not_guessed() {
