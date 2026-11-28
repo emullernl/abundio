@@ -12,6 +12,7 @@
 //! `osascript` set the clipboard as PNG. Windows/Linux use `arboard`.
 
 use crate::error::AbundioError;
+use std::time::Duration;
 
 /// Decode an image file and place it on the OS clipboard as PNG.
 ///
@@ -96,7 +97,9 @@ fn set_clipboard_png_macos(img: &image::DynamicImage) -> Result<(), AbundioError
 }
 
 /// Windows/Linux: write raw RGBA via `arboard` (CF_DIB on Windows, the
-/// `image/png` target on X11/Wayland).
+/// `image/png` target on X11/Wayland). From a blocking thread, which is safe
+/// only because this never runs on macOS: an arboard call there must go
+/// through `clipboard_thread::on_clipboard_thread`.
 #[cfg(not(target_os = "macos"))]
 fn set_clipboard_rgba_arboard(img: &image::DynamicImage) -> Result<(), AbundioError> {
     let rgba = img.to_rgba8();
@@ -150,11 +153,20 @@ fn pasted_image(img: &image::RgbaImage) -> Result<PastedImage, AbundioError> {
     })
 }
 
-/// The clipboard's image when the clipboard rule holds (an image, no text, no
-/// copied files), as raw pixels; `None` otherwise. Decodes, never encodes.
-fn read_image_paste() -> Result<Option<arboard::ImageData<'static>>, AbundioError> {
-    let mut clipboard = arboard::Clipboard::new()
-        .map_err(|e| AbundioError::Clipboard(format!("clipboard open failed: {e}")))?;
+/// How long a clipboard read may wait for the main thread on macOS
+/// (`clipboard_thread::run_on`). Short for the check the paste waits on; long
+/// enough for the reads that decode an image.
+const CHECK_WAIT: Duration = Duration::from_secs(2);
+const READ_WAIT: Duration = Duration::from_secs(10);
+
+fn open_clipboard() -> Result<arboard::Clipboard, AbundioError> {
+    arboard::Clipboard::new()
+        .map_err(|e| AbundioError::Clipboard(format!("clipboard open failed: {e}")))
+}
+
+/// Whether the clipboard holds text or copied files, either of which rules
+/// out an image paste.
+fn has_text_or_files(clipboard: &mut arboard::Clipboard) -> bool {
     let has_text = clipboard
         .get_text()
         .map(|t| !t.is_empty())
@@ -164,13 +176,59 @@ fn read_image_paste() -> Result<Option<arboard::ImageData<'static>>, AbundioErro
         .file_list()
         .map(|f| !f.is_empty())
         .unwrap_or(false);
+    has_text || has_files
+}
+
+/// The clipboard's image when the clipboard rule holds (an image, no text, no
+/// copied files), as raw pixels; `None` otherwise. Decodes, never encodes.
+fn read_image_paste() -> Result<Option<arboard::ImageData<'static>>, AbundioError> {
+    let mut clipboard = open_clipboard()?;
     // Checked before the image is read, which is the slow part.
-    if !is_image_paste(has_text, has_files, true) {
+    if !is_image_paste(has_text_or_files(&mut clipboard), false, true) {
         return Ok(None);
     }
     match clipboard.get_image() {
         Ok(data) => Ok(Some(data)),
         Err(arboard::Error::ContentNotAvailable | arboard::Error::ConversionFailure) => Ok(None),
+        Err(e) => Err(AbundioError::Clipboard(format!("read failed: {e}"))),
+    }
+}
+
+/// The clipboard rule alone, without decoding the image where that can be
+/// avoided: on macOS this runs on the main thread while a paste waits on it,
+/// and decoding a Retina screenshot there would freeze the UI for nothing.
+fn check_image_paste() -> Result<bool, AbundioError> {
+    let mut clipboard = open_clipboard()?;
+    if has_text_or_files(&mut clipboard) {
+        return Ok(false);
+    }
+    has_image(&mut clipboard).map(|has_image| is_image_paste(false, false, has_image))
+}
+
+/// macOS: whether the pasteboard offers an image, asked without reading the
+/// data. TIFF is what arboard's `get_image` reads; PNG too, because a
+/// PNG-only clipboard (`osascript … «class PNGf»`) is one the Agents read
+/// themselves on Ctrl+V.
+#[cfg(target_os = "macos")]
+fn has_image(_clipboard: &mut arboard::Clipboard) -> Result<bool, AbundioError> {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypePNG, NSPasteboardTypeTIFF};
+    use objc2_foundation::NSArray;
+    Ok(objc2::rc::autoreleasepool(|_| {
+        // SAFETY: AppKit constants, valid for the life of the process.
+        let types = unsafe { [NSPasteboardTypeTIFF, NSPasteboardTypePNG] };
+        NSPasteboard::generalPasteboard()
+            .availableTypeFromArray(&NSArray::from_slice(&types))
+            .is_some()
+    }))
+}
+
+/// Windows/Linux: arboard has no "has an image" call, so read it. This runs
+/// on a worker thread there, so the decode never holds up the UI.
+#[cfg(not(target_os = "macos"))]
+fn has_image(clipboard: &mut arboard::Clipboard) -> Result<bool, AbundioError> {
+    match clipboard.get_image() {
+        Ok(_) => Ok(true),
+        Err(arboard::Error::ContentNotAvailable | arboard::Error::ConversionFailure) => Ok(false),
         Err(e) => Err(AbundioError::Clipboard(format!("read failed: {e}"))),
     }
 }
@@ -181,7 +239,7 @@ fn read_image_paste() -> Result<Option<arboard::ImageData<'static>>, AbundioErro
 async fn image_paste<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> Result<Option<arboard::ImageData<'static>>, AbundioError> {
-    crate::clipboard_thread::on_clipboard_thread(app, read_image_paste).await
+    crate::clipboard_thread::on_clipboard_thread(app, READ_WAIT, read_image_paste).await
 }
 
 /// What the **Paste tray** sees on the clipboard: its image, scaled, when the
@@ -209,14 +267,15 @@ pub async fn clipboard_image_peek<R: tauri::Runtime>(
 
 /// Whether the clipboard holds an image and neither text nor copied files —
 /// what **Smart image paste** asks before sending the paste keystroke. Unlike
-/// [`clipboard_image_peek`] it encodes nothing, so the paste does not wait on
-/// thumbnails. On macOS this runs while WebKit's own paste is reading the
-/// clipboard, which is why the read must be on the main thread.
+/// [`clipboard_image_peek`] it encodes nothing, and on macOS it does not even
+/// decode, so the paste does not wait on pixels. On macOS this runs while
+/// WebKit's own paste is reading the clipboard, which is why the read must be
+/// on the main thread.
 #[tauri::command]
 pub async fn clipboard_is_image_paste<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> Result<bool, AbundioError> {
-    Ok(image_paste(&app).await?.is_some())
+    crate::clipboard_thread::on_clipboard_thread(&app, CHECK_WAIT, check_image_paste).await
 }
 
 #[cfg(test)]

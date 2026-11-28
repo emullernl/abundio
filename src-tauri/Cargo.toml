@@ -142,7 +142,7 @@ nix = { version = "0.30", default-features = false, features = ["signal"] }
 # is downloaded.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSApplicationScripting", "NSResponder", "NSView", "NSWindow", "NSWindowRestoration"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSApplicationScripting", "NSPasteboard", "NSResponder", "NSView", "NSWindow", "NSWindowRestoration"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSCoder", "NSData", "NSError", "NSKeyedArchiver", "NSObject"] }
 
 [target.'cfg(windows)'.dependencies]

@@ -299,7 +299,11 @@ fn read_clipboard() -> Result<Clipboard, AbundioError> {
 pub async fn prompt_attachment_from_clipboard<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> Result<Vec<String>, AbundioError> {
-    let clip = crate::clipboard_thread::on_clipboard_thread(&app, read_clipboard).await?;
+    let clip = crate::clipboard_thread::on_clipboard_thread(
+        &app,
+        std::time::Duration::from_secs(10),
+        read_clipboard,
+    ).await?;
     crate::clipboard_thread::off_main_thread(move || paths_from_clipboard_blocking(clip)).await
 }
 
