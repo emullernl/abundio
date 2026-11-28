@@ -1,6 +1,6 @@
 ---
-name: release-notes
-description: Write the GitHub release notes for the Abundio version that was just tagged, put them on the GitHub release once CI has made it, then ask the user whether to publish it. Use when the user says "/release-notes", "write the release notes", "release notes for the new version", or has just run `pnpm run release` and pushed the tag.
+name: abundio-release-notes
+description: Write the GitHub release notes for the Abundio version that was just tagged, put them on the GitHub release once CI has made it, then ask the user whether to publish it. Use when the user says "/abundio-release-notes", "write the release notes", "release notes for the new version", or has just run `pnpm run release` and pushed the tag.
 ---
 
 # Release notes for the latest tag
