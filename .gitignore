@@ -5,7 +5,8 @@ app-icon.png
 *.log
 *.tsbuildinfo
 .DS_Store
-.claude
+.claude/*
+!.claude/skills/
 .pnpm-store/
 # The servers CI bundles into the app (phase 15)
 src-tauri/resources/server/*.gz
