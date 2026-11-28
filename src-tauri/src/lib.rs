@@ -14,6 +14,7 @@ pub use abundio_core::askpass;
 pub use abundio_core::agent_registry;
 pub mod app_metrics;
 pub mod clipboard_image;
+pub mod clipboard_thread;
 pub mod commands;
 pub use abundio_core::config;
 pub mod db_startup;
